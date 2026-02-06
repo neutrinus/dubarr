@@ -25,8 +25,7 @@ class ResourceMonitor(threading.Thread):
                         capture_output=True, text=True
                     )
                     if res.returncode == 0:
-                        lines = res.stdout.strip().split('
-')
+                        lines = res.stdout.strip().split('\n')
                         for line in lines:
                             parts = line.split(',')
                             if len(parts) >= 2:

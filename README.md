@@ -1,4 +1,4 @@
-# AI Movie Dubber 🎬
+# dubarr 🎬
 
 An automated system for creating professional AI-powered dubbing (voice-over) using **fully local** AI models. Optimized for home hardware (Multi-GPU), ensuring your data never leaves your machine. Supports arbitrary language pairs (e.g., English -> Polish, German -> Polish, etc.).
 
@@ -15,7 +15,13 @@ The primary objective of this system is to provide high-quality, fully automated
 *   The LLM model must be located at `models/gemma-3-12b-it-Q4_K_M.gguf`.
 *   Obtain a Hugging Face token (`HF_TOKEN`) with access to the Pyannote 3.1 model.
 
-### 2. Execution
+### 2. Build
+Build the Docker image locally:
+```bash
+docker build -t dubarr .
+```
+
+### 3. Execution
 ```bash
 docker run --rm --gpus all \
   -v $(pwd)/videos:/videos \
@@ -26,7 +32,7 @@ docker run --rm --gpus all \
   -e HF_TOKEN=YOUR_TOKEN \
   -e TARGET_LANGS=pl \
   -e DEBUG=1 \
-  ai-video-dubber
+  dubarr
 ```
 
 ---

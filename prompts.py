@@ -95,19 +95,19 @@ RULES:
 3. Ensure IDs match the input.
 """
 
-T_TRANS = "<|im_start|>system
+T_TRANS = """<|im_start|>system
 {system_prompt}<|im_end|>
 <|im_start|>user
 {json_input}<|im_end|>
 <|im_start|>assistant
-"
+"""
 
-T_CRITIC = "<|im_start|>system
+T_CRITIC = """<|im_start|>system
 {system_prompt}<|im_end|>
 <|im_start|>user
 Review these translations.<|im_end|>
 <|im_start|>assistant
-"
+"""
 
 T_SHORTEN = """<|im_start|>system
 You are a text compressor. Your task is to shorten the provided text by at least 50% while preserving the core meaning for dubbing. Respond ONLY with the compressed JSON.

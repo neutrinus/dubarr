@@ -342,6 +342,7 @@ class AIDubber:
             q_text.put(None)
 
     def _tts_worker(self, lang, q_in, q_out, translations):
+        t_tts_total = 0
         try:
             from TTS.api import TTS
             os.environ["COQUI_TOS_AGREED"] = "1"
@@ -388,6 +389,9 @@ class AIDubber:
                     
                     t0 = time.perf_counter()
                     tts.tts_to_file(**tts_args)
+                    dt = time.perf_counter() - t0
+                    t_tts_total += dt
+                    
                     zcr = measure_zcr(raw)
                     if zcr > 0.25 and "speaker_wav" in tts_args:
                         logging.warning(f"[ID: {item['index']}] High ZCR ({zcr:.3f}). Retrying with GENERIC.")
@@ -397,11 +401,14 @@ class AIDubber:
                         is_female = any(x in desc or x in name for x in ["female", "woman", "lady", "girl", "kobieta", "pani"])
                         fb = generic_female_speaker if is_female else generic_male_speaker
                         tts_args["speaker"] = fb if fb else available_coqui_speakers[0]
+                        t0_retry = time.perf_counter()
                         tts.tts_to_file(**tts_args); voice_type = f"RETRY_{tts_args['speaker']}"
-                    logging.debug(f"[ID: {item['index']}] TTS Done in {time.perf_counter() - t0:.2f}s ({voice_type})")
+                        t_tts_total += (time.perf_counter() - t0_retry)
+                    logging.debug(f"[ID: {item['index']}] TTS Done in {dt:.2f}s ({voice_type})")
                     q_out.put({"item": item, "raw_path": raw, "max_dur": max_allowed_dur, "voice_type": voice_type, "lang": lang})
                 except Exception as e: logging.error(f"TTS Gen failed {item['index']}: {e}")
                 q_in.task_done()
+            self.durations[f"5c. TTS Synthesis ({lang})"] = t_tts_total
             del tts; gc.collect(); torch.cuda.empty_cache()
         except Exception as e: logging.exception("TTS Worker failed"); self.abort_event.set()
         finally: q_out.put(None)

@@ -58,8 +58,7 @@ RUN pip install --no-cache-dir TTS
 WORKDIR /app
 
 # Copy the application files into the container
-COPY main.py .
-# COPY videos/ ./videos/ # We will use volume mount for videos to avoid bloating the image
+COPY . .
 
 # Define the default command to be executed when the container starts
 CMD ["python", "main.py"]

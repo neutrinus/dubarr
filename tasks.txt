@@ -1,0 +1,8 @@
+
+ > Chciałbym zmigrować z architektury "złotego sampla" na dynamiczne próbki. Czyli dla każdego segmentu który wytniemy w oryginalnym języku przeprowadzamy tłumaczenie (i krytykę) a potem używamy go jako wzoru
+   do klonowania głosu. W ten sposób jeżeli raz źle wybierzemy złotą próbkę to potem cały film nie będzie niskiej jakości tylko dany fragment.  
+
+
+
+
+

@@ -8,7 +8,7 @@ import shutil
 import time
 import threading
 from typing import List, Dict, Tuple
-from config import GPU_AUDIO, TEMP_DIR
+from config import GPU_AUDIO, TEMP_DIR, WHISPER_MODEL
 from utils import run_cmd, measure_zcr
 
 def prep_audio(vpath: str) -> Tuple[str, str]:
@@ -45,7 +45,7 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
         t0 = time.perf_counter()
         from faster_whisper import WhisperModel
         logging.info(f"Whisper: Loading on GPU {gpu_index}")
-        m = WhisperModel("large-v2", device="cuda", device_index=gpu_index, compute_type="float16")
+        m = WhisperModel(WHISPER_MODEL, device="cuda", device_index=gpu_index, compute_type="float16")
         ts, _ = m.transcribe(mpath)
         for x in ts:
             if x.avg_logprob < -1.0: continue
