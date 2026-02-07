@@ -1,15 +1,16 @@
-# Base image with CUDA 12.1 support, based on Ubuntu 22.04
-FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+# Base image with CUDA 13.1.1 support, based on Ubuntu 24.04
+FROM nvidia/cuda:13.1.1-devel-ubuntu24.04
 
 # Set environment variables to prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
-# Install essential system dependencies including Python, pip, and FFmpeg
+# Install essential system dependencies including Python 3.12 (default in 24.04), ffmpeg, and git
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    python3.10 \
+    python3 \
     python3-pip \
+    python3-dev \
     ffmpeg \
     git \
     wget \
@@ -18,45 +19,54 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Set python3.10 as the default python
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
+# Install uv for fast package management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
-# Upgrade pip
-RUN python -m pip install --no-cache-dir --upgrade pip
+# Create virtual environment and set it as default
+ENV VIRTUAL_ENV=/app/.venv
+RUN uv venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# Install hf_transfer for high-speed Hugging Face downloads
-RUN pip install --no-cache-dir hf_transfer syllables humanfriendly psutil
+# Ensure nvcc and CUDA libs are in path for compilation
+ENV PATH="/usr/local/cuda/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+ENV CUDA_HOME="/usr/local/cuda"
 
-# Install PyTorch compatible with CUDA 12.1. This is a crucial step for most AI libraries.
-RUN pip install --no-cache-dir torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 --index-url https://download.pytorch.org/whl/cu121
+# Clone F5-TTS repo with all tags and checkout latest stable version
+RUN git clone --no-single-branch https://github.com/SWivid/F5-TTS.git /app/F5-TTS && \
+    cd /app/F5-TTS && \
+    git checkout 1.1.15
 
-# Install project-specific Python libraries
-
-# 1. Demucs for audio source separation
-RUN pip install --no-cache-dir -U demucs
-
-# 2. Pyannote.audio for speaker diarization.
-#    Note: pyannote.audio 3.1 requires accepting user agreements on Hugging Face.
-#    A User Access Token with read permissions is required during execution.
-RUN pip install --no-cache-dir "huggingface-hub<0.24" pyannote.audio==3.1.1
-# Install diffq for mdx_extra_q demucs model
-RUN pip install --no-cache-dir diffq
-
-# 3. Faster-Whisper for Automatic Speech Recognition (ASR)
-RUN pip install --no-cache-dir faster-whisper
-
-# 4. Llama-cpp-python for running the GGUF translation model.
-#    The CMAKE_ARGS environment variable is set to build the library with CUDA support (cuBLAS).
+# Install EVERYTHING in one go to ensure consistent dependency resolution.
+# We pin numpy to 2.2.2 to satisfy numba and pyannote.
+# We pin pyannote.audio to 4.0.4.
+# CMAKE_ARGS ensures llama-cpp-python has CUDA support.
 ENV CMAKE_ARGS="-DGGML_CUDA=on"
-ENV FORCE_CMAKE=1
-RUN pip install --no-cache-dir llama-cpp-python --force-reinstall --upgrade --verbose
-
-# 5. Coqui TTS for Text-to-Speech synthesis (XTTS v2 model)
-RUN pip install --no-cache-dir transformers==4.40.0
-RUN pip install --no-cache-dir TTS
+RUN uv pip install --no-cache-dir \
+    "numpy==2.2.2" \
+    "torch>=2.8.0" \
+    "torchvision" \
+    "torchaudio>=2.8.0" \
+    "pyannote.audio==4.0.4" \
+    "demucs" \
+    "diffq" \
+    "faster-whisper" \
+    "hf_transfer" \
+    "syllables" \
+    "humanfriendly" \
+    "psutil" \
+    "safetensors" \
+    --no-binary llama-cpp-python "llama-cpp-python" \
+    "/app/F5-TTS" \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    --extra-index-url https://pypi.org/simple \
+    --index-strategy unsafe-best-match
 
 # Create and set the working directory inside the container
 WORKDIR /app
+
+# Ensure F5-TTS src is in PYTHONPATH
+ENV PYTHONPATH="/app:/app/F5-TTS/src"
 
 # Copy the application files into the container
 COPY . .
@@ -68,4 +78,4 @@ RUN python -c "import torch; import faster_whisper; import TTS; print('Environme
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Define the default command to be executed when the container starts
-CMD ["python", "main.py"]
+CMD ["python3", "main.py"]
