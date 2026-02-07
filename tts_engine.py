@@ -62,6 +62,10 @@ class F5TTSWrapper:
         """Synthesize speech using F5-TTS."""
         if not text: return
         
+        logging.info(f"F5-TTS Synthesizing: '{text}'")
+        logging.info(f"  Ref Audio: {ref_audio}")
+        logging.info(f"  Ref Text: '{ref_text}'")
+        
         try:
             # Main Inference
             audio, sr, spect = infer_process(
