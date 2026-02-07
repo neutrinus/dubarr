@@ -49,11 +49,26 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
         from pyannote.audio import Pipeline
 
         logging.info(f"Diarization: Loading on GPU {gpu_index}")
-        p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=os.environ.get("HF_TOKEN"))
+        # Pyannote 4.0 uses 'token' instead of 'use_auth_token'
+        p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=os.environ.get("HF_TOKEN"))
         p.to(torch.device(f"cuda:{gpu_index}"))
         res = p(mpath)
-        for s, _, label in res.itertracks(yield_label=True):
-            diar_result.append({"start": s.start, "end": s.end, "speaker": label})
+        # In Pyannote 4.0, the output is a DiarizeOutput object
+        annotation = None
+        for attr in ["speaker_diarization", "diarization", "annotation"]:
+            if hasattr(res, attr):
+                annotation = getattr(res, attr)
+                break
+
+        if annotation is None:
+            annotation = res
+
+        try:
+            for s, _, l in annotation.itertracks(yield_label=True):
+                diar_result.append({"start": s.start, "end": s.end, "speaker": l})
+        except AttributeError:
+            logging.error(f"Diarization output {type(res)} has no itertracks. Attributes: {dir(res)}")
+            raise
         durations["2a. Diarization (Parallel)"] = time.perf_counter() - t0
         del p
         gc.collect()
