@@ -27,6 +27,7 @@ from config import (
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, T_TRANS, T_CRITIC, T_SHORTEN
 from utils import parse_json, clean_srt, measure_zcr, count_syllables, clean_output, run_cmd
 from monitor import ResourceMonitor
+from tts_engine import F5TTSWrapper
 import audio_processor
 
 setup_logging()
@@ -68,17 +69,17 @@ class AIDubber:
     def _load_model(self):
         logging.info(f"Background: Loading LLM on Dedicated GPU {self.gpu_llm}...")
         try:
-            from llama_cpp import Llama
-
+            from llama_cpp import Llama, llama_supports_gpu_offload
+            logging.info(f"LLM: GPU Offload Supported: {llama_supports_gpu_offload()}")
             self.llm = Llama(
                 model_path=MODEL_PATH,
-                n_gpu_layers=-1,
+                n_gpu_layers=99,
                 main_gpu=self.gpu_llm,
-                n_ctx=4096,
+                n_ctx=8192,
                 n_batch=512,
                 n_threads=4,
                 flash_attn=True,
-                verbose=False,
+                verbose=True,
             )
             logging.info("Background: LLM Loaded and ready.")
             self.llm_ready.set()
@@ -338,12 +339,11 @@ class AIDubber:
             info = self.speaker_info.get(spk, {})
             name = info.get("name", "").lower()
             desc = info.get("desc", "").lower()
-            is_female = any(x in desc or x in name for x in ["female", "woman", "lady", "girl", "kobieta", "pani"])
 
-            if not my_best or my_best[1] < 65:
-                self.speaker_refs[spk] = "Daisy Morgan" if is_female else "Damien Sayre"
-                reason = "No candidates" if not my_best else f"Low Score {my_best[1]}"
-                logging.warning(f"  [Speaker {spk}] Fallback to GENERIC ({self.speaker_refs[spk]}) - {reason}")
+            if not my_best:
+                logging.warning(f"  [Speaker {spk}] No candidates found. Voice cloning might fail.")
+            elif my_best[1] < 65:
+                logging.warning(f"  [Speaker {spk}] Low Score {my_best[1]}. Using best available candidate.")
 
     def _producer(self, script, lang, q_text, spk_info, glob_ctx, draft_list, final_list):
         t_trans_total = 0
@@ -476,40 +476,11 @@ class AIDubber:
         finally:
             q_text.put(None)
 
-    def _tts_worker(self, lang, q_in, q_out, translations, vocals_path):
+    def _tts_worker(self, lang, q_in, q_out, translations, vocals_path, script):
         t_tts_total = 0
         try:
-            from TTS.api import TTS
-
-            os.environ["COQUI_TOS_AGREED"] = "1"
-            tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(f"cuda:{self.gpu_audio}")
-            available_coqui_speakers = []
-            try:
-                if hasattr(tts, "speakers"):
-                    available_coqui_speakers = tts.speakers
-                elif hasattr(tts, "synthesizer") and hasattr(tts.synthesizer, "tts_model"):
-                    available_coqui_speakers = list(tts.synthesizer.tts_model.speaker_manager.speakers.keys())
-            except Exception:
-                pass
-            if not available_coqui_speakers:
-                available_coqui_speakers = ["Claribel Dervla", "Damien Sayre", "Daisy Morgan", "Ana Florence"]
-            generic_female_speaker = None
-            generic_male_speaker = None
-            if available_coqui_speakers:
-                female_priorities = ["Claribel Dervla", "Daisy Morgan", "Ana Florence"]
-                male_priorities = ["Damien Sayre", "Damien Black", "Baldur Sanjin"]
-                for p in female_priorities:
-                    if p in available_coqui_speakers:
-                        generic_female_speaker = p
-                        break
-                for p in male_priorities:
-                    if p in available_coqui_speakers:
-                        generic_male_speaker = p
-                        break
-                if not generic_female_speaker:
-                    generic_female_speaker = available_coqui_speakers[0]
-                if not generic_male_speaker:
-                    generic_male_speaker = available_coqui_speakers[-1]
+            # Initialize F5-TTS (Loads model into VRAM once)
+            f5 = F5TTSWrapper(gpu_id=self.gpu_audio)
 
             while not self.abort_event.is_set():
                 try:
@@ -519,12 +490,6 @@ class AIDubber:
                 if item is None:
                     break
                 translations.append(item)
-
-                # --- DYNAMIC VOICE MIGRATION STRATEGY ---
-                # 1. Dynamic Sample (Current Segment)
-                # 2. Last Good Dynamic Sample (Rolling Cache)
-                # 3. Golden Sample (Global Fallback)
-                # 4. Generic (Last resort)
 
                 golden_ref = self.speaker_refs.get(item["speaker"])
                 chosen_ref = None
@@ -539,9 +504,12 @@ class AIDubber:
                 audio_processor.extract_clean_segment(vocals_path, item["start"], item["end"], dyn_path)
                 zcr = measure_zcr(dyn_path)
 
-                # Criteria for a "Good" Dynamic Sample
-                # Relaxed constraints to favor dynamic adaptation
-                is_good_dynamic = os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25 and dur > 0.8
+                is_good_dynamic = (
+                    os.path.exists(dyn_path)
+                    and os.path.getsize(dyn_path) > 4000
+                    and zcr < 0.25
+                    and dur > 0.8
+                )
 
                 if is_good_dynamic:
                     chosen_ref = dyn_path
@@ -564,64 +532,33 @@ class AIDubber:
                     if os.path.exists(dyn_path) and chosen_ref != dyn_path:
                         os.remove(dyn_path)
 
+                # F5-TTS Specifics
                 clean_text = item["text"].strip()
-                if len(clean_text.split()) < 3 and not clean_text.endswith("..."):
-                    clean_text = clean_text + "..."
+                ref_text = script[item["index"]].get("text", "")  # Original source text from Whisper
+
                 raw = os.path.join(self.temp_dir, f"raw_{item['index']}.wav")
                 syl_count = count_syllables(clean_text, lang)
                 max_allowed_dur = max((syl_count * 0.4) + 1.5, (item["end"] - item["start"]) + 1.5)
 
                 try:
-                    tts_args = {
-                        "text": clean_text,
-                        "language": lang,
-                        "file_path": raw,
-                        "temperature": 0.75,
-                        "repetition_penalty": 1.2,
-                        "top_p": 0.8,
-                        "top_k": 50,
-                        "speed": 1.0,
-                    }
-
-                    if chosen_ref:
-                        tts_args["speaker_wav"] = chosen_ref
-                    else:
-                        # Fallback to Generic
-                        info = self.speaker_info.get(item["speaker"], {})
-                        desc = info.get("desc", "").lower()
-                        name = info.get("name", "").lower()
-                        is_female = any(x in desc or x in name for x in ["female", "woman", "lady", "girl", "kobieta", "pani"])
-                        fallback = generic_female_speaker if is_female else generic_male_speaker
-                        tts_args["speaker"] = fallback if fallback else available_coqui_speakers[0]
-                        voice_type = f"GENERIC_{tts_args['speaker']}"
+                    if not chosen_ref:
+                        logging.error(f"[ID: {item['index']}] No reference audio found for speaker {spk}. Skipping.")
+                        q_in.task_done()
+                        continue
 
                     t0 = time.perf_counter()
-                    tts.tts_to_file(**tts_args)
+                    f5.synthesize(clean_text, chosen_ref, raw, ref_text=ref_text, language=lang)
                     dt = time.perf_counter() - t0
                     t_tts_total += dt
 
-                    # Safety Check: ZCR (Screeching check)
-                    zcr = measure_zcr(raw)
-                    if zcr > 0.25 and "speaker_wav" in tts_args:
-                        logging.warning(f"[ID: {item['index']}] High ZCR ({zcr:.3f}) in {voice_type}. Retrying with GENERIC.")
-                        tts_args.pop("speaker_wav", None)  # Remove cloned voice
-
-                        info = self.speaker_info.get(item["speaker"], {})
-                        desc = info.get("desc", "").lower()
-                        name = info.get("name", "").lower()
-                        is_female = any(x in desc or x in name for x in ["female", "woman", "lady", "girl", "kobieta", "pani"])
-                        fb = generic_female_speaker if is_female else generic_male_speaker
-                        tts_args["speaker"] = fb if fb else available_coqui_speakers[0]
-
-                        t0_retry = time.perf_counter()
-                        tts.tts_to_file(**tts_args)
-                        voice_type = f"RETRY_{tts_args['speaker']}"
-                        t_tts_total += time.perf_counter() - t0_retry
-
-                    logging.debug(f"[ID: {item['index']}] TTS Done in {dt:.2f}s ({voice_type})")
-                    q_out.put(
-                        {"item": item, "raw_path": raw, "max_dur": max_allowed_dur, "voice_type": voice_type, "lang": lang}
-                    )
+                    # Verify Output
+                    if os.path.exists(raw) and os.path.getsize(raw) > 1000:
+                        logging.debug(f"[ID: {item['index']}] TTS Done in {dt:.2f}s ({voice_type})")
+                        q_out.put(
+                            {"item": item, "raw_path": raw, "max_dur": max_allowed_dur, "voice_type": voice_type, "lang": lang}
+                        )
+                    else:
+                        logging.warning(f"[ID: {item['index']}] TTS produced invalid/empty file.")
 
                     # Cleanup dynamic sample if it was created
                     if voice_type == "DYNAMIC" and chosen_ref and os.path.exists(chosen_ref):
@@ -631,10 +568,10 @@ class AIDubber:
                     logging.error(f"TTS Gen failed {item['index']}: {e}")
                 q_in.task_done()
             self.durations[f"5c. TTS Synthesis ({lang})"] = t_tts_total
-            del tts
+            del f5
             gc.collect()
             torch.cuda.empty_cache()
-        except Exception:
+        except Exception as e:
             logging.exception("TTS Worker failed")
             self.abort_event.set()
         finally:
@@ -716,8 +653,6 @@ class AIDubber:
         self.monitor = ResourceMonitor(monitor_state)
         self.monitor.daemon = True
         self.monitor.start()
-        if not self.llm:
-            threading.Thread(target=self._load_model, daemon=True).start()
 
         def step(name, func, *args):
             logging.info(f"STARTING STEP: {name}")
@@ -732,13 +667,17 @@ class AIDubber:
             "2. Audio Analysis (Whisper/Diarization)", audio_processor.analyze_audio, vocals, self.gpu_audio
         )
         self.durations.update(audio_durs)
+
+        # Load LLM only after memory-intensive Audio Analysis is done
+        if not self.llm:
+            threading.Thread(target=self._load_model, daemon=True).start()
+            logging.info("Waiting for LLM to load...")
+            self.llm_ready.wait()
+
         script = self._create_script(diar, trans)
         if self.debug_mode:
             with open(os.path.join(ddir, "script_initial.json"), "w") as f_dbg:
                 json.dump(script, f_dbg, indent=2)
-        if not self.llm_ready.is_set():
-            logging.info("Waiting for LLM...")
-            self.llm_ready.wait()
         if self.abort_event.is_set():
             return
         ref_subs = self._extract_subtitles(vpath)
@@ -759,7 +698,7 @@ class AIDubber:
                 args=(script, lang, q_text, self.speaker_info, self.global_context, draft_translations, final_translations),
                 daemon=True,
             )
-            tts_th = threading.Thread(target=self._tts_worker, args=(lang, q_text, q_audio, [], vocals), daemon=True)
+            tts_th = threading.Thread(target=self._tts_worker, args=(lang, q_text, q_audio, [], vocals, script), daemon=True)
             post_th = threading.Thread(target=self._audio_postprocessor, args=(q_audio, res), daemon=True)
             p_th.start()
             tts_th.start()
