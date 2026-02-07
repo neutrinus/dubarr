@@ -49,18 +49,20 @@ The system processes each video through 7 major local stages:
     *   **Context Extraction:** Creates plot summaries and phonetic glossaries for names.
     *   **Speaker Profiling:** Identifies character names, gender, and voice traits.
 4.  **Transcription Correction (Editor):** Fixes ASR errors while maintaining standard orthography.
-5.  **Voice Reference Extraction (Smart Selection v3):**
-    *   **Intro/Outro Skip:** Automatically ignores the first 30s of video to avoid grabbing samples from noisy intros.
-    *   **Scoring Algorithm:** Rates segments on a 0-100 scale (Threshold > 65) based on:
-        *   **Clarity (50%):** Deep analysis of Whisper confidence, loop detection (`compression_ratio`), text blacklisting, and **Zero Crossing Rate (ZCR)** to filter out static/screeching.
-        *   **Duration (40%):** "Goldilocks" zone (6-14s) using a bell-curve penalty for too short/long clips.
-        *   **Position (10%):** Prefers center of video, penalizing intros/outros.
-    *   **Fallback Strategy:** If no sample scores > 65, the system falls back to a *generic, high-quality built-in XTTS voice* (e.g., "Daisy Morgan" or "Damien Sayre").
+5.  **Voice Reference & Dynamic Sampling (v2):**
+    *   **Architecture Shift:** Migrated from "Golden Sample only" to a **Dynamic Multi-Level Reference** system.
+    *   **The Sampling Hierarchy:**
+        1.  **Dynamic (Current Segment):** The system extracts and cleans the original audio for the *specific line* being dubbed. If it meets quality criteria (ZCR < 0.25, duration > 0.8s), it's used as the primary reference. This ensures perfect emotional and tonal matching for every sentence.
+        2.  **Rolling Cache (Last Good):** If the current segment is poor (e.g., loud music/noise), the system uses the *last successfully extracted clean sample* for that speaker.
+        3.  **Global Reference (Golden Sample):** High-scoring (Score > 65) segments extracted during the initial analysis phase serve as a global fallback.
+        4.  **Generic Fallback:** Built-in high-quality voices ("Daisy Morgan", "Damien Sayre") are used as a final safety net.
+
 6.  **Production (Parallel Batch Pipeline):**
     *   **Batch Processing:** Groups lines in chunks of 10 to drastically reduce LLM prompt overhead and speed up processing.
     *   **Translator (Draft):** Translates text into target language JSON format.
     *   **Critic (QA Refiner):** Verifies translation, grammar, and phonetic glossary compliance.
-    *   **Synthesis (XTTS):** Generates speech (**GPU 1**) with hallucination safeguards:
+    *   **Synthesis (XTTS):** Generates speech (**GPU 1**) with dynamic cloning and hallucination safeguards:
+        *   *Dynamic Cloning:* Each line can use a unique reference sample for better variety and accuracy.
         *   *Tuned Parameters:* Increased temperature (0.75) and repetition penalty (1.2) to boost creativity and kill infinite loops.
         *   *Real-time Artifact Guard:* Measures **ZCR** of generated audio. If screeching is detected (> 0.25), automatically retries generation using a stable generic voice.
         *   *Hard Cut (Artifact Killer):* Automatically calculates the maximum plausible duration for a line (based on syllables) and ruthlessly cuts off any "hallucinated" audio tails. Tightened buffer (+1.5s) to eliminate foreign language bleed-in.
@@ -78,7 +80,7 @@ The system processes each video through 7 major local stages:
 This project is designed for users who value privacy and control.
 *   **No Cloud APIs:** No OpenAI, no ElevenLabs, no Google Cloud.
 *   **Data Sovereignty:** Your videos and transcripts are never uploaded to any server.
-*   **Hardware Efficiency:** Maximizes dual-GPU setups (e.g., RTX 3060 + 3070).
+*   **Hardware Efficiency:** Maximizes dual-GPU setups (e.g., RTX 3060 + 3070). Background threads are **daemonized** for clean process termination.
 
 ## 🔗 Similar Projects
 If this project doesn't fit your needs, check out these excellent alternatives:

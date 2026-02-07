@@ -57,13 +57,12 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
                 "no_speech_prob": x.no_speech_prob, 
                 "compression_ratio": x.compression_ratio
             })
-        durations["2b. Transcription (Parallel)"] = time.perf_counter() - t0
+        durations["2b. Transcription (Sequential)"] = time.perf_counter() - t0
         del m; gc.collect(); torch.cuda.empty_cache()
 
-    t1 = threading.Thread(target=run_diar)
-    t2 = threading.Thread(target=run_whisper)
-    logging.info(f"Starting Parallel Audio Analysis on GPU {gpu_index}...")
-    t1.start(); t2.start(); t1.join(); t2.join()
+    logging.info(f"Starting Sequential Audio Analysis on GPU {gpu_index}...")
+    run_diar()
+    run_whisper()
     
     return diar_result, trans_result, durations
 
@@ -110,3 +109,20 @@ def mux_video(v: str, a: str, l: str, out: str, lang_name: str):
         "-metadata:s:a:0", f"title={title}", 
         out, "-y"
     ], capture_output=True)
+
+def extract_clean_segment(input_path: str, start: float, end: float, output_path: str):
+    """Extracts and cleans a specific audio segment for Voice Cloning."""
+    duration = end - start
+    # Filter: Highpass to remove rumble, afftdn for noise reduction, speechnorm for consistent volume
+    filt = "highpass=f=100,afftdn=nf=-20,speechnorm=e=10:r=0.0001:l=1"
+    cmd = [
+        "ffmpeg", "-v", "error", 
+        "-ss", str(start), 
+        "-t", str(duration), 
+        "-i", input_path, 
+        "-af", filt, 
+        "-ac", "1", 
+        "-ar", "22050", 
+        output_path, "-y"
+    ]
+    subprocess.run(cmd, check=False, capture_output=True)

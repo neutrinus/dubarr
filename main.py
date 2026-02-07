@@ -9,6 +9,7 @@ import gc
 import sys
 import humanfriendly
 import shutil
+import subprocess
 from typing import List, Dict, Tuple, Optional
 
 # Import local modules
@@ -49,6 +50,7 @@ class AIDubber:
         self.global_context = {}
         self.available_pans = [-0.10, 0.10, -0.03, 0.03, -0.17, 0.17]
         self.speaker_pans = {}
+        self.last_good_samples = {}
         self.abort_event = threading.Event()
         self.llm = None
         self.monitor = None
@@ -341,7 +343,7 @@ class AIDubber:
         finally:
             q_text.put(None)
 
-    def _tts_worker(self, lang, q_in, q_out, translations):
+    def _tts_worker(self, lang, q_in, q_out, translations, vocals_path):
         t_tts_total = 0
         try:
             from TTS.api import TTS
@@ -368,9 +370,57 @@ class AIDubber:
                 try: item = q_in.get(timeout=2)
                 except queue.Empty: continue
                 if item is None: break
-                translations.append(item); ref = self.speaker_refs.get(item["speaker"])
-                if not ref:
-                    q_in.task_done(); continue
+                translations.append(item)
+                
+                # --- DYNAMIC VOICE MIGRATION STRATEGY ---
+                # 1. Dynamic Sample (Current Segment)
+                # 2. Last Good Dynamic Sample (Rolling Cache)
+                # 3. Golden Sample (Global Fallback)
+                # 4. Generic (Last resort)
+                
+                golden_ref = self.speaker_refs.get(item["speaker"])
+                chosen_ref = None
+                voice_type = "UNKNOWN"
+                spk = item["speaker"]
+                
+                # Attempt Dynamic Extraction
+                dyn_path = os.path.join(self.temp_dir, f"dyn_{item['index']}.wav")
+                dur = item["end"] - item["start"]
+                
+                # Always attempt extraction to update cache if good
+                audio_processor.extract_clean_segment(vocals_path, item["start"], item["end"], dyn_path)
+                zcr = measure_zcr(dyn_path)
+                
+                # Criteria for a "Good" Dynamic Sample
+                # Relaxed constraints to favor dynamic adaptation
+                is_good_dynamic = (
+                    os.path.exists(dyn_path) 
+                    and os.path.getsize(dyn_path) > 4000
+                    and zcr < 0.25
+                    and dur > 0.8
+                )
+
+                if is_good_dynamic:
+                    chosen_ref = dyn_path
+                    voice_type = "DYNAMIC"
+                    # Update Last Good Sample
+                    last_good_path = os.path.join(self.temp_dir, f"last_good_{spk}.wav")
+                    shutil.copy(dyn_path, last_good_path)
+                    self.last_good_samples[spk] = last_good_path
+                else:
+                    # Dynamic failed/bad. Try Last Good.
+                    if spk in self.last_good_samples and os.path.exists(self.last_good_samples[spk]):
+                        chosen_ref = self.last_good_samples[spk]
+                        voice_type = "LAST_GOOD"
+                    # Fallback to Golden
+                    elif golden_ref and os.path.exists(golden_ref):
+                        chosen_ref = golden_ref
+                        voice_type = "GOLDEN"
+                    
+                    # Cleanup bad dynamic attempt
+                    if os.path.exists(dyn_path) and chosen_ref != dyn_path:
+                        os.remove(dyn_path)
+                
                 clean_text = item["text"].strip()
                 if len(clean_text.split()) < 3 and not clean_text.endswith("..."): clean_text = clean_text + "..."
                 raw = os.path.join(self.temp_dir, f"raw_{item['index']}.wav")
@@ -379,33 +429,47 @@ class AIDubber:
                 
                 try:
                     tts_args = {"text": clean_text, "language": lang, "file_path": raw, "temperature": 0.75, "repetition_penalty": 1.2, "top_p": 0.8, "top_k": 50, "speed": 1.0}
-                    if os.path.exists(ref): tts_args["speaker_wav"] = ref; voice_type = "CLONED"
+                    
+                    if chosen_ref:
+                        tts_args["speaker_wav"] = chosen_ref
                     else:
+                        # Fallback to Generic
                         info = self.speaker_info.get(item["speaker"], {})
                         desc = info.get("desc", "").lower(); name = info.get("name", "").lower()
                         is_female = any(x in desc or x in name for x in ["female", "woman", "lady", "girl", "kobieta", "pani"])
                         fallback = generic_female_speaker if is_female else generic_male_speaker
-                        tts_args["speaker"] = fallback if fallback else available_coqui_speakers[0]; voice_type = f"GENERIC_{tts_args['speaker']}"
+                        tts_args["speaker"] = fallback if fallback else available_coqui_speakers[0]
+                        voice_type = f"GENERIC_{tts_args['speaker']}"
                     
                     t0 = time.perf_counter()
                     tts.tts_to_file(**tts_args)
                     dt = time.perf_counter() - t0
                     t_tts_total += dt
                     
+                    # Safety Check: ZCR (Screeching check)
                     zcr = measure_zcr(raw)
                     if zcr > 0.25 and "speaker_wav" in tts_args:
-                        logging.warning(f"[ID: {item['index']}] High ZCR ({zcr:.3f}). Retrying with GENERIC.")
-                        tts_args.pop("speaker_wav")
+                        logging.warning(f"[ID: {item['index']}] High ZCR ({zcr:.3f}) in {voice_type}. Retrying with GENERIC.")
+                        tts_args.pop("speaker_wav", None) # Remove cloned voice
+                        
                         info = self.speaker_info.get(item["speaker"], {})
                         desc = info.get("desc", "").lower(); name = info.get("name", "").lower()
                         is_female = any(x in desc or x in name for x in ["female", "woman", "lady", "girl", "kobieta", "pani"])
                         fb = generic_female_speaker if is_female else generic_male_speaker
                         tts_args["speaker"] = fb if fb else available_coqui_speakers[0]
+                        
                         t0_retry = time.perf_counter()
-                        tts.tts_to_file(**tts_args); voice_type = f"RETRY_{tts_args['speaker']}"
+                        tts.tts_to_file(**tts_args)
+                        voice_type = f"RETRY_{tts_args['speaker']}"
                         t_tts_total += (time.perf_counter() - t0_retry)
+                        
                     logging.debug(f"[ID: {item['index']}] TTS Done in {dt:.2f}s ({voice_type})")
                     q_out.put({"item": item, "raw_path": raw, "max_dur": max_allowed_dur, "voice_type": voice_type, "lang": lang})
+                    
+                    # Cleanup dynamic sample if it was created
+                    if voice_type == "DYNAMIC" and chosen_ref and os.path.exists(chosen_ref):
+                        os.remove(chosen_ref)
+                        
                 except Exception as e: logging.error(f"TTS Gen failed {item['index']}: {e}")
                 q_in.task_done()
             self.durations[f"5c. TTS Synthesis ({lang})"] = t_tts_total
@@ -453,8 +517,8 @@ class AIDubber:
         start_all = time.perf_counter(); ddir = self._cleanup_debug(f); seg_dir = os.path.join(ddir, "segments") if self.debug_mode else None
         if seg_dir: os.makedirs(seg_dir, exist_ok=True)
         monitor_state = {}
-        self.monitor = ResourceMonitor(monitor_state); self.monitor.start()
-        if not self.llm: threading.Thread(target=self._load_model).start()
+        self.monitor = ResourceMonitor(monitor_state); self.monitor.daemon = True; self.monitor.start()
+        if not self.llm: threading.Thread(target=self._load_model, daemon=True).start()
         
         def step(name, func, *args):
             logging.info(f"STARTING STEP: {name}"); t = time.perf_counter(); res = func(*args)
@@ -479,9 +543,9 @@ class AIDubber:
             q_text = queue.Queue(maxsize=15); q_audio = queue.Queue(maxsize=10)
             monitor_state['q_text'] = q_text; monitor_state['q_audio'] = q_audio
             res = []; draft_translations = []; final_translations = []
-            p_th = threading.Thread(target=self._producer, args=(script, lang, q_text, self.speaker_info, self.global_context, draft_translations, final_translations))
-            tts_th = threading.Thread(target=self._tts_worker, args=(lang, q_text, q_audio, []))
-            post_th = threading.Thread(target=self._audio_postprocessor, args=(q_audio, res))
+            p_th = threading.Thread(target=self._producer, args=(script, lang, q_text, self.speaker_info, self.global_context, draft_translations, final_translations), daemon=True)
+            tts_th = threading.Thread(target=self._tts_worker, args=(lang, q_text, q_audio, [], vocals), daemon=True)
+            post_th = threading.Thread(target=self._audio_postprocessor, args=(q_audio, res), daemon=True)
             p_th.start(); tts_th.start(); post_th.start()
             while p_th.is_alive() or tts_th.is_alive() or post_th.is_alive():
                 if self.abort_event.is_set(): sys.exit(1)

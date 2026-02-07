@@ -12,12 +12,13 @@ LOG_LEVEL = logging.DEBUG if VERBOSE_MODE else logging.INFO
 
 # Safe logging setup
 def setup_logging():
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
     logging.basicConfig(
         level=LOG_LEVEL,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler("/output/processing.log", mode="a", encoding="utf-8")
+            logging.FileHandler(os.path.join(OUTPUT_FOLDER, "processing.log"), mode="a", encoding="utf-8")
         ]
     )
 
