@@ -44,7 +44,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEO_FOLDER = os.path.join(BASE_DIR, "videos")
 OUTPUT_FOLDER = os.path.join(BASE_DIR, "output")
 TEMP_DIR = "/tmp/dubber"
-MODEL_PATH = os.path.join(BASE_DIR, "models", "gemma-3-12b-it-Q4_K_M.gguf")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "google_gemma-3-12b-it-Q4_K_M.gguf")
 WHISPER_MODEL = "large-v3"
 
 # Hardware Setup

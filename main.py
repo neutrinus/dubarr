@@ -290,26 +290,7 @@ class AIDubber:
                 for cand, score in top_3:
                     tmp_wav = os.path.join(self.temp_dir, f"test_{spk}_{cand['start']}.wav")
                     filt = "highpass=f=100,afftdn=nf=-20,speechnorm=e=10:r=0.0001:l=1"
-                    run_cmd(
-                        [
-                            "ffmpeg",
-                            "-i",
-                            vocals_path,
-                            "-ss",
-                            str(cand["start"]),
-                            "-t",
-                            str(cand["end"] - cand["start"]),
-                            "-af",
-                            filt,
-                            "-ac",
-                            "1",
-                            "-ar",
-                            "22050",
-                            tmp_wav,
-                            "-y",
-                        ],
-                        "zcr check",
-                    )
+                    run_cmd(["ffmpeg", "-i", vocals_path, "-ss", str(cand["start"]), "-t", str(cand["end"]-cand["start"]), "-af", filt, "-ac", "1", "-ar", "24000", tmp_wav, "-y"], "zcr check")
 
                     zcr = measure_zcr(tmp_wav)
                     if zcr > 0.15:
@@ -647,7 +628,9 @@ class AIDubber:
         start_all = time.perf_counter()
         ddir = self._cleanup_debug(f)
         seg_dir = os.path.join(ddir, "segments") if self.debug_mode else None
-        if seg_dir:
+        if os.path.exists(seg_dir):
+            shutil.rmtree(seg_dir)
+        if self.debug_mode:
             os.makedirs(seg_dir, exist_ok=True)
         monitor_state = {}
         self.monitor = ResourceMonitor(monitor_state)

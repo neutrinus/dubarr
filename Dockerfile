@@ -1,81 +1,92 @@
-# Base image with CUDA 13.1.1 support, based on Ubuntu 24.04
 FROM nvidia/cuda:13.1.1-devel-ubuntu24.04
 
-# Set environment variables to prevent interactive prompts during installation
+# Environment variables
+ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Etc/UTC
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+ENV HF_HOME=/app/hf_cache
+ENV TTS_HOME=/app/tts_cache
 
-# Install essential system dependencies including Python 3.12 (default in 24.04), ffmpeg, and git
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    python3 \
     python3-pip \
-    python3-dev \
     ffmpeg \
     git \
     wget \
     aria2 \
     libsndfile1 \
+    cmake \
     gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for fast package management
+# Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
-# Create virtual environment and set it as default
-ENV VIRTUAL_ENV=/app/.venv
-RUN uv venv $VIRTUAL_ENV
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
-# Ensure nvcc and CUDA libs are in path for compilation
-ENV PATH="/usr/local/cuda/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
-ENV CUDA_HOME="/usr/local/cuda"
-
-# Clone F5-TTS repo with all tags and checkout latest stable version
-RUN git clone --no-single-branch https://github.com/SWivid/F5-TTS.git /app/F5-TTS && \
-    cd /app/F5-TTS && \
-    git checkout 1.1.15
-
-# Install EVERYTHING in one go to ensure consistent dependency resolution.
-# We pin numpy to 2.2.2 to satisfy numba and pyannote.
-# We pin pyannote.audio to 4.0.4.
-# CMAKE_ARGS ensures llama-cpp-python has CUDA support.
-ENV CMAKE_ARGS="-DGGML_CUDA=on"
-RUN uv pip install --no-cache-dir \
-    "numpy==2.2.2" \
-    "torch>=2.8.0" \
-    "torchvision" \
-    "torchaudio>=2.8.0" \
-    "pyannote.audio==4.0.4" \
-    "demucs" \
-    "diffq" \
-    "faster-whisper" \
-    "hf_transfer" \
-    "syllables" \
-    "humanfriendly" \
-    "psutil" \
-    "safetensors" \
-    --no-binary llama-cpp-python "llama-cpp-python" \
-    "/app/F5-TTS" \
-    --index-url https://download.pytorch.org/whl/cu124 \
-    --extra-index-url https://pypi.org/simple \
-    --index-strategy unsafe-best-match
-
-# Create and set the working directory inside the container
 WORKDIR /app
 
-# Ensure F5-TTS src is in PYTHONPATH
-ENV PYTHONPATH="/app:/app/F5-TTS/src"
+# 1. Install Python versions
+RUN uv python install 3.12
+RUN uv python install 3.10
 
-# Copy the application files into the container
+# 2. Setup App Venv (Modern Stack)
+RUN uv venv /app/.venv_app --python 3.12
+
+RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
+    --index-strategy unsafe-best-match \
+    "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio"
+
+RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
+    "pyannote.audio==4.0.4" "faster-whisper" "demucs" "diffq"
+
+RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
+    "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables"
+
+RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
+    llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+
+# 3. Setup TTS Venv (Legacy Stack for XTTS v2)
+RUN uv venv /app/.venv_tts --python 3.10
+
+# Layer 3a: Base ML for TTS
+RUN uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
+    --index-strategy unsafe-best-match \
+    "numpy<2.0" "torch==2.4.0" "torchaudio==2.4.0"
+
+# Layer 3b: Common libs
+RUN uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
+    "transformers<=4.43.3" "pydantic<2.0" "flask"
+
+# Layer 3c: XTTS fork
+RUN uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
+    "git+https://github.com/idiap/coqui-ai-TTS.git"
+
+# Fix the transformers breaking change in XTTS
+RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py ]; then \
+    sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(a, b, *args, **kwargs):\n    return torch.isin(a, b)/' \
+    /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py; \
+    fi
+
+# 4. Pre-download models
+# Gemma 3 12B
+RUN mkdir -p /app/models && /app/.venv_app/bin/python3 -c "from huggingface_hub import hf_hub_download; \
+    hf_hub_download(repo_id='bartowski/google_gemma-3-12b-it-GGUF', filename='google_gemma-3-12b-it-Q4_K_M.gguf', local_dir='/app/models')"
+
+# XTTS v2 (Coqui) - We'll trigger the download during build to bake it in
+RUN mkdir -p /app/tts_cache && \
+    export COQUI_TOS_AGREED=1 && \
+    export TTS_HOME=/app/tts_cache && \
+    /app/.venv_tts/bin/python3 -c "from TTS.api import TTS; TTS('tts_models/multilingual/multi-dataset/xtts_v2')"
+
+# Copy the project files
 COPY . .
 
-# Verification step: ensure core libraries are importable
-RUN python -c "import torch; import faster_whisper; import TTS; print('Environment verification successful')"
+# Environment setup
+ENV PATH="/app/.venv_app/bin:$PATH"
+ENV PYTHONPATH="/app"
 
 # Use entrypoint script to handle PUID/PGID
 ENTRYPOINT ["/app/entrypoint.sh"]
 
-# Define the default command to be executed when the container starts
+# Default command
 CMD ["python3", "main.py"]

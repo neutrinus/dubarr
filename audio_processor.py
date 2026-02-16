@@ -49,10 +49,10 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
         from pyannote.audio import Pipeline
 
         logging.info(f"Diarization: Loading on GPU {gpu_index}")
-        # Pyannote 4.0 uses 'token' instead of 'use_auth_token'
         p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=os.environ.get("HF_TOKEN"))
         p.to(torch.device(f"cuda:{gpu_index}"))
         res = p(mpath)
+
         # In Pyannote 4.0, the output is a DiarizeOutput object
         annotation = None
         for attr in ["speaker_diarization", "diarization", "annotation"]:
@@ -67,7 +67,7 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
             for s, _, l in annotation.itertracks(yield_label=True):
                 diar_result.append({"start": s.start, "end": s.end, "speaker": l})
         except AttributeError:
-            logging.error(f"Diarization output {type(res)} has no itertracks. Attributes: {dir(res)}")
+            logging.error(f"Diarization output {type(res)} has no itertracks.")
             raise
         durations["2a. Diarization (Parallel)"] = time.perf_counter() - t0
         del p
@@ -91,7 +91,6 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
                     "text": x.text.strip(),
                     "avg_logprob": x.avg_logprob,
                     "no_speech_prob": x.no_speech_prob,
-                    "compression_ratio": x.compression_ratio,
                 }
             )
         durations["2b. Transcription (Sequential)"] = time.perf_counter() - t0
@@ -106,20 +105,6 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
     return diar_result, trans_result, durations
 
 
-def trim_silence(path: str):
-    tmp = path + ".trim.wav"
-    filter_chain = "areverse,silenceremove=start_periods=1:start_silence=0.1:start_threshold=-50dB,areverse"
-    cmd = ["ffmpeg", "-i", path, "-af", filter_chain, tmp, "-y"]
-    try:
-        subprocess.run(cmd, check=True, capture_output=True)
-        if os.path.getsize(tmp) > 100:
-            os.replace(tmp, path)
-    except Exception:
-        pass
-    if os.path.exists(tmp):
-        os.remove(tmp)
-
-
 def mix_audio(bg: str, clips: List, out: str):
     if not clips:
         shutil.copy(bg, out)
@@ -130,17 +115,15 @@ def mix_audio(bg: str, clips: List, out: str):
     for i, (path, start, duration) in enumerate(clips):
         inputs.extend(["-i", path])
         delay_ms = int(start * 1000)
-        fade_st = max(0, duration - 0.01)
-        filter_str += (
-            f"[{i + 1}:a]afade=t=in:st=0:d=0.01,afade=t=out:st={fade_st:.3f}:d=0.01,adelay={delay_ms}|{delay_ms}[a{i + 1}];"
-        )
+        fade_st = max(0, duration - 0.05)
+        # Ensure TTS clip is Stereo 48k for clean mixing
+        filter_str += f"[{i+1}:a]aformat=sample_rates=48000:channel_layouts=stereo,afade=t=in:st=0:d=0.05,afade=t=out:st={fade_st:.3f}:d=0.05,adelay={delay_ms}|{delay_ms}[a{i+1}];"
 
-    filter_str += "".join([f"[a{i + 1}]" for i in range(len(clips))]) + f"amix=inputs={len(clips)}:normalize=0[speech_raw];"
-    filter_str += (
-        "[speech_raw]asplit=2[speech_out][trigger];"
-        "[0:a][trigger]sidechaincompress=threshold=0.02:ratio=5:attack=50:release=600[bg_ducked];"
-        "[bg_ducked][speech_out]amix=inputs=2:weights=1 1.2:normalize=0[out]"
-    )
+    filter_str += "".join([f"[a{i+1}]" for i in range(len(clips))]) + f"amix=inputs={len(clips)}:normalize=0[speech_raw];"
+    filter_str += "[speech_raw]asplit=2[speech_out][trigger];"
+    filter_str += "[0:a]aformat=sample_rates=48000:channel_layouts=stereo[bg_fixed];"
+    filter_str += "[bg_fixed][trigger]sidechaincompress=threshold=0.02:ratio=5:attack=50:release=600[bg_ducked];"
+    filter_str += "[bg_ducked][speech_out]amix=inputs=2:weights=1 1.5:normalize=0[out]"
 
     with open(filter_path, "w") as f:
         f.write(filter_str)
@@ -181,10 +164,22 @@ def mux_video(v: str, a: str, lang: str, out: str, lang_name: str):
     )
 
 
+def trim_silence(path: str):
+    tmp = path + ".trim.wav"
+    filter_chain = "areverse,silenceremove=start_periods=1:start_silence=0.1:start_threshold=-50dB,areverse"
+    cmd = ["ffmpeg", "-i", path, "-af", filter_chain, tmp, "-y"]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        if os.path.exists(tmp) and os.path.getsize(tmp) > 100:
+            os.replace(tmp, path)
+    except Exception:
+        pass
+    if os.path.exists(tmp):
+        os.remove(tmp)
+
+
 def extract_clean_segment(input_path: str, start: float, end: float, output_path: str):
-    """Extracts and cleans a specific audio segment for Voice Cloning."""
     duration = end - start
-    # Filter: Highpass to remove rumble, afftdn for noise reduction, speechnorm for consistent volume
     filt = "highpass=f=100,afftdn=nf=-20,speechnorm=e=10:r=0.0001:l=1"
     cmd = [
         "ffmpeg",
@@ -201,7 +196,7 @@ def extract_clean_segment(input_path: str, start: float, end: float, output_path
         "-ac",
         "1",
         "-ar",
-        "22050",
+        "24000",
         output_path,
         "-y",
     ]
