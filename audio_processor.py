@@ -64,8 +64,8 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
             annotation = res
 
         try:
-            for s, _, l in annotation.itertracks(yield_label=True):
-                diar_result.append({"start": s.start, "end": s.end, "speaker": l})
+            for s, _, label in annotation.itertracks(yield_label=True):
+                diar_result.append({"start": s.start, "end": s.end, "speaker": label})
         except AttributeError:
             logging.error(f"Diarization output {type(res)} has no itertracks.")
             raise
@@ -117,9 +117,9 @@ def mix_audio(bg: str, clips: List, out: str):
         delay_ms = int(start * 1000)
         fade_st = max(0, duration - 0.05)
         # Ensure TTS clip is Stereo 48k for clean mixing
-        filter_str += f"[{i+1}:a]aformat=sample_rates=48000:channel_layouts=stereo,afade=t=in:st=0:d=0.05,afade=t=out:st={fade_st:.3f}:d=0.05,adelay={delay_ms}|{delay_ms}[a{i+1}];"
+        filter_str += f"[{i + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,afade=t=in:st=0:d=0.05,afade=t=out:st={fade_st:.3f}:d=0.05,adelay={delay_ms}|{delay_ms}[a{i + 1}];"
 
-    filter_str += "".join([f"[a{i+1}]" for i in range(len(clips))]) + f"amix=inputs={len(clips)}:normalize=0[speech_raw];"
+    filter_str += "".join([f"[a{i + 1}]" for i in range(len(clips))]) + f"amix=inputs={len(clips)}:normalize=0[speech_raw];"
     filter_str += "[speech_raw]asplit=2[speech_out][trigger];"
     filter_str += "[0:a]aformat=sample_rates=48000:channel_layouts=stereo[bg_fixed];"
     filter_str += "[bg_fixed][trigger]sidechaincompress=threshold=0.02:ratio=5:attack=50:release=600[bg_ducked];"

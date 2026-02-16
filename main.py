@@ -290,7 +290,26 @@ class AIDubber:
                 for cand, score in top_3:
                     tmp_wav = os.path.join(self.temp_dir, f"test_{spk}_{cand['start']}.wav")
                     filt = "highpass=f=100,afftdn=nf=-20,speechnorm=e=10:r=0.0001:l=1"
-                    run_cmd(["ffmpeg", "-i", vocals_path, "-ss", str(cand["start"]), "-t", str(cand["end"]-cand["start"]), "-af", filt, "-ac", "1", "-ar", "24000", tmp_wav, "-y"], "zcr check")
+                    run_cmd(
+                        [
+                            "ffmpeg",
+                            "-i",
+                            vocals_path,
+                            "-ss",
+                            str(cand["start"]),
+                            "-t",
+                            str(cand["end"] - cand["start"]),
+                            "-af",
+                            filt,
+                            "-ac",
+                            "1",
+                            "-ar",
+                            "24000",
+                            tmp_wav,
+                            "-y",
+                        ],
+                        "zcr check",
+                    )
 
                     zcr = measure_zcr(tmp_wav)
                     if zcr > 0.15:
@@ -317,9 +336,6 @@ class AIDubber:
 
         for spk in all_speakers:
             my_best = best_per_speaker.get(spk)
-            info = self.speaker_info.get(spk, {})
-            name = info.get("name", "").lower()
-            desc = info.get("desc", "").lower()
 
             if not my_best:
                 logging.warning(f"  [Speaker {spk}] No candidates found. Voice cloning might fail.")
@@ -486,10 +502,10 @@ class AIDubber:
                 zcr = measure_zcr(dyn_path)
 
                 is_good_dynamic = (
-                    os.path.exists(dyn_path)
-                    and os.path.getsize(dyn_path) > 4000
-                    and zcr < 0.25
-                    and dur > 0.8
+                    os.path.exists(dyn_path) and
+                    os.path.getsize(dyn_path) > 4000 and
+                    zcr < 0.25 and
+                    dur > 0.8
                 )
 
                 if is_good_dynamic:
@@ -552,7 +568,7 @@ class AIDubber:
             del f5
             gc.collect()
             torch.cuda.empty_cache()
-        except Exception as e:
+        except Exception:
             logging.exception("TTS Worker failed")
             self.abort_event.set()
         finally:
