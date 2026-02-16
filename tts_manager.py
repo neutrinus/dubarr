@@ -30,7 +30,11 @@ class TTSManager:
         self.engine = None
 
     def load_engine(self):
-        """Initializes the TTS engine."""
+        """Initializes the TTS engine. Skips in MOCK_MODE."""
+        if os.environ.get("MOCK_MODE") == "1":
+            logging.info("TTS: MOCK_MODE enabled. Skipping engine load.")
+            return
+
         if not self.engine:
             # F5TTSWrapper expects an int gpu_id or runs on CPU if not found/configured
             gpu_id = 0
@@ -83,8 +87,14 @@ class TTSManager:
                 if "cuda" in self.device:
                     torch.cuda.empty_cache()
 
-    def _run_synthesis(self, *args, **kwargs):
-        """Wrapper for TTS inference that respects the global lock if needed."""
+    def _run_synthesis(self, text, ref_audio, output_path, **kwargs):
+        """Wrapper for TTS inference that respects the global lock if needed. Mocks in MOCK_MODE."""
+        if os.environ.get("MOCK_MODE") == "1":
+            # Generate a 1 second silent WAV file using ffmpeg
+            cmd = ["ffmpeg", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", "1", "-y", output_path]
+            subprocess.run(cmd, capture_output=True, check=True)
+            return
+
         if self.inference_lock:
             with self.inference_lock:
                 return self.engine.synthesize(*args, **kwargs)

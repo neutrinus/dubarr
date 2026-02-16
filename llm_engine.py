@@ -32,7 +32,12 @@ class LLMManager:
         self.abort_event = threading.Event()
 
     def load_model(self):
-        """Loads the LLM into VRAM or RAM. Downloads if missing."""
+        """Loads the LLM into VRAM or RAM. Downloads if missing. Skips in MOCK_MODE."""
+        if os.environ.get("MOCK_MODE") == "1":
+            logging.info("LLM: MOCK_MODE enabled. Skipping model load.")
+            self.ready_event.set()
+            return
+
         if not os.path.exists(self.model_path):
             logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
             try:
@@ -87,6 +92,23 @@ class LLMManager:
 
     def _run_inference(self, prompt, **kwargs):
         """Wrapper for LLM inference that respects the global lock if needed."""
+        if os.environ.get("MOCK_MODE") == "1":
+            # Mock responses based on prompt type
+            if "Analyze the movie script" in prompt:
+                return {"choices": [{"text": json.dumps({
+                    "summary": "Mock summary", 
+                    "glossary": {"test": "test"}, 
+                    "speakers": {"SPEAKER_00": {"name": "Mock", "desc": "Male voice"}}
+                })}]}
+            if "Transcription Corrector" in prompt:
+                return {"choices": [{"text": json.dumps({"0": "Mocked source correction"})}]}
+            if "adapt" in prompt:
+                return {"choices": [{"text": json.dumps({
+                    "thought": "Mock thought", 
+                    "translations": [{"id": 0, "text": "To jest mockowe tłumaczenie"}]
+                })}]}
+            return {"choices": [{"text": "{}"}]}
+
         if not self.llm:
             raise RuntimeError("LLM model not loaded!")
 

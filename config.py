@@ -6,6 +6,7 @@ import torch
 
 DEBUG_MODE = os.environ.get("DEBUG", "0").lower() in ("1", "true", "yes")
 VERBOSE_MODE = os.environ.get("VERBOSE", "0").lower() in ("1", "true", "yes")
+MOCK_MODE = os.environ.get("MOCK_MODE", "0").lower() in ("1", "true", "yes")
 LOG_LEVEL = logging.DEBUG if VERBOSE_MODE else logging.INFO
 
 # Paths

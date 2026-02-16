@@ -89,3 +89,27 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  smoke-test:
+    name: Smoke Test (MOCK Mode)
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Docker Container in MOCK mode
+        run: |
+          docker run -d --name dubarr-test \
+            -e MOCK_MODE=1 \
+            -e HF_TOKEN=dummy \
+            -p 8080:8080 \
+            ghcr.io/${{ github.repository }}:main
+      - name: Run Smoke Test Script
+        run: |
+          python3 -m pip install requests
+          python3 scripts/smoke_test.py
+      - name: Check Container Logs on Failure
+        if: failure()
+        run: docker logs dubarr-test
+      - name: Cleanup
+        if: always()
+        run: docker rm -f dubarr-test

@@ -12,9 +12,15 @@ from utils import run_cmd
 
 
 def prep_audio(vpath: str) -> Tuple[str, str]:
-    """Extracts original stereo audio and separates vocals using Demucs."""
+    """Extracts original stereo audio and separates vocals using Demucs. Mocks in MOCK_MODE."""
     a_stereo = os.path.join(TEMP_DIR, "orig.wav")
     run_cmd(["ffmpeg", "-i", vpath, "-vn", "-ac", "2", "-y", a_stereo], "extract audio")
+
+    if os.environ.get("MOCK_MODE") == "1":
+        logging.info("Demucs: MOCK_MODE enabled. Using original audio as vocals.")
+        vocals_path = os.path.join(TEMP_DIR, "vocals.mp3")
+        run_cmd(["ffmpeg", "-i", a_stereo, "-y", vocals_path], "mock separation")
+        return a_stereo, vocals_path
 
     # Demucs expects a device string like "cuda" or "cpu"
     # If DEVICE_AUDIO is "cuda:0", we pass "cuda:0"
@@ -40,7 +46,10 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
 
 
 def run_diarization(mpath: str) -> List[Dict]:
-    """Runs speaker diarization using Pyannote."""
+    """Runs speaker diarization using Pyannote. Mocks in MOCK_MODE."""
+    if os.environ.get("MOCK_MODE") == "1":
+        return [{"start": 0.0, "end": 5.0, "speaker": "SPEAKER_00"}]
+
     from pyannote.audio import Pipeline
 
     logging.info(f"Diarization: Loading on {DEVICE_AUDIO}")
@@ -67,7 +76,16 @@ def run_diarization(mpath: str) -> List[Dict]:
 
 
 def run_transcription(mpath: str) -> List[Dict]:
-    """Runs transcription using Faster-Whisper."""
+    """Runs transcription using Faster-Whisper. Mocks in MOCK_MODE."""
+    if os.environ.get("MOCK_MODE") == "1":
+        return [{
+            "start": 0.0,
+            "end": 5.0,
+            "text": "This is a mock transcription for testing.",
+            "avg_logprob": -0.1,
+            "no_speech_prob": 0.01,
+        }]
+
     from faster_whisper import WhisperModel
 
     logging.info(f"Whisper: Loading on {DEVICE_AUDIO}")
