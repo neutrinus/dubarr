@@ -33,7 +33,7 @@ The system automatically detects your hardware and chooses the best processing s
 
 ### 1. Prerequisites
 *   **Hugging Face Token**: Required for Pyannote 3.1 (Diarization). [Accept terms here](https://huggingface.co/pyannote/speaker-diarization-3.1).
-*   **Models**: Place the LLM model at `models/google_gemma-3-12b-it-Q4_K_M.gguf`.
+*   **Models**: No manual download needed. The system will automatically fetch the Gemma 3 LLM on the first run and store it in the `./models` directory.
 
 ### 2. Deployment (Docker Compose)
 The easiest way to run `dubarr` is using Docker Compose. The image is automatically built and published to `ghcr.io`.

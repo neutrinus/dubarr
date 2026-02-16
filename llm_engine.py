@@ -32,7 +32,29 @@ class LLMManager:
         self.abort_event = threading.Event()
 
     def load_model(self):
-        """Loads the LLM into VRAM or RAM."""
+        """Loads the LLM into VRAM or RAM. Downloads if missing."""
+        if not os.path.exists(self.model_path):
+            logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
+            try:
+                from huggingface_hub import hf_hub_download
+                repo_id = "bartowski/google_gemma-3-12b-it-GGUF"
+                filename = os.path.basename(self.model_path)
+                
+                # Ensure models directory exists
+                os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+                
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    local_dir=os.path.dirname(self.model_path),
+                    local_dir_use_symlinks=False
+                )
+                logging.info("LLM: Download completed successfully.")
+            except Exception as e:
+                logging.error(f"LLM: Failed to download model: {e}")
+                self.abort_event.set()
+                raise
+
         logging.info(f"LLM: Loading on {self.device}...")
         try:
             logging.info(f"LLM: GPU Offload Supported: {llama_supports_gpu_offload()}")

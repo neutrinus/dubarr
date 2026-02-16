@@ -67,11 +67,7 @@ RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/
     /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py; \
     fi
 
-# 4. Pre-download models
-# Gemma 3 12B
-RUN mkdir -p /app/models && /app/.venv_app/bin/python3 -c "from huggingface_hub import hf_hub_download; \
-    hf_hub_download(repo_id='bartowski/google_gemma-3-12b-it-GGUF', filename='google_gemma-3-12b-it-Q4_K_M.gguf', local_dir='/app/models')"
-
+# 4. Pre-download models (Basic setup only)
 # XTTS v2 (Coqui) - We'll trigger the download during build to bake it in
 RUN mkdir -p /app/tts_cache && \
     export COQUI_TOS_AGREED=1 && \
