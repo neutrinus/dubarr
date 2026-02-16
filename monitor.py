@@ -30,11 +30,12 @@ class ResourceMonitor(threading.Thread):
                             parts = line.split(',')
                             if len(parts) >= 2:
                                 gpus.append((parts[0].strip(), parts[1].strip()))
-                except:
+                except Exception:
                     pass
                 
                 # Fill missing GPUs with 0
-                while len(gpus) < 2: gpus.append(("0", "0"))
+                while len(gpus) < 2:
+                    gpus.append(("0", "0"))
                 
                 # Queue Sizes
                 qt = self.state.get('q_text').qsize() if self.state.get('q_text') else 0

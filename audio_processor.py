@@ -6,10 +6,9 @@ import torch
 import gc
 import shutil
 import time
-import threading
 from typing import List, Dict, Tuple
 from config import GPU_AUDIO, TEMP_DIR, WHISPER_MODEL
-from utils import run_cmd, measure_zcr
+from utils import run_cmd
 
 def prep_audio(vpath: str) -> Tuple[str, str]:
     a_stereo = os.path.join(TEMP_DIR, "orig.wav")
@@ -36,10 +35,12 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
         p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=os.environ.get("HF_TOKEN"))
         p.to(torch.device(f"cuda:{gpu_index}"))
         res = p(mpath)
-        for s, _, l in res.itertracks(yield_label=True):
-            diar_result.append({"start": s.start, "end": s.end, "speaker": l})
+        for s, _, label in res.itertracks(yield_label=True):
+            diar_result.append({"start": s.start, "end": s.end, "speaker": label})
         durations["2a. Diarization (Parallel)"] = time.perf_counter() - t0
-        del p; gc.collect(); torch.cuda.empty_cache()
+        del p
+        gc.collect()
+        torch.cuda.empty_cache()
 
     def run_whisper():
         t0 = time.perf_counter()
@@ -48,7 +49,8 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
         m = WhisperModel(WHISPER_MODEL, device="cuda", device_index=gpu_index, compute_type="float16")
         ts, _ = m.transcribe(mpath)
         for x in ts:
-            if x.avg_logprob < -1.0: continue
+            if x.avg_logprob < -1.0:
+                continue
             trans_result.append({
                 "start": x.start, 
                 "end": x.end, 
@@ -58,7 +60,9 @@ def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
                 "compression_ratio": x.compression_ratio
             })
         durations["2b. Transcription (Sequential)"] = time.perf_counter() - t0
-        del m; gc.collect(); torch.cuda.empty_cache()
+        del m
+        gc.collect()
+        torch.cuda.empty_cache()
 
     logging.info(f"Starting Sequential Audio Analysis on GPU {gpu_index}...")
     run_diar()
@@ -74,9 +78,10 @@ def trim_silence(path: str):
         subprocess.run(cmd, check=True, capture_output=True)
         if os.path.getsize(tmp) > 100:
             os.replace(tmp, path)
-    except:
+    except Exception:
         pass
-    if os.path.exists(tmp): os.remove(tmp)
+    if os.path.exists(tmp):
+        os.remove(tmp)
 
 def mix_audio(bg: str, clips: List, out: str):
     if not clips: 
@@ -99,13 +104,13 @@ def mix_audio(bg: str, clips: List, out: str):
     
     run_cmd(["ffmpeg"] + inputs + ["-filter_complex_script", filter_path, "-map", "[out]", "-c:a", "ac3", out, "-y"], "final mixing")
 
-def mux_video(v: str, a: str, l: str, out: str, lang_name: str):
+def mux_video(v: str, a: str, lang: str, out: str, lang_name: str):
     title = f"AI - {lang_name}"
     subprocess.run([
         "ffmpeg", "-i", v, "-i", a, 
         "-map", "0:v", "-map", "1:a", "-map", "0:a", 
         "-c:v", "copy", "-c:a", "ac3", 
-        "-metadata:s:a:0", f"language={l}", 
+        "-metadata:s:a:0", f"language={lang}", 
         "-metadata:s:a:0", f"title={title}", 
         out, "-y"
     ], capture_output=True)
