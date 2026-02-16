@@ -13,9 +13,11 @@ services:
       - ./videos:/app/videos
       - ./output:/app/output
       - ./models:/app/models
-      # Mount .cache to persist downloaded models (Whisper, Demucs, TTS)
-      - dubarr_cache:/root/.cache
+      # Mount cache volume to /data/cache
+      - dubarr_cache:/data/cache
     environment:
+      - PUID=1000
+      - PGID=1000
       - HF_TOKEN=${HF_TOKEN}
       - TARGET_LANGS=${TARGET_LANGS:-pl}
       - DEBUG=${DEBUG:-0}

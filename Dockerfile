@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     aria2 \
     libsndfile1 \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Set python3.10 as the default python
@@ -62,6 +63,9 @@ COPY . .
 
 # Verification step: ensure core libraries are importable
 RUN python -c "import torch; import faster_whisper; import TTS; print('Environment verification successful')"
+
+# Use entrypoint script to handle PUID/PGID
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Define the default command to be executed when the container starts
 CMD ["python", "main.py"]
