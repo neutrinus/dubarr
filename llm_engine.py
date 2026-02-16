@@ -37,17 +37,18 @@ class LLMManager:
             logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
             try:
                 from huggingface_hub import hf_hub_download
+
                 repo_id = "bartowski/google_gemma-3-12b-it-GGUF"
                 filename = os.path.basename(self.model_path)
-                
+
                 # Ensure models directory exists
                 os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-                
+
                 hf_hub_download(
                     repo_id=repo_id,
                     filename=filename,
                     local_dir=os.path.dirname(self.model_path),
-                    local_dir_use_symlinks=False
+                    local_dir_use_symlinks=False,
                 )
                 logging.info("LLM: Download completed successfully.")
             except Exception as e:

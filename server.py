@@ -6,7 +6,7 @@ import time
 import uvicorn
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, Form
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
@@ -95,9 +95,7 @@ class DubberWorker(threading.Thread):
         # Simple locking mechanism: find QUEUED, update to PROCESSING
         try:
             c.execute("BEGIN IMMEDIATE")
-            c.execute(
-                "SELECT id, path FROM tasks WHERE status = 'QUEUED' ORDER BY created_at ASC LIMIT 1"
-            )
+            c.execute("SELECT id, path FROM tasks WHERE status = 'QUEUED' ORDER BY created_at ASC LIMIT 1")
             row = c.fetchone()
             if row:
                 task_id, path = row
