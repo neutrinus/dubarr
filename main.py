@@ -4,9 +4,9 @@ import logging
 import time
 import threading
 import queue
-import torch
 import gc
 import sys
+import torch
 import humanfriendly
 import shutil
 import subprocess
@@ -24,10 +24,10 @@ from config import (
     GPU_AUDIO,
     TARGET_LANGS,
 )
-from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, T_TRANS, T_CRITIC, T_SHORTEN
-from utils import parse_json, clean_srt, measure_zcr, count_syllables, clean_output, run_cmd
+from utils import clean_srt, measure_zcr, count_syllables, run_cmd
 from monitor import ResourceMonitor
 from tts_engine import F5TTSWrapper
+from llm_engine import LLMManager
 import audio_processor
 
 setup_logging()
@@ -46,7 +46,6 @@ class AIDubber:
         self.gpu_audio = GPU_AUDIO
 
         self.durations = {}
-        self.llm_stats = {"tokens": 0, "time": 0}
         self.speaker_info = {}
         self.speaker_refs = {}
         self.global_context = {}
@@ -54,9 +53,10 @@ class AIDubber:
         self.speaker_pans = {}
         self.last_good_samples = {}
         self.abort_event = threading.Event()
-        self.llm = None
+        self.llm_manager = LLMManager(
+            model_path=MODEL_PATH, gpu_id=self.gpu_llm, debug_mode=self.debug_mode, target_langs=self.target_langs
+        )
         self.monitor = None
-        self.llm_ready = threading.Event()
 
     def _cleanup_debug(self, fname):
         d = os.path.join(self.output_folder, "debug_" + os.path.splitext(fname)[0])
@@ -66,105 +66,12 @@ class AIDubber:
             os.makedirs(d, exist_ok=True)
         return d
 
-    def _load_model(self):
-        logging.info(f"Background: Loading LLM on Dedicated GPU {self.gpu_llm}...")
-        try:
-            from llama_cpp import Llama, llama_supports_gpu_offload
-            logging.info(f"LLM: GPU Offload Supported: {llama_supports_gpu_offload()}")
-            self.llm = Llama(
-                model_path=MODEL_PATH,
-                n_gpu_layers=99,
-                main_gpu=self.gpu_llm,
-                n_ctx=8192,
-                n_batch=512,
-                n_threads=4,
-                flash_attn=True,
-                verbose=True,
-            )
-            logging.info("Background: LLM Loaded and ready.")
-            self.llm_ready.set()
-        except Exception as e:
-            logging.error(f"Background: LLM Load Failed: {e}")
-            self.abort_event.set()
-
     def _create_script(self, diar, trans):
         script = []
         for t in trans:
             spk = next((d["speaker"] for d in diar if max(t["start"], d["start"]) < min(t["end"], d["end"])), "unknown")
             script.append({**t, "speaker": spk, "text_en": t["text"], "avg_logprob": t.get("avg_logprob", 0)})
         return script
-
-    def _llm_phase(self, script, ddir, subtitles=""):
-        if not self.llm:
-            raise RuntimeError("LLM model not loaded!")
-
-        max_overview_lines = 400
-        if len(script) > max_overview_lines:
-            logging.warning(f"Script too long ({len(script)} lines). Truncating overview for Profiler.")
-            mid = len(script) // 2
-            ov_subset = script[mid - 200:mid + 200]
-            ov = "\n".join([f"{s['speaker']}: {s['text_en']}" for s in ov_subset])
-        else:
-            ov = "\n".join([f"{s['speaker']}: {s['text_en']}" for s in script])
-
-        lang_names = [LANG_MAP.get(lang, lang) for lang in self.target_langs]
-        logging.info("LLM Stage 1 & 2 Combined: Full Analysis (Context + Profiling)")
-
-        t0 = time.perf_counter()
-        res = self.llm(
-            T_ANALYSIS.format(overview=ov, langs=", ".join(lang_names), subtitles=subtitles),
-            max_tokens=2000,
-            stop=["<|im_end|>"],
-        )
-        dt = time.perf_counter() - t0
-        toks = res.get("usage", {}).get("completion_tokens", 0)
-        self.llm_stats["tokens"] += toks
-        self.llm_stats["time"] += dt
-
-        analysis = parse_json(res["choices"][0]["text"])
-        self.global_context = {k: v for k, v in analysis.items() if k != "speakers"}
-        self.speaker_info = analysis.get("speakers", {})
-
-        logging.info("LLM Stage 3: ASR Correction (Editor - Diff Only)")
-        chunk_sz = 100
-        glossary_str = json.dumps(self.global_context.get("glossary", {}))
-        for i in range(0, len(script), chunk_sz):
-            chunk = script[i:i + chunk_sz]
-            txt = "\n".join([f"L_{i + j}: {s['text_en']}" for j, s in enumerate(chunk)])
-            t0 = time.perf_counter()
-            res = self.llm(
-                T_ED.format(glossary=glossary_str, subtitles=subtitles, txt=txt),
-                max_tokens=2000,
-                temperature=0.0,
-                stop=["<|im_end|>"],
-            )
-            dt = time.perf_counter() - t0
-            toks = res.get("usage", {}).get("completion_tokens", 0)
-            self.llm_stats["tokens"] += toks
-            self.llm_stats["time"] += dt
-
-            try:
-                corrections = parse_json(res["choices"][0]["text"])
-                if isinstance(corrections, dict):
-                    for idx_str, new_text in corrections.items():
-                        try:
-                            idx = int(idx_str.replace("L_", ""))
-                            if 0 <= idx < len(script):
-                                if script[idx]["text_en"] != new_text and self.debug_mode:
-                                    logging.info(f"ASR Fix L_{idx}: '{script[idx]['text_en']}' -> '{new_text}'")
-                                script[idx]["text_en"] = new_text
-                        except ValueError:
-                            continue
-            except Exception as e:
-                logging.warning(f"Failed to parse ASR corrections for chunk starting at {i}: {e}")
-
-        if self.debug_mode:
-            with open(os.path.join(ddir, "context.json"), "w") as f:
-                json.dump(self.global_context, f, indent=2)
-            with open(os.path.join(ddir, "speakers.json"), "w") as f:
-                json.dump(self.speaker_info, f, indent=2)
-            with open(os.path.join(ddir, "script_fixed.json"), "w") as f:
-                json.dump(script, f, indent=2)
 
     def _extract_subtitles(self, vpath):
         base_path = os.path.splitext(vpath)[0]
@@ -336,142 +243,10 @@ class AIDubber:
 
         for spk in all_speakers:
             my_best = best_per_speaker.get(spk)
-
             if not my_best:
                 logging.warning(f"  [Speaker {spk}] No candidates found. Voice cloning might fail.")
             elif my_best[1] < 65:
                 logging.warning(f"  [Speaker {spk}] Low Score {my_best[1]}. Using best available candidate.")
-
-    def _producer(self, script, lang, q_text, spk_info, glob_ctx, draft_list, final_list):
-        t_trans_total = 0
-        t_critic_total = 0
-        total_tokens = 0
-        try:
-            if not self.llm:
-                raise RuntimeError("LLM model not loaded in producer!")
-            summary = glob_ctx.get("summary", "")
-            glossary = glob_ctx.get("glossary", {})
-            lang_name = LANG_MAP.get(lang, lang)
-            valid_indices = [
-                idx
-                for idx, s in enumerate(script)
-                if not any(x in s["text_en"].lower() for x in ["[", "(", "laughter", "screams"])
-            ]
-
-            for b_start in range(0, len(valid_indices), 10):
-                if self.abort_event.is_set():
-                    return
-                batch_indices = valid_indices[b_start:b_start + 10]
-                json_batch = [
-                    {
-                        "id": idx,
-                        "speaker": spk_info.get(script[idx]["speaker"], {}).get("name", script[idx]["speaker"]),
-                        "text": script[idx]["text_en"],
-                    }
-                    for idx in batch_indices
-                ]
-                trans_prompt = T_TRANS.format(
-                    system_prompt=T_TRANS_SYSTEM.format(
-                        lang_name=lang_name, glossary=json.dumps(glossary, ensure_ascii=False)
-                    ),
-                    json_input=json.dumps(json_batch, indent=2),
-                )
-
-                t_start = time.perf_counter()
-                res = self.llm(trans_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
-                dt = time.perf_counter() - t_start
-                tokens = res.get("usage", {}).get("completion_tokens", 0)
-                total_tokens += tokens
-                t_trans_total += dt
-                self.llm_stats["tokens"] += tokens
-                self.llm_stats["time"] += dt
-
-                parsed_trans = parse_json(res["choices"][0]["text"])
-                trans_map = {
-                    item["id"]: clean_output(item["text"], self.target_langs)
-                    for item in parsed_trans.get("translations", [])
-                    if "id" in item
-                }
-
-                json_critic = []
-                final_batch_map = {}
-                for idx in batch_indices:
-                    txt = trans_map.get(idx, script[idx]["text_en"])
-                    draft_list.append(
-                        {
-                            "index": idx,
-                            "text": txt,
-                            "speaker": script[idx]["speaker"],
-                            "start": script[idx]["start"],
-                            "end": script[idx]["end"],
-                        }
-                    )
-                    syl_draft = count_syllables(txt, lang)
-                    if syl_draft <= 3:
-                        final_batch_map[idx] = txt
-                    else:
-                        json_critic.append({"id": idx, "original": script[idx]["text_en"], "draft": txt})
-
-                if json_critic:
-                    critic_prompt = T_CRITIC.format(
-                        system_prompt=T_CRITIC_SYSTEM.format(
-                            summary=summary, glossary=json.dumps(glossary, ensure_ascii=False)
-                        ),
-                        json_input=json.dumps(json_critic, indent=2),
-                    )
-                    t_start = time.perf_counter()
-                    res_crit = self.llm(critic_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
-                    dt = time.perf_counter() - t_start
-                    tokens = res_crit.get("usage", {}).get("completion_tokens", 0)
-                    total_tokens += tokens
-                    t_critic_total += dt
-                    self.llm_stats["tokens"] += tokens
-                    self.llm_stats["time"] += dt
-
-                    parsed_crit = parse_json(res_crit["choices"][0]["text"])
-                    for item in parsed_crit.get("final_translations", []):
-                        if "id" in item:
-                            final_batch_map[item["id"]] = clean_output(
-                                item.get("final_text"), self.target_langs
-                            ) or trans_map.get(item["id"])
-
-                for idx in batch_indices:
-                    txt = final_batch_map.get(idx, trans_map.get(idx, script[idx]["text_en"]))
-                    syl_orig = count_syllables(script[idx]["text_en"], "en")
-                    syl_final = count_syllables(txt, lang)
-                    if syl_final > syl_orig * 1.5:
-                        t0 = time.perf_counter()
-                        short_res = self.llm(
-                            T_SHORTEN.format(original=script[idx]["text_en"], text=txt),
-                            max_tokens=150,
-                            temperature=0.0,
-                            stop=["<|im_end|>"],
-                        )
-                        dt = time.perf_counter() - t0
-                        toks = short_res.get("usage", {}).get("completion_tokens", 0)
-                        self.llm_stats["tokens"] += toks
-                        self.llm_stats["time"] += dt
-                        short_txt = clean_output(
-                            parse_json(short_res["choices"][0]["text"]).get("final_text", txt), self.target_langs
-                        )
-                        if len(short_txt) > 2:
-                            txt = short_txt
-                    final_item = {
-                        "index": idx,
-                        "text": txt,
-                        "speaker": script[idx]["speaker"],
-                        "start": script[idx]["start"],
-                        "end": script[idx]["end"],
-                    }
-                    final_list.append(final_item)
-                    q_text.put(final_item)
-            self.durations[f"5a. LLM Translation ({lang})"] = t_trans_total
-            self.durations[f"5b. LLM Critique ({lang})"] = t_critic_total
-        except Exception:
-            logging.exception("Producer thread failed")
-            self.abort_event.set()
-        finally:
-            q_text.put(None)
 
     def _tts_worker(self, lang, q_in, q_out, translations, vocals_path, script):
         t_tts_total = 0
@@ -501,12 +276,7 @@ class AIDubber:
                 audio_processor.extract_clean_segment(vocals_path, item["start"], item["end"], dyn_path)
                 zcr = measure_zcr(dyn_path)
 
-                is_good_dynamic = (
-                    os.path.exists(dyn_path) and
-                    os.path.getsize(dyn_path) > 4000 and
-                    zcr < 0.25 and
-                    dur > 0.8
-                )
+                is_good_dynamic = os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25 and dur > 0.8
 
                 if is_good_dynamic:
                     chosen_ref = dyn_path
@@ -668,10 +438,10 @@ class AIDubber:
         self.durations.update(audio_durs)
 
         # Load LLM only after memory-intensive Audio Analysis is done
-        if not self.llm:
-            threading.Thread(target=self._load_model, daemon=True).start()
+        if not self.llm_manager.llm:
+            threading.Thread(target=self.llm_manager.load_model, daemon=True).start()
             logging.info("Waiting for LLM to load...")
-            self.llm_ready.wait()
+            self.llm_manager.ready_event.wait()
 
         script = self._create_script(diar, trans)
         if self.debug_mode:
@@ -680,7 +450,14 @@ class AIDubber:
         if self.abort_event.is_set():
             return
         ref_subs = self._extract_subtitles(vpath)
-        step("3. LLM Enhancement (Context/Speakers/ASR Fix)", self._llm_phase, script, ddir, ref_subs)
+
+        # LLM Phase 1-3
+        analysis_results = step(
+            "3. LLM Enhancement (Context/Speakers/ASR Fix)", self.llm_manager.analyze_script, script, ddir, ref_subs
+        )
+        self.global_context = analysis_results["context"]
+        self.speaker_info = analysis_results["speakers"]
+
         step("4. Voice Reference Extraction", self._extract_refs, script, vocals, ddir)
 
         for lang in self.target_langs:
@@ -693,7 +470,7 @@ class AIDubber:
             draft_translations = []
             final_translations = []
             p_th = threading.Thread(
-                target=self._producer,
+                target=self.llm_manager.translation_producer,
                 args=(script, lang, q_text, self.speaker_info, self.global_context, draft_translations, final_translations),
                 daemon=True,
             )
@@ -731,14 +508,16 @@ class AIDubber:
 
         if self.monitor:
             self.monitor.stop()
-        if self.llm:
-            del self.llm
-            gc.collect()
-            torch.cuda.empty_cache()
-        self._print_report(f, time.perf_counter() - start_all)
 
-    def _print_report(self, f, t):
-        avg_tps = self.llm_stats["tokens"] / self.llm_stats["time"] if self.llm_stats["time"] > 0 else 0
+        # Stats and Cleanup
+        avg_tps = (
+            self.llm_manager.llm_stats["tokens"] / self.llm_manager.llm_stats["time"]
+            if self.llm_manager.llm_stats["time"] > 0
+            else 0
+        )
+        self._print_report(f, time.perf_counter() - start_all, avg_tps)
+
+    def _print_report(self, f, t, avg_tps):
         rep = ["\n" + "=" * 50, f" PROFILING REPORT: {f}", "=" * 50]
         for k, v in sorted(self.durations.items()):
             rep.append(f" - {k:35} : {humanfriendly.format_timespan(v)}")

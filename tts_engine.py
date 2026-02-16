@@ -44,9 +44,7 @@ class XTTSClient:
         python_path = "/app/.venv_tts/bin/python3"
         server_path = "/app/tts_server.py"
 
-        self.server_process = subprocess.Popen(
-            [python_path, server_path], env=env, preexec_fn=os.setsid
-        )
+        self.server_process = subprocess.Popen([python_path, server_path], env=env, preexec_fn=os.setsid)
 
         # Wait for server to be ready
         max_retries = 120
