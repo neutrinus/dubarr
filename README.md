@@ -1,7 +1,7 @@
 # dubarr 🎬
 
 > [!NOTE]
-> To jest projekt hobbystyczny ("zabawka"), stworzony w całości w trybie **vibe-coding** (AI-driven development).
+> This is a hobby project ("toy"), created entirely in **vibe-coding** mode (AI-driven development).
 
 An automated system for creating professional AI-powered dubbing (voice-over) using **fully local** AI models. Designed to integrate seamlessly with the `*arr` stack (Radarr/Sonarr) for feature-length movies and TV series.
 
