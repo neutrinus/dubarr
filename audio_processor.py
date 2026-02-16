@@ -78,13 +78,15 @@ def run_diarization(mpath: str) -> List[Dict]:
 def run_transcription(mpath: str) -> List[Dict]:
     """Runs transcription using Faster-Whisper. Mocks in MOCK_MODE."""
     if os.environ.get("MOCK_MODE") == "1":
-        return [{
-            "start": 0.0,
-            "end": 5.0,
-            "text": "This is a mock transcription for testing.",
-            "avg_logprob": -0.1,
-            "no_speech_prob": 0.01,
-        }]
+        return [
+            {
+                "start": 0.0,
+                "end": 5.0,
+                "text": "This is a mock transcription for testing.",
+                "avg_logprob": -0.1,
+                "no_speech_prob": 0.01,
+            }
+        ]
 
     from faster_whisper import WhisperModel
 
