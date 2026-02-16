@@ -33,3 +33,7 @@ jobs:
     - name: Lint with pylint
       run: |
         uv run pylint $(git ls-files '*.py') --exit-zero
+    - name: Run unit tests
+      run: |
+        export PYTHONPATH=$PYTHONPATH:.
+        uv run pytest tests/
