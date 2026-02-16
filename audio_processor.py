@@ -7,7 +7,7 @@ import gc
 import shutil
 import time
 from typing import List, Dict, Tuple
-from config import GPU_AUDIO, TEMP_DIR, WHISPER_MODEL
+from config import DEVICE_AUDIO, TEMP_DIR, WHISPER_MODEL
 from utils import run_cmd
 
 
@@ -16,6 +16,8 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
     a_stereo = os.path.join(TEMP_DIR, "orig.wav")
     run_cmd(["ffmpeg", "-i", vpath, "-vn", "-ac", "2", "-y", a_stereo], "extract audio")
 
+    # Demucs expects a device string like "cuda" or "cpu"
+    # If DEVICE_AUDIO is "cuda:0", we pass "cuda:0"
     demucs_cmd = [
         "demucs",
         "--mp3",
@@ -26,7 +28,7 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
         "-n",
         "mdx_extra_q",
         "--device",
-        f"cuda:{GPU_AUDIO}",
+        DEVICE_AUDIO,
         a_stereo,
     ]
     run_cmd(demucs_cmd, "demucs separation")
@@ -37,14 +39,14 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
     return a_stereo, found[0]
 
 
-def run_diarization(mpath: str, gpu_index: int) -> List[Dict]:
+def run_diarization(mpath: str) -> List[Dict]:
     """Runs speaker diarization using Pyannote."""
     from pyannote.audio import Pipeline
 
-    logging.info(f"Diarization: Loading on GPU {gpu_index}")
+    logging.info(f"Diarization: Loading on {DEVICE_AUDIO}")
 
     p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=os.environ.get("HF_TOKEN"))
-    p.to(torch.device(f"cuda:{gpu_index}"))
+    p.to(torch.device(DEVICE_AUDIO))
     res = p(mpath)
 
     annotation = getattr(res, "speaker_diarization", getattr(res, "diarization", getattr(res, "annotation", res)))
@@ -59,17 +61,28 @@ def run_diarization(mpath: str, gpu_index: int) -> List[Dict]:
 
     del p
     gc.collect()
-    torch.cuda.empty_cache()
+    if "cuda" in DEVICE_AUDIO:
+        torch.cuda.empty_cache()
     return diar_result
 
 
-def run_transcription(mpath: str, gpu_index: int) -> List[Dict]:
+def run_transcription(mpath: str) -> List[Dict]:
     """Runs transcription using Faster-Whisper."""
     from faster_whisper import WhisperModel
 
-    logging.info(f"Whisper: Loading on GPU {gpu_index}")
+    logging.info(f"Whisper: Loading on {DEVICE_AUDIO}")
 
-    m = WhisperModel(WHISPER_MODEL, device="cuda", device_index=gpu_index, compute_type="float16")
+    # Parse device string for Faster-Whisper
+    if "cuda" in DEVICE_AUDIO:
+        device = "cuda"
+        device_index = int(DEVICE_AUDIO.split(":")[-1])
+        compute_type = "float16"
+    else:
+        device = "cpu"
+        device_index = 0
+        compute_type = "int8"  # CPU works better/faster with int8 quantized
+
+    m = WhisperModel(WHISPER_MODEL, device=device, device_index=device_index, compute_type=compute_type)
     ts, _ = m.transcribe(mpath)
 
     trans_result = []
@@ -88,25 +101,26 @@ def run_transcription(mpath: str, gpu_index: int) -> List[Dict]:
 
     del m
     gc.collect()
-    torch.cuda.empty_cache()
+    if "cuda" in DEVICE_AUDIO:
+        torch.cuda.empty_cache()
     return trans_result
 
 
-def analyze_audio(vocals_path: str, gpu_index: int) -> Tuple[List, List, Dict]:
+def analyze_audio(vocals_path: str) -> Tuple[List, List, Dict]:
     """Orchestrates diarization and transcription."""
     mpath = os.path.join(TEMP_DIR, "mono.wav")
     run_cmd(["ffmpeg", "-i", vocals_path, "-ac", "1", mpath, "-y"], "mono conversion")
 
     durations = {}
-    logging.info(f"Starting Sequential Audio Analysis on GPU {gpu_index}...")
+    logging.info(f"Starting Sequential Audio Analysis on {DEVICE_AUDIO}...")
 
     t0 = time.perf_counter()
-    diar_result = run_diarization(mpath, gpu_index)
-    durations["2a. Diarization (Parallel)"] = time.perf_counter() - t0
+    diar_result = run_diarization(mpath)
+    durations["2a. Diarization"] = time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    trans_result = run_transcription(mpath, gpu_index)
-    durations["2b. Transcription (Sequential)"] = time.perf_counter() - t0
+    trans_result = run_transcription(mpath)
+    durations["2b. Transcription"] = time.perf_counter() - t0
 
     return diar_result, trans_result, durations
 

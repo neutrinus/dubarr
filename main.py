@@ -18,8 +18,9 @@ from config import (
     OUTPUT_FOLDER,
     TEMP_DIR,
     MODEL_PATH,
-    GPU_LLM,
-    GPU_AUDIO,
+    DEVICE_LLM,
+    DEVICE_AUDIO,
+    USE_LOCK,
     TARGET_LANGS,
 )
 from utils import clean_srt, measure_zcr, run_cmd
@@ -40,8 +41,9 @@ class AIDubber:
         self.target_langs = TARGET_LANGS
         self.debug_mode = DEBUG_MODE
 
-        self.gpu_llm = GPU_LLM
-        self.gpu_audio = GPU_AUDIO
+        self.device_llm = DEVICE_LLM
+        self.device_audio = DEVICE_AUDIO
+        self.inference_lock = threading.Lock() if USE_LOCK else None
 
         self.durations = {}
         self.speaker_info = {}
@@ -51,10 +53,18 @@ class AIDubber:
         self.speaker_pans = {}
         self.abort_event = threading.Event()
         self.llm_manager = LLMManager(
-            model_path=MODEL_PATH, gpu_id=self.gpu_llm, debug_mode=self.debug_mode, target_langs=self.target_langs
+            model_path=MODEL_PATH,
+            device=self.device_llm,
+            inference_lock=self.inference_lock,
+            debug_mode=self.debug_mode,
+            target_langs=self.target_langs,
         )
         self.tts_manager = TTSManager(
-            gpu_id=self.gpu_audio, temp_dir=self.temp_dir, speaker_refs=self.speaker_refs, abort_event=self.abort_event
+            device=self.device_audio,
+            inference_lock=self.inference_lock,
+            temp_dir=self.temp_dir,
+            speaker_refs=self.speaker_refs,
+            abort_event=self.abort_event,
         )
         self.monitor = None
 

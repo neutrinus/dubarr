@@ -5,7 +5,7 @@ import time
 import threading
 import gc
 import torch
-from typing import List, Dict
+from typing import List, Dict, Optional
 from llama_cpp import Llama, llama_supports_gpu_offload
 from utils import parse_json, clean_output, count_syllables
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, T_TRANS, T_CRITIC, T_SHORTEN
@@ -13,9 +13,17 @@ from config import LANG_MAP
 
 
 class LLMManager:
-    def __init__(self, model_path: str, gpu_id: int, debug_mode: bool = False, target_langs: List[str] = None):
+    def __init__(
+        self,
+        model_path: str,
+        device: str,
+        inference_lock: Optional[threading.Lock],
+        debug_mode: bool = False,
+        target_langs: List[str] = None,
+    ):
         self.model_path = model_path
-        self.gpu_id = gpu_id
+        self.device = device
+        self.inference_lock = inference_lock
         self.debug_mode = debug_mode
         self.target_langs = target_langs or ["pl"]
         self.llm = None
@@ -24,18 +32,27 @@ class LLMManager:
         self.abort_event = threading.Event()
 
     def load_model(self):
-        """Loads the LLM into VRAM."""
-        logging.info(f"LLM: Loading on Dedicated GPU {self.gpu_id}...")
+        """Loads the LLM into VRAM or RAM."""
+        logging.info(f"LLM: Loading on {self.device}...")
         try:
             logging.info(f"LLM: GPU Offload Supported: {llama_supports_gpu_offload()}")
+
+            # Determine params based on device type
+            if "cuda" in self.device:
+                n_gpu_layers = 99
+                main_gpu = int(self.device.split(":")[-1])
+            else:
+                n_gpu_layers = 0  # CPU mode
+                main_gpu = 0
+
             self.llm = Llama(
                 model_path=self.model_path,
-                n_gpu_layers=99,
-                main_gpu=self.gpu_id,
+                n_gpu_layers=n_gpu_layers,
+                main_gpu=main_gpu,
                 n_ctx=8192,
                 n_batch=512,
                 n_threads=4,
-                flash_attn=True,
+                flash_attn=(n_gpu_layers > 0),  # Flash Attn only works with CUDA
                 verbose=self.debug_mode,
             )
             logging.info("LLM: Ready.")
@@ -45,10 +62,19 @@ class LLMManager:
             self.abort_event.set()
             raise
 
-    def analyze_script(self, script: List[Dict], ddir: str, subtitles: str = "") -> Dict:
-        """Phase 1: Global Analysis & Phase 2: Speaker Profiling & Phase 3: ASR Correction."""
+    def _run_inference(self, prompt, **kwargs):
+        """Wrapper for LLM inference that respects the global lock if needed."""
         if not self.llm:
             raise RuntimeError("LLM model not loaded!")
+
+        if self.inference_lock:
+            with self.inference_lock:
+                return self.llm(prompt, **kwargs)
+        else:
+            return self.llm(prompt, **kwargs)
+
+    def analyze_script(self, script: List[Dict], ddir: str, subtitles: str = "") -> Dict:
+        """Phase 1: Global Analysis & Phase 2: Speaker Profiling & Phase 3: ASR Correction."""
 
         # 1. Overview for analysis
         max_overview_lines = 400
@@ -64,7 +90,7 @@ class LLMManager:
         logging.info("LLM: Starting Full Analysis (Context + Profiling)")
 
         t0 = time.perf_counter()
-        res = self.llm(
+        res = self._run_inference(
             T_ANALYSIS.format(overview=ov, langs=", ".join(lang_names), subtitles=subtitles),
             max_tokens=2000,
             stop=["<|im_end|>"],
@@ -83,7 +109,7 @@ class LLMManager:
             chunk = script[i : i + chunk_sz]
             txt = "\n".join([f"L_{i + j}: {s['text_en']}" for j, s in enumerate(chunk)])
             t0 = time.perf_counter()
-            res = self.llm(
+            res = self._run_inference(
                 T_ED.format(glossary=glossary_str, subtitles=subtitles, txt=txt),
                 max_tokens=2000,
                 temperature=0.0,
@@ -125,9 +151,6 @@ class LLMManager:
         t_trans_total = 0
         t_critic_total = 0
         try:
-            if not self.llm:
-                raise RuntimeError("LLM model not loaded in producer!")
-
             summary = global_context.get("summary", "")
             glossary = global_context.get("glossary", {})
             lang_name = LANG_MAP.get(lang, lang)
@@ -158,7 +181,7 @@ class LLMManager:
                     json_input=json.dumps(json_batch, indent=2),
                 )
                 t0 = time.perf_counter()
-                res = self.llm(trans_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
+                res = self._run_inference(trans_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
                 dt = time.perf_counter() - t0
                 t_trans_total += dt
                 self._update_stats(res, dt)
@@ -197,7 +220,7 @@ class LLMManager:
                         json_input=json.dumps(json_critic, indent=2),
                     )
                     t0 = time.perf_counter()
-                    res_crit = self.llm(critic_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
+                    res_crit = self._run_inference(critic_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
                     dt = time.perf_counter() - t0
                     t_critic_total += dt
                     self._update_stats(res_crit, dt)
@@ -216,7 +239,7 @@ class LLMManager:
                     syl_final = count_syllables(txt, lang)
                     if syl_final > syl_orig * 1.5:
                         t0 = time.perf_counter()
-                        short_res = self.llm(
+                        short_res = self._run_inference(
                             T_SHORTEN.format(original=script[idx]["text_en"], text=txt),
                             max_tokens=150,
                             temperature=0.0,
@@ -263,4 +286,5 @@ class LLMManager:
         if self.llm:
             del self.llm
             gc.collect()
-            torch.cuda.empty_cache()
+            if "cuda" in self.device:
+                torch.cuda.empty_cache()

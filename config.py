@@ -2,9 +2,7 @@ import os
 import logging
 import torch
 
-# GPU STRATEGY
-# GPU 1: RTX 3070 (8GB)  -> DEDICATED LLM ENGINE (Pure Gemma 3 12B)
-# GPU 0: RTX 3060 (12GB) -> MULTI-TASK ENGINE (Demucs, Whisper, Diarization, XTTS)
+# --- CONFIGURATION & HARDWARE DETECTION ---
 
 DEBUG_MODE = os.environ.get("DEBUG", "0").lower() in ("1", "true", "yes")
 VERBOSE_MODE = os.environ.get("VERBOSE", "0").lower() in ("1", "true", "yes")
@@ -17,7 +15,7 @@ VIDEO_FOLDER = os.path.join(BASE_DIR, "videos")
 # Output folder is now mainly for logs/debug artifacts in the new architecture
 OUTPUT_FOLDER = os.environ.get("LOGS_DIR", os.path.join(BASE_DIR, "logs"))
 TEMP_DIR = "/tmp/dubber"
-MODEL_PATH = os.path.join(BASE_DIR, "models", "gemma-3-12b-it-Q4_K_M.gguf")
+MODEL_PATH = os.path.join(BASE_DIR, "models", "google_gemma-3-12b-it-Q4_K_M.gguf")
 WHISPER_MODEL = "large-v3"
 
 
@@ -49,10 +47,75 @@ LANG_MAP = {
     "ru": "Russian",
 }
 
-# Hardware Setup
-GPU_COUNT = torch.cuda.device_count()
-GPU_LLM = 1 if GPU_COUNT > 1 else 0
-GPU_AUDIO = 0
-
 TARGET_LANGS = os.environ.get("TARGET_LANGS", "pl").split(",")
 HF_TOKEN = os.environ.get("HF_TOKEN")
+
+# --- DYNAMIC HARDWARE ALLOCATION ---
+
+
+def get_compute_device():
+    """Detects available hardware and assigns roles."""
+    strategy = "sequential"  # Default safe strategy
+
+    if torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
+
+        # Calculate Total VRAM across all GPUs being used
+        total_vram_gb = 0
+        for i in range(gpu_count):
+            props = torch.cuda.get_device_properties(i)
+            total_vram_gb += props.total_memory / (1024**3)
+
+        logging.info(f"Hardware: Detected {gpu_count} GPU(s) with Total VRAM: {total_vram_gb:.2f} GB")
+
+        # Threshold for parallel execution (LLM ~10GB + TTS ~4GB + Whisper ~3GB + Overhead)
+        # We set it conservatively at 18GB
+        if total_vram_gb > 18.0:
+            strategy = "parallel"
+
+        if gpu_count >= 2:
+            # Optimal: Dual GPU Split
+            llm_idx = int(os.environ.get("GPU_LLM_ID", "1"))
+            audio_idx = int(os.environ.get("GPU_AUDIO_ID", "0"))
+
+            # Ensure indices exist
+            if llm_idx >= gpu_count:
+                llm_idx = 0
+            if audio_idx >= gpu_count:
+                audio_idx = 0
+
+            return {
+                "llm": f"cuda:{llm_idx}",
+                "audio": f"cuda:{audio_idx}",
+                "use_lock": False,
+                "type": "cuda",
+                "strategy": strategy,
+            }
+        else:
+            # Single GPU Shared
+            return {
+                "llm": "cuda:0",
+                "audio": "cuda:0",
+                "use_lock": True,  # Critical to prevent compute clash
+                "type": "cuda",
+                "strategy": strategy,
+            }
+    else:
+        # CPU Fallback
+        logging.warning("Hardware: No GPU detected. Running in CPU mode (Slow!).")
+        return {
+            "llm": "cpu",
+            "audio": "cpu",
+            "use_lock": True,
+            "type": "cpu",
+            "strategy": "sequential",  # CPU must be sequential
+        }
+
+
+# Initialize hardware config
+HW_CONFIG = get_compute_device()
+DEVICE_LLM = HW_CONFIG["llm"]
+DEVICE_AUDIO = HW_CONFIG["audio"]
+USE_LOCK = HW_CONFIG["use_lock"]
+DEVICE_TYPE = HW_CONFIG["type"]
+STRATEGY = HW_CONFIG["strategy"]

@@ -6,15 +6,23 @@ import threading
 import queue
 import gc
 import torch
-from typing import List, Dict
+from typing import List, Dict, Optional
 from tts_engine import F5TTSWrapper
 from utils import measure_zcr, count_syllables
 import audio_processor
 
 
 class TTSManager:
-    def __init__(self, gpu_id: int, temp_dir: str, speaker_refs: Dict, abort_event: threading.Event):
-        self.gpu_id = gpu_id
+    def __init__(
+        self,
+        device: str,
+        inference_lock: Optional[threading.Lock],
+        temp_dir: str,
+        speaker_refs: Dict,
+        abort_event: threading.Event,
+    ):
+        self.device = device
+        self.inference_lock = inference_lock
         self.temp_dir = temp_dir
         self.speaker_refs = speaker_refs  # Golden samples
         self.abort_event = abort_event
@@ -24,7 +32,12 @@ class TTSManager:
     def load_engine(self):
         """Initializes the TTS engine."""
         if not self.engine:
-            self.engine = F5TTSWrapper(gpu_id=self.gpu_id)
+            # F5TTSWrapper expects an int gpu_id or runs on CPU if not found/configured
+            gpu_id = 0
+            if "cuda" in self.device:
+                gpu_id = int(self.device.split(":")[-1])
+
+            self.engine = F5TTSWrapper(gpu_id=gpu_id)
 
     def tts_worker(
         self,
@@ -64,11 +77,19 @@ class TTSManager:
         finally:
             q_out.put(None)
             if self.engine:
-                # Cleanup engine if needed (F5TTSWrapper handles server stop in __del__)
                 del self.engine
                 self.engine = None
                 gc.collect()
-                torch.cuda.empty_cache()
+                if "cuda" in self.device:
+                    torch.cuda.empty_cache()
+
+    def _run_synthesis(self, *args, **kwargs):
+        """Wrapper for TTS inference that respects the global lock if needed."""
+        if self.inference_lock:
+            with self.inference_lock:
+                return self.engine.synthesize(*args, **kwargs)
+        else:
+            return self.engine.synthesize(*args, **kwargs)
 
     def _synthesize_item(self, item: Dict, lang: str, vocals_path: str, script: List[Dict]) -> Dict:
         """Internal method to handle a single line synthesis with all fallbacks."""
@@ -93,7 +114,7 @@ class TTSManager:
                 return None
 
             t0 = time.perf_counter()
-            self.engine.synthesize(clean_text, chosen_ref, raw_path, ref_text=ref_text, language=lang)
+            self._run_synthesis(clean_text, chosen_ref, raw_path, ref_text=ref_text, language=lang)
             dt = time.perf_counter() - t0
 
             # 4. Verify Output
