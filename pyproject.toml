@@ -9,9 +9,11 @@ dependencies = []
 [dependency-groups]
 dev = [
     "flake8>=7.3.0",
+    "langdetect>=1.0.9",
     "pylint>=4.0.4",
     "pytest>=9.0.2",
     "ruff>=0.15.1",
+    "syllables>=1.1.5",
 ]
 runtime = [
     "hf_transfer",

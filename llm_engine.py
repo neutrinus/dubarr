@@ -55,7 +55,7 @@ class LLMManager:
         if len(script) > max_overview_lines:
             logging.warning(f"Script too long ({len(script)} lines). Truncating overview for Profiler.")
             mid = len(script) // 2
-            ov_subset = script[mid - 200:mid + 200]
+            ov_subset = script[mid - 200 : mid + 200]
             ov = "\n".join([f"{s['speaker']}: {s['text_en']}" for s in ov_subset])
         else:
             ov = "\n".join([f"{s['speaker']}: {s['text_en']}" for s in script])
@@ -80,7 +80,7 @@ class LLMManager:
         chunk_sz = 100
         glossary_str = json.dumps(global_context.get("glossary", {}))
         for i in range(0, len(script), chunk_sz):
-            chunk = script[i:i + chunk_sz]
+            chunk = script[i : i + chunk_sz]
             txt = "\n".join([f"L_{i + j}: {s['text_en']}" for j, s in enumerate(chunk)])
             t0 = time.perf_counter()
             res = self.llm(
@@ -140,7 +140,7 @@ class LLMManager:
             for b_start in range(0, len(valid_indices), 10):
                 if self.abort_event.is_set():
                     return
-                batch_indices = valid_indices[b_start:b_start + 10]
+                batch_indices = valid_indices[b_start : b_start + 10]
                 json_batch = [
                     {
                         "id": idx,

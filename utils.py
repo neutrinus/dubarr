@@ -19,7 +19,7 @@ def parse_json(txt: str) -> dict:
     try:
         s, e = txt.find("{"), txt.rfind("}")
         if s != -1 and e != -1:
-            return json.loads(txt[s:e + 1])
+            return json.loads(txt[s : e + 1])
     except Exception as e:
         logging.warning(f"Failed to parse JSON: {e}")
     return {}
