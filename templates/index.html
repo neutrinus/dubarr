@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dubarr Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .status-badge { width: 100px; }
+        .table-action-btn { width: 80px; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom border-secondary mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="/">🎬 Dubarr</a>
+            <div class="d-flex text-light gap-3">
+                <span>Worker: 
+                    {% if worker_alive %}
+                        <span class="badge bg-success">Online</span>
+                    {% else %}
+                        <span class="badge bg-danger">Offline</span>
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+                <h5 class="mb-0 text-light">Task Queue</h5>
+                <button class="btn btn-sm btn-outline-light" onclick="location.reload()">↻ Refresh</button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover mb-0 align-middle">
+                        <thead class="table-secondary">
+                            <tr>
+                                <th>ID</th>
+                                <th>File Path</th>
+                                <th>Status</th>
+                                <th>Created At</th>
+                                <th>Updated At</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for task in tasks %}
+                            <tr>
+                                <td>#{{ task.id }}</td>
+                                <td class="text-break" style="min-width: 300px;">
+                                    <div class="d-flex align-items-center">
+                                        <span class="me-2">📄</span>
+                                        {{ task.path }}
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if task.status == 'QUEUED' %}
+                                        <span class="badge bg-secondary status-badge">Queued</span>
+                                    {% elif task.status == 'PROCESSING' %}
+                                        <span class="badge bg-primary status-badge">Processing</span>
+                                    {% elif task.status == 'DONE' %}
+                                        <span class="badge bg-success status-badge">Done</span>
+                                    {% elif task.status.startswith('FAILED') %}
+                                        <span class="badge bg-danger status-badge" title="{{ task.status }}">Failed</span>
+                                    {% else %}
+                                        <span class="badge bg-info status-badge">{{ task.status }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-secondary small">{{ task.created_at }}</td>
+                                <td class="text-secondary small">{{ task.updated_at }}</td>
+                                <td class="text-end">
+                                    <div class="btn-group">
+                                        {% if task.status != 'PROCESSING' %}
+                                        <form action="/retry/{{ task.id }}" method="post" class="d-inline">
+                                            <button type="submit" class="btn btn-sm btn-outline-warning table-action-btn">Retry</button>
+                                        </form>
+                                        <form action="/delete/{{ task.id }}" method="post" class="d-inline ms-1">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger table-action-btn">Delete</button>
+                                        </form>
+                                        {% else %}
+                                        <button class="btn btn-sm btn-outline-secondary table-action-btn" disabled>Active</button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="6" class="text-center py-5 text-secondary">
+                                    <i>No tasks in queue. Waiting for webhooks...</i>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mt-4 text-center text-secondary small">
+            Dubarr &copy; 2026 | Local AI Dubbing System
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

@@ -6,7 +6,9 @@ import time
 import uvicorn
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Form
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -24,6 +26,9 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 # Global control
 stop_event = threading.Event()
 worker_thread = None
+
+# Templates
+templates = Jinja2Templates(directory="templates")
 
 
 def init_db():
@@ -126,7 +131,7 @@ async def lifespan(app: FastAPI):
     # Startup
     global worker_thread
     init_db()
-    
+
     # Check for unfinished tasks (e.g. from crash) and reset them
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -139,9 +144,9 @@ async def lifespan(app: FastAPI):
     dubber = AIDubber()
     worker_thread = DubberWorker(dubber)
     worker_thread.start()
-    
+
     yield
-    
+
     # Shutdown
     stop_event.set()
     if worker_thread.is_alive():
@@ -149,6 +154,48 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT * FROM tasks ORDER BY created_at DESC")
+    tasks = c.fetchall()
+    conn.close()
+
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "tasks": tasks,
+            "worker_alive": worker_thread.is_alive() if worker_thread else False,
+        },
+    )
+
+
+@app.post("/retry/{task_id}")
+async def retry_task(task_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "UPDATE tasks SET status = 'QUEUED', updated_at = ? WHERE id = ?",
+        (datetime.now(), task_id),
+    )
+    conn.commit()
+    conn.close()
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/delete/{task_id}")
+async def delete_task(task_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    conn.commit()
+    conn.close()
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/webhook")
@@ -167,7 +214,10 @@ async def receive_webhook(payload: WebhookPayload):
         if row:
             status = row[0]
             if status in ["QUEUED", "PROCESSING"]:
-                return {"status": "ignored", "detail": f"Already in queue with status: {status}"}
+                return {
+                    "status": "ignored",
+                    "detail": f"Already in queue with status: {status}",
+                }
             else:
                 # Re-queue if it was done/failed before (manual retry via webhook)
                 c.execute(
@@ -191,7 +241,7 @@ async def health_check():
     c.execute("SELECT status, COUNT(*) FROM tasks GROUP BY status")
     stats = dict(c.fetchall())
     conn.close()
-    
+
     return {
         "status": "healthy",
         "queue_stats": stats,
