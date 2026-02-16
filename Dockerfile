@@ -89,4 +89,4 @@ ENV PYTHONPATH="/app"
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Default command
-CMD ["python3", "main.py"]
+CMD ["python3", "server.py"]
