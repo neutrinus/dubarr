@@ -4,9 +4,7 @@ import logging
 import time
 import threading
 import queue
-import gc
 import sys
-import torch
 import humanfriendly
 import shutil
 import subprocess
@@ -24,10 +22,10 @@ from config import (
     GPU_AUDIO,
     TARGET_LANGS,
 )
-from utils import clean_srt, measure_zcr, count_syllables, run_cmd
+from utils import clean_srt, measure_zcr, run_cmd
 from monitor import ResourceMonitor
-from tts_engine import F5TTSWrapper
 from llm_engine import LLMManager
+from tts_manager import TTSManager
 import audio_processor
 
 setup_logging()
@@ -51,10 +49,12 @@ class AIDubber:
         self.global_context = {}
         self.available_pans = [-0.10, 0.10, -0.03, 0.03, -0.17, 0.17]
         self.speaker_pans = {}
-        self.last_good_samples = {}
         self.abort_event = threading.Event()
         self.llm_manager = LLMManager(
             model_path=MODEL_PATH, gpu_id=self.gpu_llm, debug_mode=self.debug_mode, target_langs=self.target_langs
+        )
+        self.tts_manager = TTSManager(
+            gpu_id=self.gpu_audio, temp_dir=self.temp_dir, speaker_refs=self.speaker_refs, abort_event=self.abort_event
         )
         self.monitor = None
 
@@ -248,102 +248,6 @@ class AIDubber:
             elif my_best[1] < 65:
                 logging.warning(f"  [Speaker {spk}] Low Score {my_best[1]}. Using best available candidate.")
 
-    def _tts_worker(self, lang, q_in, q_out, translations, vocals_path, script):
-        t_tts_total = 0
-        try:
-            # Initialize F5-TTS (Loads model into VRAM once)
-            f5 = F5TTSWrapper(gpu_id=self.gpu_audio)
-
-            while not self.abort_event.is_set():
-                try:
-                    item = q_in.get(timeout=2)
-                except queue.Empty:
-                    continue
-                if item is None:
-                    break
-                translations.append(item)
-
-                golden_ref = self.speaker_refs.get(item["speaker"])
-                chosen_ref = None
-                voice_type = "UNKNOWN"
-                spk = item["speaker"]
-
-                # Attempt Dynamic Extraction
-                dyn_path = os.path.join(self.temp_dir, f"dyn_{item['index']}.wav")
-                dur = item["end"] - item["start"]
-
-                # Always attempt extraction to update cache if good
-                audio_processor.extract_clean_segment(vocals_path, item["start"], item["end"], dyn_path)
-                zcr = measure_zcr(dyn_path)
-
-                is_good_dynamic = os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25 and dur > 0.8
-
-                if is_good_dynamic:
-                    chosen_ref = dyn_path
-                    voice_type = "DYNAMIC"
-                    # Update Last Good Sample
-                    last_good_path = os.path.join(self.temp_dir, f"last_good_{spk}.wav")
-                    shutil.copy(dyn_path, last_good_path)
-                    self.last_good_samples[spk] = last_good_path
-                else:
-                    # Dynamic failed/bad. Try Last Good.
-                    if spk in self.last_good_samples and os.path.exists(self.last_good_samples[spk]):
-                        chosen_ref = self.last_good_samples[spk]
-                        voice_type = "LAST_GOOD"
-                    # Fallback to Golden
-                    elif golden_ref and os.path.exists(golden_ref):
-                        chosen_ref = golden_ref
-                        voice_type = "GOLDEN"
-
-                    # Cleanup bad dynamic attempt
-                    if os.path.exists(dyn_path) and chosen_ref != dyn_path:
-                        os.remove(dyn_path)
-
-                # F5-TTS Specifics
-                clean_text = item["text"].strip()
-                ref_text = script[item["index"]].get("text", "")  # Original source text from Whisper
-
-                raw = os.path.join(self.temp_dir, f"raw_{item['index']}.wav")
-                syl_count = count_syllables(clean_text, lang)
-                max_allowed_dur = max((syl_count * 0.4) + 1.5, (item["end"] - item["start"]) + 1.5)
-
-                try:
-                    if not chosen_ref:
-                        logging.error(f"[ID: {item['index']}] No reference audio found for speaker {spk}. Skipping.")
-                        q_in.task_done()
-                        continue
-
-                    t0 = time.perf_counter()
-                    f5.synthesize(clean_text, chosen_ref, raw, ref_text=ref_text, language=lang)
-                    dt = time.perf_counter() - t0
-                    t_tts_total += dt
-
-                    # Verify Output
-                    if os.path.exists(raw) and os.path.getsize(raw) > 1000:
-                        logging.debug(f"[ID: {item['index']}] TTS Done in {dt:.2f}s ({voice_type})")
-                        q_out.put(
-                            {"item": item, "raw_path": raw, "max_dur": max_allowed_dur, "voice_type": voice_type, "lang": lang}
-                        )
-                    else:
-                        logging.warning(f"[ID: {item['index']}] TTS produced invalid/empty file.")
-
-                    # Cleanup dynamic sample if it was created
-                    if voice_type == "DYNAMIC" and chosen_ref and os.path.exists(chosen_ref):
-                        os.remove(chosen_ref)
-
-                except Exception as e:
-                    logging.error(f"TTS Gen failed {item['index']}: {e}")
-                q_in.task_done()
-            self.durations[f"5c. TTS Synthesis ({lang})"] = t_tts_total
-            del f5
-            gc.collect()
-            torch.cuda.empty_cache()
-        except Exception:
-            logging.exception("TTS Worker failed")
-            self.abort_event.set()
-        finally:
-            q_out.put(None)
-
     def _audio_postprocessor(self, q_in, results):
         while not self.abort_event.is_set():
             try:
@@ -469,23 +373,32 @@ class AIDubber:
             res = []
             draft_translations = []
             final_translations = []
+
             p_th = threading.Thread(
                 target=self.llm_manager.translation_producer,
                 args=(script, lang, q_text, self.speaker_info, self.global_context, draft_translations, final_translations),
                 daemon=True,
             )
-            tts_th = threading.Thread(target=self._tts_worker, args=(lang, q_text, q_audio, [], vocals, script), daemon=True)
+            tts_th = threading.Thread(
+                target=self.tts_manager.tts_worker,
+                args=(lang, q_text, q_audio, [], vocals, script, self.durations),
+                daemon=True,
+            )
             post_th = threading.Thread(target=self._audio_postprocessor, args=(q_audio, res), daemon=True)
+
             p_th.start()
             tts_th.start()
             post_th.start()
+
             while p_th.is_alive() or tts_th.is_alive() or post_th.is_alive():
                 if self.abort_event.is_set():
                     sys.exit(1)
                 time.sleep(1.0)
+
             p_th.join()
             tts_th.join()
             post_th.join()
+
             if self.debug_mode:
                 with open(os.path.join(ddir, f"translations_draft_{lang}.json"), "w") as f_out:
                     json.dump(draft_translations, f_out, indent=2, ensure_ascii=False)
