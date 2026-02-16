@@ -50,6 +50,28 @@ docker run --rm --gpus all \
   dubarr
 ```
 
+## 💻 Hardware Requirements
+
+The system automatically detects your hardware and chooses the best processing strategy.
+
+### 🚀 Recommended (Multi-GPU)
+*   **Setup:** 2x NVIDIA GPU (e.g., RTX 3060 12GB + RTX 3070 8GB).
+*   **Strategy:** **PARALLEL**. LLM and TTS run simultaneously on different cards.
+*   **VRAM:** Combined > 18GB for peak performance.
+
+### ⚖️ Balanced (Single GPU)
+*   **Setup:** 1x NVIDIA GPU (e.g., RTX 3060 12GB or RTX 4090 24GB).
+*   **Strategy:**
+    *   **PARALLEL:** If VRAM > 18GB (e.g., RTX 3090/4090).
+    *   **SEQUENTIAL:** If VRAM < 18GB. The system uses an **Inference Lock** to swap between LLM and TTS, preventing Out-Of-Memory errors.
+*   **RAM:** 16GB minimum.
+
+### 🐌 Minimal (CPU Only)
+*   **Setup:** Any modern CPU with AVX2 support.
+*   **Strategy:** **SEQUENTIAL**. Models run on CPU using 8-bit quantization where possible.
+*   **RAM:** **32GB recommended**. Since models are loaded into system memory, higher capacity is required to avoid swapping.
+*   **Note:** Processing will be significantly slower (up to 10-20x slower than GPU).
+
 ---
 
 ## 🏗️ The Pipeline (Step-by-Step)
