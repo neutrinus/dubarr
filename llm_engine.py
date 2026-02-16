@@ -96,15 +96,15 @@ class LLMManager:
             # Mock responses based on prompt type
             if "Analyze the movie script" in prompt:
                 return {"choices": [{"text": json.dumps({
-                    "summary": "Mock summary", 
-                    "glossary": {"test": "test"}, 
+                    "summary": "Mock summary",
+                    "glossary": {"test": "test"},
                     "speakers": {"SPEAKER_00": {"name": "Mock", "desc": "Male voice"}}
                 })}]}
             if "Transcription Corrector" in prompt:
                 return {"choices": [{"text": json.dumps({"0": "Mocked source correction"})}]}
             if "adapt" in prompt:
                 return {"choices": [{"text": json.dumps({
-                    "thought": "Mock thought", 
+                    "thought": "Mock thought",
                     "translations": [{"id": 0, "text": "To jest mockowe tłumaczenie"}]
                 })}]}
             return {"choices": [{"text": "{}"}]}

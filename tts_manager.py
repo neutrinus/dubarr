@@ -6,6 +6,7 @@ import threading
 import queue
 import gc
 import torch
+import subprocess
 from typing import List, Dict, Optional
 from tts_engine import F5TTSWrapper
 from utils import measure_zcr, count_syllables
@@ -87,9 +88,16 @@ class TTSManager:
                 if "cuda" in self.device:
                     torch.cuda.empty_cache()
 
-    def _run_synthesis(self, text, ref_audio, output_path, **kwargs):
+    def _run_synthesis(self, *args, **kwargs):
         """Wrapper for TTS inference that respects the global lock if needed. Mocks in MOCK_MODE."""
         if os.environ.get("MOCK_MODE") == "1":
+            # Extract output_path from args or kwargs
+            # Signature: synthesize(text, ref_audio, output_path, ref_text="", language="en")
+            if len(args) >= 3:
+                output_path = args[2]
+            else:
+                output_path = kwargs.get("output_path")
+
             # Generate a 1 second silent WAV file using ffmpeg
             cmd = ["ffmpeg", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", "1", "-y", output_path]
             subprocess.run(cmd, capture_output=True, check=True)
