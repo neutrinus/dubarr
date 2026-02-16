@@ -60,5 +60,8 @@ WORKDIR /app
 # Copy the application files into the container
 COPY . .
 
+# Verification step: ensure core libraries are importable
+RUN python -c "import torch; import faster_whisper; import TTS; print('Environment verification successful')"
+
 # Define the default command to be executed when the container starts
 CMD ["python", "main.py"]

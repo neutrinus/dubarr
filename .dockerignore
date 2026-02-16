@@ -1,0 +1,12 @@
+.venv
+__pycache__
+.git
+.github
+.ruff_cache
+output
+videos
+models
+*.log
+.flake8
+pyproject.toml.tmp
+requirements-dev.txt
