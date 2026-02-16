@@ -352,9 +352,7 @@ class AIDubber:
             return res
 
         a_stereo, vocals = step("1. Audio Separation (Demucs)", audio_processor.prep_audio, vpath)
-        diar, trans, audio_durs = step(
-            "2. Audio Analysis (Whisper/Diarization)", audio_processor.analyze_audio, vocals, self.gpu_audio
-        )
+        diar, trans, audio_durs = step("2. Audio Analysis (Whisper/Diarization)", audio_processor.analyze_audio, vocals)
         self.durations.update(audio_durs)
 
         # Load LLM only after memory-intensive Audio Analysis is done
