@@ -44,12 +44,12 @@ class AIDubber:
         self.device_llm = DEVICE_LLM
         self.device_audio = DEVICE_AUDIO
         self.inference_lock = threading.Lock() if USE_LOCK else None
-        
-        logging.info(f"--- DUBARR CONFIGURATION ---")
+
+        logging.info("--- DUBARR CONFIGURATION ---")
         logging.info(f"LLM Device:   {self.device_llm}")
         logging.info(f"Audio Device: {self.device_audio}")
         logging.info(f"Locking:      {'ENABLED' if USE_LOCK else 'DISABLED'}")
-        logging.info(f"----------------------------")
+        logging.info("----------------------------")
 
         self.durations = {}
         self.speaker_info = {}

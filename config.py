@@ -66,29 +66,17 @@ def get_compute_device():
             props = torch.cuda.get_device_properties(i)
             total_vram_gb += props.total_memory / (1024**3)
 
-                logging.info(f"Hardware: Detected {gpu_count} GPU(s) with Total VRAM: {total_vram_gb:.2f} GB")
+        logging.info(f"Hardware: Detected {gpu_count} GPU(s) with Total VRAM: {total_vram_gb:.2f} GB")
 
-        
+        # Threshold for parallel execution (LLM ~10GB + TTS ~4GB + Whisper ~3GB + Overhead)
+        # We set it conservatively at 18GB
+        if total_vram_gb > 18.0:
+            strategy = "parallel"
+            logging.info("Strategy: PARALLEL (Sufficient VRAM detected)")
+        else:
+            logging.info("Strategy: SEQUENTIAL (Limited VRAM, enabling safety locks)")
 
-                # Threshold for parallel execution (LLM ~10GB + TTS ~4GB + Whisper ~3GB + Overhead)
-
-                # We set it conservatively at 18GB
-
-                if total_vram_gb > 18.0:
-
-                    strategy = "parallel"
-
-                    logging.info("Strategy: PARALLEL (Sufficient VRAM detected)")
-
-                else:
-
-                    logging.info("Strategy: SEQUENTIAL (Limited VRAM, enabling safety locks)")
-
-                
-
-                if gpu_count >= 2:
-
-        
+        if gpu_count >= 2:
             # Optimal: Dual GPU Split
             llm_idx = int(os.environ.get("GPU_LLM_ID", "1"))
             audio_idx = int(os.environ.get("GPU_AUDIO_ID", "0"))
