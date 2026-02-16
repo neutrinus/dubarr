@@ -3,103 +3,230 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dubarr Dashboard</title>
+    <title>Dubarr</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
     <style>
-        .status-badge { width: 100px; }
-        .table-action-btn { width: 80px; }
+        :root {
+            --arr-bg: #1e1e1e;
+            --arr-panel: #2b2b2b;
+            --arr-header: #323232;
+            --arr-text: #e6e6e6;
+            --arr-accent: #6c757d;
+            --arr-blue: #0084ff;
+            --arr-green: #5d9c59;
+            --arr-red: #df524e;
+            --arr-orange: #d48806;
+        }
+
+        body {
+            background-color: var(--arr-bg);
+            color: var(--arr-text);
+            font-family: 'Open Sans', sans-serif;
+        }
+
+        .navbar {
+            background-color: var(--arr-panel) !important;
+            border-bottom: 1px solid #111;
+            padding-top: 0.75rem;
+            padding-bottom: 0.75rem;
+        }
+
+        .navbar-brand {
+            font-weight: 600;
+            color: #fff !important;
+            font-size: 1.5rem;
+        }
+
+        .card {
+            background-color: var(--arr-panel);
+            border: none;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .card-header {
+            background-color: var(--arr-header);
+            border-bottom: 1px solid #111;
+            color: #fff;
+            font-weight: 600;
+            padding: 1rem;
+        }
+
+        .table {
+            color: var(--arr-text);
+            margin-bottom: 0;
+        }
+
+        .table thead th {
+            background-color: var(--arr-header);
+            border-bottom: 2px solid #111;
+            color: #aaa;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            padding: 1rem;
+        }
+
+        .table tbody td {
+            background-color: var(--arr-panel);
+            border-bottom: 1px solid #111;
+            padding: 1rem;
+            vertical-align: middle;
+        }
+
+        .table tbody tr:hover td {
+            background-color: #383838;
+        }
+
+        /* Status Badges - *arr style */
+        .status-badge {
+            font-size: 0.8rem;
+            padding: 0.4em 0.8em;
+            border-radius: 4px;
+            font-weight: 600;
+            width: 110px;
+            display: inline-block;
+            text-align: center;
+        }
+        .bg-queued { background-color: var(--arr-accent); color: #fff; }
+        .bg-processing { background-color: var(--arr-blue); color: #fff; animation: pulse 2s infinite; }
+        .bg-done { background-color: var(--arr-green); color: #fff; }
+        .bg-failed { background-color: var(--arr-red); color: #fff; }
+
+        /* Action Buttons */
+        .btn-icon {
+            background: transparent;
+            border: 1px solid #444;
+            color: #aaa;
+            width: 36px;
+            height: 36px;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        .btn-icon:hover {
+            background-color: #444;
+            color: #fff;
+        }
+        .btn-retry:hover { border-color: var(--arr-orange); color: var(--arr-orange); }
+        .btn-delete:hover { border-color: var(--arr-red); color: var(--arr-red); }
+
+        .path-text {
+            font-family: monospace;
+            color: #ccc;
+            font-size: 0.9rem;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark border-bottom border-secondary mb-4">
+    <nav class="navbar navbar-expand-lg mb-4">
         <div class="container">
-            <a class="navbar-brand" href="/">🎬 Dubarr</a>
-            <div class="d-flex text-light gap-3">
-                <span>Worker: 
-                    {% if worker_alive %}
-                        <span class="badge bg-success">Online</span>
-                    {% else %}
-                        <span class="badge bg-danger">Offline</span>
-                    {% endif %}
-                </span>
+            <a class="navbar-brand d-flex align-items-center" href="/">
+                <span class="me-2">🎬</span> Dubarr
+            </a>
+            <div class="d-flex align-items-center">
+                <span class="me-2 text-secondary small">System Status:</span>
+                {% if worker_alive %}
+                    <span class="badge bg-success">Online</span>
+                {% else %}
+                    <span class="badge bg-danger">Offline</span>
+                {% endif %}
             </div>
         </div>
     </nav>
 
     <div class="container">
-        <div class="card bg-dark border-secondary">
-            <div class="card-header border-secondary d-flex justify-content-between align-items-center">
-                <h5 class="mb-0 text-light">Task Queue</h5>
-                <button class="btn btn-sm btn-outline-light" onclick="location.reload()">↻ Refresh</button>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-dark table-hover mb-0 align-middle">
-                        <thead class="table-secondary">
-                            <tr>
-                                <th>ID</th>
-                                <th>File Path</th>
-                                <th>Status</th>
-                                <th>Created At</th>
-                                <th>Updated At</th>
-                                <th class="text-end">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for task in tasks %}
-                            <tr>
-                                <td>#{{ task.id }}</td>
-                                <td class="text-break" style="min-width: 300px;">
-                                    <div class="d-flex align-items-center">
-                                        <span class="me-2">📄</span>
-                                        {{ task.path }}
-                                    </div>
-                                </td>
-                                <td>
-                                    {% if task.status == 'QUEUED' %}
-                                        <span class="badge bg-secondary status-badge">Queued</span>
-                                    {% elif task.status == 'PROCESSING' %}
-                                        <span class="badge bg-primary status-badge">Processing</span>
-                                    {% elif task.status == 'DONE' %}
-                                        <span class="badge bg-success status-badge">Done</span>
-                                    {% elif task.status.startswith('FAILED') %}
-                                        <span class="badge bg-danger status-badge" title="{{ task.status }}">Failed</span>
-                                    {% else %}
-                                        <span class="badge bg-info status-badge">{{ task.status }}</span>
-                                    {% endif %}
-                                </td>
-                                <td class="text-secondary small">{{ task.created_at }}</td>
-                                <td class="text-secondary small">{{ task.updated_at }}</td>
-                                <td class="text-end">
-                                    <div class="btn-group">
+        <div class="row mb-4">
+            <div class="col">
+                <h4 class="mb-3">Activity Queue</h4>
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>Tasks</span>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">
+                            Refresh
+                        </button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 5%">ID</th>
+                                    <th style="width: 45%">Source File</th>
+                                    <th style="width: 15%">Status</th>
+                                    <th style="width: 15%">Added</th>
+                                    <th style="width: 20%" class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for task in tasks %}
+                                <tr>
+                                    <td class="text-secondary">{{ task.id }}</td>
+                                    <td>
+                                        <div class="path-text text-break" title="{{ task.path }}">
+                                            {{ task.path }}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {% if task.status == 'QUEUED' %}
+                                            <span class="status-badge bg-queued">Queued</span>
+                                        {% elif task.status == 'PROCESSING' %}
+                                            <span class="status-badge bg-processing">Processing</span>
+                                        {% elif task.status == 'DONE' %}
+                                            <span class="status-badge bg-done">Completed</span>
+                                        {% elif task.status.startswith('FAILED') %}
+                                            <span class="status-badge bg-failed" title="{{ task.status }}">Failed</span>
+                                        {% else %}
+                                            <span class="status-badge bg-secondary">{{ task.status }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-secondary small">
+                                        {{ task.created_at.split('.')[0] }}
+                                    </td>
+                                    <td class="text-end">
                                         {% if task.status != 'PROCESSING' %}
                                         <form action="/retry/{{ task.id }}" method="post" class="d-inline">
-                                            <button type="submit" class="btn btn-sm btn-outline-warning table-action-btn">Retry</button>
+                                            <button type="submit" class="btn-icon btn-retry mx-1" title="Retry">
+                                                ⟳
+                                            </button>
                                         </form>
-                                        <form action="/delete/{{ task.id }}" method="post" class="d-inline ms-1">
-                                            <button type="submit" class="btn btn-sm btn-outline-danger table-action-btn">Delete</button>
+                                        <form action="/delete/{{ task.id }}" method="post" class="d-inline">
+                                            <button type="submit" class="btn-icon btn-delete" title="Remove">
+                                                ✕
+                                            </button>
                                         </form>
                                         {% else %}
-                                        <button class="btn btn-sm btn-outline-secondary table-action-btn" disabled>Active</button>
+                                        <span class="text-secondary small fst-italic me-2">Active...</span>
                                         {% endif %}
-                                    </div>
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr>
-                                <td colspan="6" class="text-center py-5 text-secondary">
-                                    <i>No tasks in queue. Waiting for webhooks...</i>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="5" class="text-center py-5 text-secondary">
+                                        <div class="mb-2" style="font-size: 2rem; opacity: 0.3">📭</div>
+                                        <div>No tasks in queue</div>
+                                        <div class="small mt-1">Waiting for webhooks from Radarr/Sonarr</div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
         
-        <div class="mt-4 text-center text-secondary small">
-            Dubarr &copy; 2026 | Local AI Dubbing System
+        <div class="text-center text-secondary small mt-5 opacity-50">
+            Dubarr v0.1.0
         </div>
     </div>
 
