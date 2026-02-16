@@ -10,17 +10,19 @@ DEBUG_MODE = os.environ.get("DEBUG", "0").lower() in ("1", "true", "yes")
 VERBOSE_MODE = os.environ.get("VERBOSE", "0").lower() in ("1", "true", "yes")
 LOG_LEVEL = logging.DEBUG if VERBOSE_MODE else logging.INFO
 
+
 # Safe logging setup
 def setup_logging():
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
     logging.basicConfig(
         level=LOG_LEVEL,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler(os.path.join(OUTPUT_FOLDER, "processing.log"), mode="a", encoding="utf-8")
-        ]
+            logging.FileHandler(os.path.join(OUTPUT_FOLDER, "processing.log"), mode="a", encoding="utf-8"),
+        ],
     )
+
 
 os.environ["HF_HUB_READ_TIMEOUT"] = "120"
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "120"
@@ -34,7 +36,7 @@ LANG_MAP = {
     "it": "Italian",
     "ja": "Japanese",
     "zh": "Chinese",
-    "ru": "Russian"
+    "ru": "Russian",
 }
 
 # Paths

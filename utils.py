@@ -8,24 +8,27 @@ import subprocess
 
 try:
     from langdetect import DetectorFactory
+
     DetectorFactory.seed = 0
     HAS_LANGDETECT = True
 except ImportError:
     HAS_LANGDETECT = False
 
+
 def parse_json(txt: str) -> dict:
     try:
         s, e = txt.find("{"), txt.rfind("}")
         if s != -1 and e != -1:
-            return json.loads(txt[s:e+1])
+            return json.loads(txt[s:e + 1])
     except Exception as e:
         logging.warning(f"Failed to parse JSON: {e}")
     return {}
 
+
 def clean_srt(text: str) -> str:
     lines = []
-    for line in text.split('\n'):
-        if '-->' in line:
+    for line in text.split("\n"):
+        if "-->" in line:
             continue
         if line.strip().isdigit():
             continue
@@ -34,10 +37,11 @@ def clean_srt(text: str) -> str:
         lines.append(line.strip())
     return " ".join(lines)[:15000]
 
+
 def measure_zcr(path: str) -> float:
     """Measures Zero Crossing Rate to detect static/screeching."""
     try:
-        with wave.open(path, 'r') as wf:
+        with wave.open(path, "r") as wf:
             n_frames = wf.getnframes()
             if n_frames == 0:
                 return 0.0
@@ -45,11 +49,12 @@ def measure_zcr(path: str) -> float:
             samples = struct.unpack(f"{n_frames}h", frames)
             zc = 0
             for i in range(1, len(samples)):
-                if (samples[i-1] > 0 and samples[i] <= 0) or (samples[i-1] <= 0 and samples[i] > 0):
+                if (samples[i - 1] > 0 and samples[i] <= 0) or (samples[i - 1] <= 0 and samples[i] > 0):
                     zc += 1
             return zc / len(samples)
     except Exception:
         return 0.0
+
 
 def count_syllables(text: str, lang: str = "pl") -> int:
     if not text:
@@ -69,30 +74,34 @@ def count_syllables(text: str, lang: str = "pl") -> int:
         count = sum(1 for char in text if char in vowels)
         return max(1, count)
 
+
 def clean_output(text: str, target_langs: list) -> str:
     if not text:
         return ""
     text = text.replace("{", "").replace("}", "").replace("[", "").replace("]", "")
     text = re.sub(
-        r'^(?:translation|thought|analysis|final_text|final|corrected|result|output|text|analysis):\s*',
-        '', text, flags=re.I | re.M
+        r"^(?:translation|thought|analysis|final_text|final|corrected|result|output|text|analysis):\s*",
+        "",
+        text,
+        flags=re.I | re.M,
     )
-    text = re.sub(r'\((?:note|translation|explanation|corrected|original).*?\)', '', text, flags=re.I)
-    text = re.split(r'\n?(?:note|explanation|comment|uwaga|output|corrected):', text, flags=re.I)[0]
+    text = re.sub(r"\((?:note|translation|explanation|corrected|original).*?\)", "", text, flags=re.I)
+    text = re.split(r"\n?(?:note|explanation|comment|uwaga|output|corrected):", text, flags=re.I)[0]
 
-    text = text.split('\n')[0].strip().strip('"').strip('*').strip()
+    text = text.split("\n")[0].strip().strip('"').strip("*").strip()
 
     if HAS_LANGDETECT and text and len(text) > 5:
         try:
-            is_latin_target = any(lang in target_langs for lang in ['pl', 'en', 'de', 'es', 'fr', 'it'])
+            is_latin_target = any(lang in target_langs for lang in ["pl", "en", "de", "es", "fr", "it"])
             if is_latin_target:
-                if re.search(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', text):
+                if re.search(r"[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]", text):
                     logging.warning(f"Language Guard: Detected CJK characters in Latin target '{text}'. Rejecting.")
                     return ""
         except Exception as e:
             logging.warning(f"Langdetect error: {e}")
 
     return text
+
 
 def run_cmd(cmd, desc):
     try:
