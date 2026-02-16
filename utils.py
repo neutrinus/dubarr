@@ -73,10 +73,13 @@ def clean_output(text: str, target_langs: list) -> str:
     if not text:
         return ""
     text = text.replace("{", "").replace("}", "").replace("[", "").replace("]", "")
-    text = re.sub(r'^(?:translation|thought|analysis|final_text|final|corrected|result|output|text|analysis):\s*', '', text, flags=re.I | re.M)
+    text = re.sub(
+        r'^(?:translation|thought|analysis|final_text|final|corrected|result|output|text|analysis):\s*',
+        '', text, flags=re.I | re.M
+    )
     text = re.sub(r'\((?:note|translation|explanation|corrected|original).*?\)', '', text, flags=re.I)
     text = re.split(r'\n?(?:note|explanation|comment|uwaga|output|corrected):', text, flags=re.I)[0]
-    
+
     text = text.split('\n')[0].strip().strip('"').strip('*').strip()
 
     if HAS_LANGDETECT and text and len(text) > 5:

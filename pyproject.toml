@@ -26,3 +26,20 @@ runtime = [
     "transformers==4.40.0",
     "TTS",
 ]
+
+[tool.ruff]
+exclude = [".venv", "__pycache__", "build", "dist"]
+line-length = 127
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 30
+
+[tool.pylint.master]
+ignore = [".venv"]
+
+[tool.pylint.messages_control]
+disable = ["C", "R", "W", "import-error", "line-too-long"]

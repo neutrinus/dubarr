@@ -23,17 +23,13 @@ jobs:
         uv sync --group dev
     - name: Syntax check
       run: |
-        uv run python -m py_compile *.py
+        uv run python -m py_compile $(git ls-files '*.py')
     - name: Lint with ruff
       run: |
         uv run ruff check .
     - name: Lint with flake8
       run: |
-        # stop the build if there are Python syntax errors or undefined names
-        uv run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        uv run flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        uv run flake8 .
     - name: Lint with pylint
       run: |
-        # Run pylint on all python files
-        uv run pylint $(git ls-files '*.py') --disable=C,R,W --exit-zero
+        uv run pylint $(git ls-files '*.py') --exit-zero

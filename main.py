@@ -13,16 +13,16 @@ import subprocess
 
 # Import local modules
 from config import (
-    DEBUG_MODE, setup_logging, LANG_MAP, 
+    DEBUG_MODE, setup_logging, LANG_MAP,
     VIDEO_FOLDER, OUTPUT_FOLDER, TEMP_DIR, MODEL_PATH,
     GPU_LLM, GPU_AUDIO, TARGET_LANGS
 )
 from prompts import (
-    T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, 
+    T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM,
     T_TRANS, T_CRITIC, T_SHORTEN
 )
 from utils import (
-    parse_json, clean_srt, measure_zcr, count_syllables, 
+    parse_json, clean_srt, measure_zcr, count_syllables,
     clean_output, run_cmd
 )
 from monitor import ResourceMonitor
@@ -38,10 +38,10 @@ class AIDubber:
         os.makedirs(self.temp_dir, exist_ok=True)
         self.target_langs = TARGET_LANGS
         self.debug_mode = DEBUG_MODE
-        
+
         self.gpu_llm = GPU_LLM
         self.gpu_audio = GPU_AUDIO
-        
+
         self.durations = {}
         self.llm_stats = {"tokens": 0, "time": 0}
         self.speaker_info = {}
@@ -71,7 +71,7 @@ class AIDubber:
                 model_path=MODEL_PATH,
                 n_gpu_layers=-1,
                 main_gpu=self.gpu_llm,
-                n_ctx=4096, 
+                n_ctx=4096,
                 n_batch=512,
                 n_threads=4,
                 flash_attn=True,
@@ -93,8 +93,8 @@ class AIDubber:
     def _llm_phase(self, script, ddir, subtitles=""):
         if not self.llm:
             raise RuntimeError("LLM model not loaded!")
-        
-        max_overview_lines = 400 
+
+        max_overview_lines = 400
         if len(script) > max_overview_lines:
             logging.warning(f"Script too long ({len(script)} lines). Truncating overview for Profiler.")
             mid = len(script) // 2
@@ -105,9 +105,13 @@ class AIDubber:
 
         lang_names = [LANG_MAP.get(lang, lang) for lang in self.target_langs]
         logging.info("LLM Stage 1 & 2 Combined: Full Analysis (Context + Profiling)")
-        
+
         t0 = time.perf_counter()
-        res = self.llm(T_ANALYSIS.format(overview=ov, langs=", ".join(lang_names), subtitles=subtitles), max_tokens=2000, stop=["<|im_end|>"])
+        res = self.llm(
+            T_ANALYSIS.format(overview=ov, langs=", ".join(lang_names), subtitles=subtitles),
+            max_tokens=2000,
+            stop=["<|im_end|>"]
+        )
         dt = time.perf_counter() - t0
         toks = res.get("usage", {}).get("completion_tokens", 0)
         self.llm_stats["tokens"] += toks
@@ -129,7 +133,7 @@ class AIDubber:
             toks = res.get("usage", {}).get("completion_tokens", 0)
             self.llm_stats["tokens"] += toks
             self.llm_stats["time"] += dt
-            
+
             try:
                 corrections = parse_json(res["choices"][0]["text"])
                 if isinstance(corrections, dict):
@@ -189,17 +193,17 @@ class AIDubber:
         ref_debug = os.path.join(ddir, "refs") if self.debug_mode else None
         if ref_debug:
             os.makedirs(ref_debug, exist_ok=True)
-        
+
         bad_markers = ["[", "]", "(", ")", "music", "laughter", "scream", "explosion", "sound", "noise", "intro", "theme"]
         total_dur = script[-1]["end"] if script else 0
-        
+
         best_per_speaker = {}
         all_speakers = set(s["speaker"] for s in script if s["speaker"] != "unknown")
-        
+
         for spk in all_speakers:
             candidates = [s for s in script if s["speaker"] == spk]
             scored_candidates = []
-            
+
             for s in candidates:
                 txt = s["text_en"].lower()
                 if any(x in txt for x in bad_markers):
@@ -207,34 +211,34 @@ class AIDubber:
                 dur = s["end"] - s["start"]
                 if dur < 2.0 or dur > 20.0:
                     continue
-                
+
                 clarity_score = 50
                 conf = s.get("avg_logprob", -0.5)
                 if conf < -0.4:
                     clarity_score -= 10
                 if conf < -0.7:
                     clarity_score -= 15
-                
+
                 nsp = s.get("no_speech_prob", 0)
                 if nsp > 0.1:
                     clarity_score -= 10
                 if nsp > 0.3:
                     clarity_score -= 20
-                
+
                 cr = s.get("compression_ratio", 1.2)
                 if cr > 1.8:
-                    clarity_score = 0 
+                    clarity_score = 0
                 if cr < 0.6:
-                    clarity_score -= 10 
-                
+                    clarity_score -= 10
+
                 words = len(s["text_en"].split())
                 wps = words / dur
                 if wps < 0.5 or wps > 4.5:
                     clarity_score -= 15
-                
+
                 if clarity_score < 0:
                     clarity_score = 0
-                
+
                 dur_score = 0
                 if 6.0 <= dur <= 14.0:
                     dur_score = 40
@@ -244,7 +248,7 @@ class AIDubber:
                     dur_score = 20
                 else:
                     dur_score = 5
-                
+
                 pos_score = 0
                 if total_dur > 0:
                     rel_pos = s["start"] / total_dur
@@ -252,28 +256,28 @@ class AIDubber:
                         pos_score = 10
                     elif 0.05 < rel_pos < 0.95:
                         pos_score = 5
-                
+
                 total = clarity_score + dur_score + pos_score
                 scored_candidates.append((s, total))
-            
+
             if scored_candidates:
                 top_3 = sorted(scored_candidates, key=lambda x: x[1], reverse=True)[:3]
                 final_choice = None
-                
+
                 for cand, score in top_3:
                     tmp_wav = os.path.join(self.temp_dir, f"test_{spk}_{cand['start']}.wav")
                     filt = "highpass=f=100,afftdn=nf=-20,speechnorm=e=10:r=0.0001:l=1"
                     run_cmd(["ffmpeg", "-i", vocals_path, "-ss", str(cand["start"]), "-t", str(cand["end"]-cand["start"]), "-af", filt, "-ac", "1", "-ar", "22050", tmp_wav, "-y"], "zcr check")
-                    
+
                     zcr = measure_zcr(tmp_wav)
-                    if zcr > 0.15: 
+                    if zcr > 0.15:
                         if os.path.exists(tmp_wav):
                             os.remove(tmp_wav)
-                        continue 
-                    
-                    final_choice = (cand, score, tmp_wav) 
+                        continue
+
+                    final_choice = (cand, score, tmp_wav)
                     break
-                
+
                 if final_choice:
                     best_seg, best_score, wav_path = final_choice
                     out = os.path.join(self.temp_dir, f"ref_{spk}.wav")
@@ -292,7 +296,7 @@ class AIDubber:
             name = info.get("name", "").lower()
             desc = info.get("desc", "").lower()
             is_female = any(x in desc or x in name for x in ["female", "woman", "lady", "girl", "kobieta", "pani"])
-            
+
             if not my_best or my_best[1] < 65:
                 self.speaker_refs[spk] = "Daisy Morgan" if is_female else "Damien Sayre"
                 reason = "No candidates" if not my_best else f"Low Score {my_best[1]}"
@@ -309,14 +313,20 @@ class AIDubber:
             glossary = glob_ctx.get('glossary', {})
             lang_name = LANG_MAP.get(lang, lang)
             valid_indices = [idx for idx, s in enumerate(script) if not any(x in s["text_en"].lower() for x in ["[", "(", "laughter", "screams"])]
-            
+
             for b_start in range(0, len(valid_indices), 10):
                 if self.abort_event.is_set():
                     return
                 batch_indices = valid_indices[b_start:b_start+10]
                 json_batch = [{"id": idx, "speaker": spk_info.get(script[idx]['speaker'], {}).get('name', script[idx]['speaker']), "text": script[idx]['text_en']} for idx in batch_indices]
-                trans_prompt = T_TRANS.format(system_prompt=T_TRANS_SYSTEM.format(lang_name=lang_name, glossary=json.dumps(glossary, ensure_ascii=False)), json_input=json.dumps(json_batch, indent=2))
-                
+                trans_prompt = T_TRANS.format(
+                    system_prompt=T_TRANS_SYSTEM.format(
+                        lang_name=lang_name,
+                        glossary=json.dumps(glossary, ensure_ascii=False)
+                    ),
+                    json_input=json.dumps(json_batch, indent=2)
+                )
+
                 t_start = time.perf_counter()
                 res = self.llm(trans_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
                 dt = time.perf_counter() - t_start
@@ -328,7 +338,7 @@ class AIDubber:
 
                 parsed_trans = parse_json(res["choices"][0]["text"])
                 trans_map = {item["id"]: clean_output(item["text"], self.target_langs) for item in parsed_trans.get("translations", []) if "id" in item}
-                
+
                 json_critic = []
                 final_batch_map = {}
                 for idx in batch_indices:
@@ -339,9 +349,15 @@ class AIDubber:
                         final_batch_map[idx] = txt
                     else:
                         json_critic.append({"id": idx, "original": script[idx]["text_en"], "draft": txt})
-                
+
                 if json_critic:
-                    critic_prompt = T_CRITIC.format(system_prompt=T_CRITIC_SYSTEM.format(summary=summary, glossary=json.dumps(glossary, ensure_ascii=False)), json_input=json.dumps(json_critic, indent=2))
+                    critic_prompt = T_CRITIC.format(
+                        system_prompt=T_CRITIC_SYSTEM.format(
+                            summary=summary,
+                            glossary=json.dumps(glossary, ensure_ascii=False)
+                        ),
+                        json_input=json.dumps(json_critic, indent=2)
+                    )
                     t_start = time.perf_counter()
                     res_crit = self.llm(critic_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
                     dt = time.perf_counter() - t_start
@@ -423,30 +439,30 @@ class AIDubber:
                 if item is None:
                     break
                 translations.append(item)
-                
+
                 # --- DYNAMIC VOICE MIGRATION STRATEGY ---
                 # 1. Dynamic Sample (Current Segment)
                 # 2. Last Good Dynamic Sample (Rolling Cache)
                 # 3. Golden Sample (Global Fallback)
                 # 4. Generic (Last resort)
-                
+
                 golden_ref = self.speaker_refs.get(item["speaker"])
                 chosen_ref = None
                 voice_type = "UNKNOWN"
                 spk = item["speaker"]
-                
+
                 # Attempt Dynamic Extraction
                 dyn_path = os.path.join(self.temp_dir, f"dyn_{item['index']}.wav")
                 dur = item["end"] - item["start"]
-                
+
                 # Always attempt extraction to update cache if good
                 audio_processor.extract_clean_segment(vocals_path, item["start"], item["end"], dyn_path)
                 zcr = measure_zcr(dyn_path)
-                
+
                 # Criteria for a "Good" Dynamic Sample
                 # Relaxed constraints to favor dynamic adaptation
                 is_good_dynamic = (
-                    os.path.exists(dyn_path) 
+                    os.path.exists(dyn_path)
                     and os.path.getsize(dyn_path) > 4000
                     and zcr < 0.25
                     and dur > 0.8
@@ -468,21 +484,21 @@ class AIDubber:
                     elif golden_ref and os.path.exists(golden_ref):
                         chosen_ref = golden_ref
                         voice_type = "GOLDEN"
-                    
+
                     # Cleanup bad dynamic attempt
                     if os.path.exists(dyn_path) and chosen_ref != dyn_path:
                         os.remove(dyn_path)
-                
+
                 clean_text = item["text"].strip()
                 if len(clean_text.split()) < 3 and not clean_text.endswith("..."):
                     clean_text = clean_text + "..."
                 raw = os.path.join(self.temp_dir, f"raw_{item['index']}.wav")
                 syl_count = count_syllables(clean_text, lang)
                 max_allowed_dur = max((syl_count * 0.4) + 1.5, (item["end"] - item["start"]) + 1.5)
-                
+
                 try:
                     tts_args = {"text": clean_text, "language": lang, "file_path": raw, "temperature": 0.75, "repetition_penalty": 1.2, "top_p": 0.8, "top_k": 50, "speed": 1.0}
-                    
+
                     if chosen_ref:
                         tts_args["speaker_wav"] = chosen_ref
                     else:
@@ -494,37 +510,37 @@ class AIDubber:
                         fallback = generic_female_speaker if is_female else generic_male_speaker
                         tts_args["speaker"] = fallback if fallback else available_coqui_speakers[0]
                         voice_type = f"GENERIC_{tts_args['speaker']}"
-                    
+
                     t0 = time.perf_counter()
                     tts.tts_to_file(**tts_args)
                     dt = time.perf_counter() - t0
                     t_tts_total += dt
-                    
+
                     # Safety Check: ZCR (Screeching check)
                     zcr = measure_zcr(raw)
                     if zcr > 0.25 and "speaker_wav" in tts_args:
                         logging.warning(f"[ID: {item['index']}] High ZCR ({zcr:.3f}) in {voice_type}. Retrying with GENERIC.")
                         tts_args.pop("speaker_wav", None) # Remove cloned voice
-                        
+
                         info = self.speaker_info.get(item["speaker"], {})
                         desc = info.get("desc", "").lower()
                         name = info.get("name", "").lower()
                         is_female = any(x in desc or x in name for x in ["female", "woman", "lady", "girl", "kobieta", "pani"])
                         fb = generic_female_speaker if is_female else generic_male_speaker
                         tts_args["speaker"] = fb if fb else available_coqui_speakers[0]
-                        
+
                         t0_retry = time.perf_counter()
                         tts.tts_to_file(**tts_args)
                         voice_type = f"RETRY_{tts_args['speaker']}"
                         t_tts_total += (time.perf_counter() - t0_retry)
-                        
+
                     logging.debug(f"[ID: {item['index']}] TTS Done in {dt:.2f}s ({voice_type})")
                     q_out.put({"item": item, "raw_path": raw, "max_dur": max_allowed_dur, "voice_type": voice_type, "lang": lang})
-                    
+
                     # Cleanup dynamic sample if it was created
                     if voice_type == "DYNAMIC" and chosen_ref and os.path.exists(chosen_ref):
                         os.remove(chosen_ref)
-                        
+
                 except Exception as e:
                     logging.error(f"TTS Gen failed {item['index']}: {e}")
                 q_in.task_done()
@@ -551,13 +567,17 @@ class AIDubber:
             max_dur = task["max_dur"]
             final = os.path.join(self.temp_dir, f"tts_{item['index']}.wav")
             try:
-                raw_dur = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", raw]).strip())
+                cmd = [
+                    "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1", raw
+                ]
+                raw_dur = float(subprocess.check_output(cmd).strip())
                 if raw_dur > max_dur:
                     tmp_cut = raw + ".cut.wav"
                     subprocess.run(["ffmpeg", "-i", raw, "-t", str(max_dur), "-c", "copy", tmp_cut, "-y"], capture_output=True, check=True)
                     os.replace(tmp_cut, raw)
                 audio_processor.trim_silence(raw)
-                out_dur_str = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", raw]).strip()
+                out_dur_str = subprocess.check_output(cmd).strip()
                 actual_dur = float(out_dur_str)
                 target_dur = item["end"] - item["start"]
                 speed_factor = min(actual_dur / target_dur, 1.25) if actual_dur > target_dur else 1.0
@@ -601,7 +621,7 @@ class AIDubber:
         self.monitor.start()
         if not self.llm:
             threading.Thread(target=self._load_model, daemon=True).start()
-        
+
         def step(name, func, *args):
             logging.info(f"STARTING STEP: {name}")
             t = time.perf_counter()
@@ -609,7 +629,7 @@ class AIDubber:
             self.durations[name] = time.perf_counter() - t
             logging.info(f"COMPLETED STEP: {name} in {humanfriendly.format_timespan(self.durations[name])}")
             return res
-        
+
         a_stereo, vocals = step("1. Audio Separation (Demucs)", audio_processor.prep_audio, vpath)
         diar, trans, audio_durs = step("2. Audio Analysis (Whisper/Diarization)", audio_processor.analyze_audio, vocals, self.gpu_audio)
         self.durations.update(audio_durs)
@@ -625,7 +645,7 @@ class AIDubber:
         ref_subs = self._extract_subtitles(vpath)
         step("3. LLM Enhancement (Context/Speakers/ASR Fix)", self._llm_phase, script, ddir, ref_subs)
         step("4. Voice Reference Extraction", self._extract_refs, script, vocals, ddir)
-        
+
         for lang in self.target_langs:
             logging.info(f"--- STARTING PRODUCTION FOR LANGUAGE: {lang} ---")
             q_text = queue.Queue(maxsize=15)
@@ -658,8 +678,11 @@ class AIDubber:
             res.sort(key=lambda x: x[1])
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
             step(f"6. Final Mix ({lang})", audio_processor.mix_audio, a_stereo, res, final_a)
-            step(f"7. Muxing ({lang})", audio_processor.mux_video, vpath, final_a, lang, os.path.join(self.output_folder, f"dub_{lang}_{f}"), LANG_MAP.get(lang, lang))
-            
+            step(
+                f"7. Muxing ({lang})", audio_processor.mux_video, vpath, final_a, lang,
+                os.path.join(self.output_folder, f"dub_{lang}_{f}"), LANG_MAP.get(lang, lang)
+            )
+
         if self.monitor:
             self.monitor.stop()
         if self.llm:

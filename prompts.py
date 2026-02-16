@@ -7,9 +7,10 @@ REFERENCE SUBTITLES (Ground Truth for names/context): "{subtitles}"
 
 Analyze the movie script provided by the user. Return A SINGLE JSON object containing:
 1. 'summary': A concise summary of the plot and context.
-2. 'glossary': A dictionary of proper nouns, names, and specific terms. 
-   - For names and brands that should keep their original sound, provide a PHONETIC SPELLING in the target language(s) ({langs}). 
-   - Example (for Polish): 'James' -> 'Dżejms', 'MythBusters' -> 'Mif-basters', 'Hyneman' -> 'Hajneman'. 
+2. 'glossary': A dictionary of proper nouns, names, and specific terms.
+   - For names and brands that should keep their original sound,
+     provide a PHONETIC SPELLING in the target language(s) ({langs}).
+   - Example (for Polish): 'James' -> 'Dżejms', 'MythBusters' -> 'Mif-basters', 'Hyneman' -> 'Hajneman'.
    - This is crucial for the TTS engine to pronounce them correctly.
 3. 'speakers': A dictionary where keys are speaker IDs (e.g. SPEAKER_00) and values are objects with:
    - 'name': The inferred real name of the character/person.
@@ -38,7 +39,7 @@ REFERENCE SUBTITLES: "{subtitles}"
 RULES:
 1. Identify lines with misheard names or phonetic ASR errors.
 2. USE STANDARD ORTHOGRAPHY of the source language. NEVER use phonetic transcriptions (like 'æ', 'ð', 'ʃ') in the output.
-3. Verify proper nouns against the Reference Subtitles. 
+3. Verify proper nouns against the Reference Subtitles.
 4. Return ONLY a JSON object where keys are Line Indices (integers) and values are the Corrected Source Text.
 5. IF A LINE IS CORRECT, DO NOT INCLUDE IT.
 
@@ -85,7 +86,7 @@ OUTPUT FORMAT (JSON):
   "analysis": "Identify errors in the batch",
   "final_translations": [
     {{ "id": 0, "final_text": "Corrected text" }},
-    {{ "id": 1, "final_text": "" }} 
+    {{ "id": 1, "final_text": "" }}
   ]
 }}
 
@@ -110,7 +111,8 @@ Review these translations.<|im_end|>
 """
 
 T_SHORTEN = """<|im_start|>system
-You are a text compressor. Your task is to shorten the provided text by at least 50% while preserving the core meaning for dubbing. Respond ONLY with the compressed JSON.
+You are a text compressor. Your task is to shorten the provided text by at least 50%
+while preserving the core meaning for dubbing. Respond ONLY with the compressed JSON.
 
 OUTPUT FORMAT:
 {{

@@ -16,7 +16,7 @@ class ResourceMonitor(threading.Thread):
             try:
                 cpu = psutil.cpu_percent(interval=None)
                 ram = psutil.virtual_memory().percent
-                
+
                 # GPU Query via nvidia-smi
                 gpus = []
                 try:
@@ -32,20 +32,25 @@ class ResourceMonitor(threading.Thread):
                                 gpus.append((parts[0].strip(), parts[1].strip()))
                 except Exception:
                     pass
-                
+
                 # Fill missing GPUs with 0
                 while len(gpus) < 2:
                     gpus.append(("0", "0"))
-                
+
                 # Queue Sizes
                 qt = self.state.get('q_text').qsize() if self.state.get('q_text') else 0
                 qa = self.state.get('q_audio').qsize() if self.state.get('q_audio') else 0
-                
-                logging.info(f"[Monitor] CPU:{cpu}% RAM:{ram}% | GPU0:{gpus[0][0]}% Mem:{gpus[0][1]}MB | GPU1:{gpus[1][0]}% Mem:{gpus[1][1]}MB | Q_Text:{qt} Q_Audio:{qa}")
-                    
+
+                logging.info(
+                    f"[Monitor] CPU:{cpu}% RAM:{ram}% | "
+                    f"GPU0:{gpus[0][0]}% Mem:{gpus[0][1]}MB | "
+                    f"GPU1:{gpus[1][0]}% Mem:{gpus[1][1]}MB | "
+                    f"Q_Text:{qt} Q_Audio:{qa}"
+                )
+
             except Exception as e:
                 logging.error(f"Monitor Error: {e}")
-            
+
             time.sleep(self.interval)
 
     def stop(self):
