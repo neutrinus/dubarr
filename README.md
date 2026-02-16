@@ -10,6 +10,7 @@ An automated system for creating professional AI-powered dubbing (voice-over) us
 *   **Feature-Length Optimization**: Designed for 2h+ movies, maintaining character consistency and context throughout.
 *   **Character Consistency**: Uses advanced diarization to identify speakers and assign consistent AI voices.
 *   **Cinematic Quality**: Isolates original background music/effects and mixes them with the new AI voice track.
+*   **Subtitle-Assisted Transcription**: Automatically detects and uses external or embedded subtitles to ensure perfect spelling of names and terms.
 *   **In-Place Processing**: Adds a new "AI - [Language]" audio track to your existing files without overwriting originals.
 *   **Multi-GPU Support**: Optimized to split LLM, Audio Analysis, and TTS tasks across multiple cards for maximum speed.
 *   **Automatic Strategy Selection**: Scales from Multi-GPU setups to Single-GPU or CPU-only modes based on detected VRAM.
@@ -33,7 +34,6 @@ The system automatically detects your hardware and chooses the best processing s
 
 ### 1. Prerequisites
 *   **Hugging Face Token**: Required for Pyannote 3.1 (Diarization). [Accept terms here](https://huggingface.co/pyannote/speaker-diarization-3.1).
-*   **Models**: No manual download needed. The system will automatically fetch the Gemma 3 LLM on the first run and store it in the `./models` directory.
 
 ### 2. Deployment (Docker Compose)
 The easiest way to run `dubarr` is using Docker Compose. The image is automatically built and published to `ghcr.io`.
@@ -97,7 +97,7 @@ The system processes each video through 7 major stages:
     *   **Diarization**: Recognizes who speaks and when.
     *   **Transcription**: Converts speech to text using Whisper Large-v3.
 3.  **Global Analysis (LLM Stage 1 & 2)**: Gemma 3 12B analyzes the full script to create plot summaries and phonetic glossaries for characters.
-4.  **Transcription Correction (Editor)**: Fixes ASR errors while maintaining standard orthography.
+4.  **Transcription Correction (Editor)**: Fixes ASR errors while maintaining standard orthography. Uses **reference subtitles** (if found) as ground truth for proper nouns.
 5.  **Dynamic Voice Sampling**:
     *   **Current Segment**: Extracts original audio for each specific line to match tone/emotion.
     *   **Rolling Cache**: Falls back to the last successfully extracted clean sample for that speaker if the current segment is noisy.
@@ -112,7 +112,7 @@ The system processes each video through 7 major stages:
 ---
 
 ## 📊 Monitoring & Debugging
-*   **Web Dashboard**: Access `http://localhost:8080/` to view the task queue, retry failed tasks, or monitor progress.
+*   **Web Dashboard**: Access the management interface at `http://localhost:8080/` (or your server's IP) to view the task queue, retry failed tasks, or monitor worker status.
 *   **Logs**: Check `logs/processing.log` for a real-time resource monitor (CPU, RAM, GPU, Queue depths).
 *   **Artifacts**: With `DEBUG=1`, individual audio segments and LLM translations are saved in `logs/` for quality auditing.
 
