@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "AI Audio Dubbing Tool"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "fastapi>=0.129.0",
+    "pydantic>=2.12.5",
+    "uvicorn>=0.40.0",
+    "watchdog>=6.0.0",
+]
 
 [dependency-groups]
 dev = [

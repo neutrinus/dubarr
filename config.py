@@ -10,6 +10,16 @@ DEBUG_MODE = os.environ.get("DEBUG", "0").lower() in ("1", "true", "yes")
 VERBOSE_MODE = os.environ.get("VERBOSE", "0").lower() in ("1", "true", "yes")
 LOG_LEVEL = logging.DEBUG if VERBOSE_MODE else logging.INFO
 
+# Paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# For manual testing/watchfolder (legacy)
+VIDEO_FOLDER = os.path.join(BASE_DIR, "videos")
+# Output folder is now mainly for logs/debug artifacts in the new architecture
+OUTPUT_FOLDER = os.environ.get("LOGS_DIR", os.path.join(BASE_DIR, "logs"))
+TEMP_DIR = "/tmp/dubber"
+MODEL_PATH = os.path.join(BASE_DIR, "models", "gemma-3-12b-it-Q4_K_M.gguf")
+WHISPER_MODEL = "large-v3"
+
 
 # Safe logging setup
 def setup_logging():
@@ -38,14 +48,6 @@ LANG_MAP = {
     "zh": "Chinese",
     "ru": "Russian",
 }
-
-# Paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VIDEO_FOLDER = os.path.join(BASE_DIR, "videos")
-OUTPUT_FOLDER = os.path.join(BASE_DIR, "output")
-TEMP_DIR = "/tmp/dubber"
-MODEL_PATH = os.path.join(BASE_DIR, "models", "google_gemma-3-12b-it-Q4_K_M.gguf")
-WHISPER_MODEL = "large-v3"
 
 # Hardware Setup
 GPU_COUNT = torch.cuda.device_count()
