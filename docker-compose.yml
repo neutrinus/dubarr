@@ -1,6 +1,7 @@
 services:
   dubarr:
-    image: ghcr.io/neutrinus/dubarr:main
+    build: .
+    image: dubarr:local
     container_name: dubarr
     deploy:
       resources:
@@ -9,20 +10,23 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
     volumes:
       - ./videos:/app/videos
       - ./output:/app/output
       - ./models:/app/models
+      - ./entrypoint.sh:/app/entrypoint.sh
       # Mount cache volume to /data/cache
       - dubarr_cache:/data/cache
     environment:
-      - PUID=1000
-      - PGID=1000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - HF_TOKEN=${HF_TOKEN}
       - TARGET_LANGS=${TARGET_LANGS:-pl}
       - DEBUG=${DEBUG:-0}
       - VERBOSE=${VERBOSE:-0}
-    restart: unless-stopped
 
 volumes:
   dubarr_cache:

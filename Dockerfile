@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
+ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv-python
+
 WORKDIR /app
 
 # 1. Install Python versions
@@ -44,6 +46,9 @@ RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
 
 RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
     llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+
+RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
+    "fastapi" "uvicorn" "jinja2" "python-multipart"
 
 # 3. Setup TTS Venv (Legacy Stack for XTTS v2)
 RUN uv venv /app/.venv_tts --python 3.10
@@ -82,6 +87,7 @@ ENV PATH="/app/.venv_app/bin:$PATH"
 ENV PYTHONPATH="/app"
 
 # Use entrypoint script to handle PUID/PGID
+RUN chmod +x /app/entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Default command
