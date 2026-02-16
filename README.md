@@ -15,20 +15,35 @@ The primary objective of this system is to provide high-quality, fully automated
 *   The LLM model must be located at `models/gemma-3-12b-it-Q4_K_M.gguf`.
 *   Obtain a Hugging Face token (`HF_TOKEN`) with access to the Pyannote 3.1 model.
 
-### 2. Build
-Build the Docker image locally:
+### 2. Build & Execution (Recommended: Docker Compose)
+The easiest way to run the system is using Docker Compose. The image is automatically built and published to **GitHub Container Registry (GHCR)** as `ghcr.io/neutrinus/dubarr:main`.
+
+1.  **Configure environment:** Create a `.env` file or set variables in your shell:
+    ```bash
+    HF_TOKEN=your_huggingface_token
+    TARGET_LANGS=pl
+    ```
+2.  **Run:**
+    ```bash
+    docker-compose pull  # Download latest pre-built image
+    docker-compose up -d # Run in background
+    ```
+
+### 3. Manual Build & Execution (Alternative)
+If you prefer to build locally or run via raw docker commands:
+
+#### Build
 ```bash
 docker build -t dubarr .
 ```
 
-### 3. Execution
+#### Execution
 ```bash
 docker run --rm --gpus all \
-  -v $(pwd)/videos:/videos \
-  -v $(pwd)/output:/output \
-  -v $(pwd)/models:/models \
-  -v $(pwd)/hf_cache:/root/.cache/huggingface \
-  -v $(pwd)/tts_cache:/root/.local/share/tts \
+  -v $(pwd)/videos:/app/videos \
+  -v $(pwd)/output:/app/output \
+  -v $(pwd)/models:/app/models \
+  -v dubarr_cache:/root/.cache \
   -e HF_TOKEN=YOUR_TOKEN \
   -e TARGET_LANGS=pl \
   -e DEBUG=1 \
