@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "uvicorn>=0.40.0",
     "watchdog>=6.0.0",
+    "websockets>=16.0",
 ]
 
 [dependency-groups]

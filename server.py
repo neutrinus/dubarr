@@ -6,14 +6,15 @@ import time
 import uvicorn
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+import asyncio
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
 
 from main import AIDubber
-from config import setup_logging
+from config import setup_logging, OUTPUT_FOLDER
 
 # Setup logging
 setup_logging()
@@ -245,6 +246,44 @@ async def health_check():
         "queue_stats": stats,
         "worker_alive": worker_thread.is_alive() if worker_thread else False,
     }
+
+
+@app.websocket("/ws/logs")
+async def websocket_logs(websocket: WebSocket):
+    await websocket.accept()
+    log_file = os.path.join(OUTPUT_FOLDER, "processing.log")
+
+    # Ensure log file exists
+    if not os.path.exists(log_file):
+        with open(log_file, "w") as f:
+            f.write("Log file created.\n")
+
+    try:
+        # 1. Send last 50 lines immediately
+        with open(log_file, "r") as f:
+            lines = f.readlines()
+            last_lines = lines[-50:]
+            for line in last_lines:
+                await websocket.send_text(line.strip())
+
+        # 2. Tail the file
+        with open(log_file, "r") as f:
+            f.seek(0, os.SEEK_END)
+            while True:
+                line = f.readline()
+                if not line:
+                    await asyncio.sleep(0.5)
+                    continue
+                await websocket.send_text(line.strip())
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
