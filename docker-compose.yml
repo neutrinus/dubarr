@@ -13,6 +13,8 @@ services:
       restart_policy:
         condition: on-failure
         max_attempts: 3
+    ports:
+      - "8080:8080"
     volumes:
       - ./videos:/app/videos
       - ./output:/app/output
