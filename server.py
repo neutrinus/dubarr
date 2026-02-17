@@ -25,6 +25,7 @@ logger = logging.getLogger("Server")
 # Authentication setup
 security = HTTPBasic()
 
+
 def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
     current_user_bytes = credentials.username.encode("utf8")
     correct_user_bytes = API_USER.encode("utf8")
