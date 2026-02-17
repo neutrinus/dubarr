@@ -31,14 +31,19 @@ def run_smoke_test():
 
     # 2. Wait for server to be ready
     print("Waiting for server to be ready...")
-    for _ in range(30):
+    for i in range(30):
         try:
-            res = requests.get(f"{base_url}/health")
+            res = requests.get(f"{base_url}/health", timeout=2)
             if res.status_code == 200:
                 print("Server is up!")
                 break
-        except Exception:
-            pass
+            else:
+                print(f"Server returned status {res.status_code}...")
+        except requests.exceptions.ConnectionError:
+            if i % 5 == 0:
+                print("Server not reachable yet...")
+        except Exception as e:
+            print(f"Waiting... ({type(e).__name__}: {e})")
         time.sleep(2)
     else:
         print("Error: Server timed out")
