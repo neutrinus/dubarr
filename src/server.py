@@ -1,22 +1,11 @@
 import os
 import logging
-import threading
-import sqlite3
-import time
-import uvicorn
-from datetime import datetime
-from contextlib import asynccontextmanager
-import asyncio
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel
-from typing import Optional
-import secrets
 
 from main import AIDubber
 from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS
+
+# Early logging to catch import issues
+logging.info("SERVER_STARTUP: server.py module loading...")
 
 # Setup logging
 setup_logging()
@@ -336,4 +325,4 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 8080))
     logger.info(f"Server: Starting uvicorn on {host}:{port}")
-    uvicorn.run("server:app", host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port)
