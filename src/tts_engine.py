@@ -35,6 +35,10 @@ class XTTSClient:
 
     def start_server(self):
         """Starts the XTTS server in the legacy virtual environment."""
+        if os.environ.get("MOCK_MODE") == "1":
+            logging.info("XTTS: MOCK_MODE enabled. Skipping server start.")
+            return True
+
         logging.info("XTTS: Starting legacy TTS server...")
 
         env = os.environ.copy()
@@ -42,7 +46,8 @@ class XTTSClient:
 
         # Use the absolute path to the legacy venv python
         python_path = "/app/.venv_tts/bin/python3"
-        server_path = "/app/tts_server.py"
+        # Since WORKDIR is /app/src, and tts_server.py is in /app/src
+        server_path = "tts_server.py"
 
         self.server_process = subprocess.Popen([python_path, server_path], env=env, preexec_fn=os.setsid)
 
