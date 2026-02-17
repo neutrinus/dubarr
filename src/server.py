@@ -16,7 +16,6 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
-from main import AIDubber
 from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS, VIDEO_FOLDER
 
 # Early logging to catch import issues
@@ -90,7 +89,7 @@ class WebhookPayload(BaseModel):
 
 
 class DubberWorker(threading.Thread):
-    def __init__(self, dubber: AIDubber):
+    def __init__(self, dubber):
         super().__init__()
         self.dubber = dubber
         self.daemon = True
@@ -166,7 +165,7 @@ class DubberWorker(threading.Thread):
 async def lifespan(app: FastAPI):
     # Startup
     print("Lifespan: Starting application setup...", flush=True)
-    logging.info("Lifespan: Starting application setup...")
+    logger.info("Lifespan: Starting application setup...")
     try:
         init_db()
 
@@ -183,6 +182,9 @@ async def lifespan(app: FastAPI):
         def start_worker():
             global worker_thread
             try:
+                # Import AIDubber here to speed up API startup
+                from main import AIDubber
+
                 print("Lifespan: Initializing AIDubber in background...", flush=True)
                 logging.info("Lifespan: Initializing AIDubber in background...")
                 dubber = AIDubber()
@@ -197,7 +199,7 @@ async def lifespan(app: FastAPI):
                 logging.exception(f"Lifespan: Background initialization failed: {e}")
 
         threading.Thread(target=start_worker, daemon=True).start()
-        logging.info("Lifespan: Background initialization triggered.")
+        logger.info("Lifespan: Background initialization triggered.")
 
     except Exception as e:
         print(f"Lifespan: Initialization failed: {e}", flush=True)
@@ -231,7 +233,7 @@ async def dashboard(request: Request):
         {
             "request": request,
             "tasks": tasks,
-            "worker_alive": worker_thread.is_alive() if worker_thread else False,
+            "worker_alive": worker_thread.is_alive() if worker_thread is not None else False,
         },
     )
 
@@ -316,7 +318,7 @@ async def health_check():
     return {
         "status": "healthy",
         "queue_stats": stats,
-        "worker_alive": worker_thread.is_alive() if worker_thread else False,
+        "worker_alive": worker_thread.is_alive() if worker_thread is not None else False,
     }
 
 
@@ -362,5 +364,4 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 8080))
     logger.info(f"Server: Starting uvicorn on {host}:{port}")
-    # We use string to avoid issues with lifespan in some environments
-    uvicorn.run("server:app", host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port)
