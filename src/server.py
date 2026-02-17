@@ -54,7 +54,10 @@ worker_thread = None
 
 # Templates
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
+print(f"DEBUG: BASE_DIR={BASE_DIR}")
+print(f"DEBUG: TEMPLATE_DIR={TEMPLATE_DIR}")
+templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
 
 def init_db():

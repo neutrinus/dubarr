@@ -10,13 +10,17 @@ MOCK_MODE = os.environ.get("MOCK_MODE", "0").lower() in ("1", "true", "yes")
 LOG_LEVEL = logging.DEBUG if VERBOSE_MODE else logging.INFO
 
 # Paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# For manual testing/watchfolder (legacy)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VIDEO_FOLDER = os.path.join(BASE_DIR, "videos")
-# Output folder is now mainly for logs/debug artifacts in the new architecture
 OUTPUT_FOLDER = os.environ.get("LOGS_DIR", os.path.join(BASE_DIR, "logs"))
 TEMP_DIR = "/tmp/dubber"
 MODEL_PATH = os.path.join(BASE_DIR, "models", "google_gemma-3-12b-it-Q4_K_M.gguf")
+
+print(f"DEBUG: config.BASE_DIR={BASE_DIR}")
+print(f"DEBUG: config.VIDEO_FOLDER={VIDEO_FOLDER}")
+print(f"DEBUG: config.OUTPUT_FOLDER={OUTPUT_FOLDER}")
+print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}")
+
 WHISPER_MODEL = "large-v3"
 
 
