@@ -170,12 +170,20 @@ async def lifespan(app: FastAPI):
         conn.commit()
         conn.close()
 
-        logger.info("Lifespan: Initializing AIDubber...")
-        dubber = AIDubber()
-        logger.info("Lifespan: AIDubber initialized. Starting worker thread...")
-        worker_thread = DubberWorker(dubber)
-        worker_thread.start()
-        logger.info("Lifespan: Worker thread started.")
+        def start_worker():
+            global worker_thread
+            try:
+                logger.info("Lifespan: Initializing AIDubber in background...")
+                dubber = AIDubber()
+                logger.info("Lifespan: AIDubber initialized. Starting worker thread...")
+                worker_thread = DubberWorker(dubber)
+                worker_thread.start()
+                logger.info("Lifespan: Worker thread started.")
+            except Exception as e:
+                logger.exception(f"Lifespan: Background initialization failed: {e}")
+
+        threading.Thread(target=start_worker, daemon=True).start()
+        logger.info("Lifespan: Background initialization triggered.")
 
     except Exception as e:
         logger.exception(f"Lifespan: Initialization failed: {e}")
@@ -186,7 +194,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Lifespan: Shutting down...")
     stop_event.set()
-    if worker_thread.is_alive():
+    if worker_thread and worker_thread.is_alive():
         worker_thread.join()
     logger.info("Lifespan: Shutdown complete.")
 

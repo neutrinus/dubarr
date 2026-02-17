@@ -48,6 +48,7 @@ export TTS_HOME=/data/cache/tts
 export XDG_CACHE_HOME=/data/cache
 
 # Ensure directories exist
+echo "Creating directories..."
 mkdir -p /app/output /app/videos /app/models /app/logs /config /data/cache
 
 # Fix permissions for the volumes and cache
@@ -55,5 +56,5 @@ echo "Fixing permissions for $USER_NAME:$GROUP_NAME..."
 chown -R "$USER_NAME":"$GROUP_NAME" /app/output /app/videos /app/models /app/logs /config /data/cache /app/src
 
 # Run the command as the user
-echo "Executing command as $USER_NAME..."
+echo "Executing command as $USER_NAME: $@"
 exec gosu "$USER_NAME" "$@"
