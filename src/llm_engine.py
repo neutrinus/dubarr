@@ -76,7 +76,6 @@ class LLMManager:
                 n_batch=512,
                 n_threads=4,
                 flash_attn=(n_gpu_layers > 0),  # Flash Attn only works with CUDA
-                verbose=LLAMA_VERBOSE_MODE,
             )
             logging.info("LLM: Ready.")
         except Exception as e:
