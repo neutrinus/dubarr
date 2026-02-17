@@ -32,13 +32,13 @@ jobs:
           uv run python -m py_compile $(git ls-files '*.py')
       - name: Lint with ruff
         run: |
-          ruff check .
+          uv run ruff check .
       - name: Lint with flake8
         run: |
-          flake8 .
+          uv run flake8 .
       - name: Lint with pylint
         run: |
-          pylint $(git ls-files 'src/*.py') --exit-zero
+          uv run pylint $(git ls-files 'src/*.py') --exit-zero
       - name: Run unit tests
         run: |
           export PYTHONPATH=$PYTHONPATH:.:src
