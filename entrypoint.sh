@@ -1,11 +1,19 @@
 #!/bin/bash
 set -ex # Added -x for debugging
 
+# --- Early checks for debugging ---
+echo "Entrypoint: Starting..."
+which python3 || { echo "Entrypoint: python3 not found!"; exit 1; }
+test -f "/app/src/server.py" || { echo "Entrypoint: server.py not found!"; exit 1; }
+test -r "/app/src/server.py" || { echo "Entrypoint: server.py not readable!"; exit 1; }
+echo "Entrypoint: Python and server.py OK."
+
 # Get PUID and PGID, default to 1000 if not set
 USER_ID=${PUID:-1000}
 GROUP_ID=${PGID:-1000}
 
 echo "Starting with UID : $USER_ID, GID: $GROUP_ID"
+
 
 # 1. Handle Group
 if getent group "$GROUP_ID" >/dev/null 2>&1; then
@@ -42,18 +50,18 @@ fi
 # Set custom cache locations to a writable path
 # If user exists, HOME might already be set, but we override for container consistency
 export HOME=/home/"$USER_NAME"
-export HF_HOME=/data/cache/huggingface
-export TORCH_HOME=/data/cache/torch
-export TTS_HOME=/data/cache/tts
-export XDG_CACHE_HOME=/data/cache
+export HF_HOME=/app/data/hf_cache
+export TORCH_HOME=/app/data/torch_cache
+export TTS_HOME=/app/data/tts_cache
+export XDG_CACHE_HOME=/app/data/xdg_cache
 
 # Ensure directories exist
 echo "Creating directories..."
-mkdir -p /app/output /app/videos /app/models /app/logs /config /data/cache
+mkdir -p /app/output /app/videos /app/data /app/src/templates
 
 # Fix permissions for the volumes and cache
 echo "Fixing permissions for $USER_NAME:$GROUP_NAME..."
-chown -R "$USER_NAME":"$GROUP_NAME" /app/output /app/videos /app/models /app/logs /config /data/cache /app/src
+chown -R "$USER_NAME":"$GROUP_NAME" /app/output /app/videos /app/data /app/src
 
 # Run the command as the user
 echo "Executing command as $USER_NAME: $@"

@@ -11,10 +11,10 @@ LOG_LEVEL = logging.DEBUG if VERBOSE_MODE else logging.INFO
 
 # Paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
+DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 
 VIDEO_FOLDER = os.path.join(BASE_DIR, "videos")
-OUTPUT_FOLDER = os.environ.get("LOGS_DIR", os.path.join(DATA_DIR, "logs"))
+OUTPUT_FOLDER = os.path.join(DATA_DIR, "logs")
 TEMP_DIR = "/tmp/dubber"
 MODEL_PATH = os.path.join(DATA_DIR, "models", "google_gemma-3-12b-it-Q4_K_M.gguf")
 

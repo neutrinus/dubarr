@@ -53,11 +53,11 @@ services:
       - PGID=1000
       - HF_TOKEN=your_token_here
       - TARGET_LANGS=pl
-      - HF_HOME=/app/data/hf_cache # Keep cache inside data volume
+      - DATA_DIR=/app/data # Mount point for all app data (DB, logs, models, caches)
       - API_USER=dubarr # Optional: Custom API username
       - API_PASS=dubarr # Optional: Custom API password
     volumes:
-      - ./data:/app/data          # Persistent storage (DB, logs, models, cache)
+      - ./data:/app/data          # Persistent storage (DB, logs, models, caches)
       - /path/to/media:/app/videos # Your movie/tv library
     deploy:
       resources:
