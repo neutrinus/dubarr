@@ -29,11 +29,11 @@ def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
     current_user_bytes = credentials.username.encode("utf8")
     correct_user_bytes = API_USER.encode("utf8")
     is_correct_user = secrets.compare_digest(current_user_bytes, correct_user_bytes)
-    
+
     current_pass_bytes = credentials.password.encode("utf8")
     correct_pass_bytes = API_PASS.encode("utf8")
     is_correct_pass = secrets.compare_digest(current_pass_bytes, correct_pass_bytes)
-    
+
     if not (is_correct_user and is_correct_pass):
         raise HTTPException(
             status_code=401,
