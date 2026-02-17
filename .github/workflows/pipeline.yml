@@ -41,7 +41,7 @@ jobs:
           uv run pylint $(git ls-files '*.py') --exit-zero
       - name: Run unit tests
         run: |
-          export PYTHONPATH=$PYTHONPATH:.
+          export PYTHONPATH=$PYTHONPATH:.:src
           uv run pytest tests/
 
   build:
@@ -92,10 +92,13 @@ jobs:
 
   smoke-test:
     name: Smoke Test (MOCK Mode)
-    needs: [build]
+    needs: [qa] # Changed from build to qa to allow testing on PRs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Build local image for testing
+        run: |
+          docker build -t dubarr:test .
       - name: Run Docker Container in MOCK mode
         run: |
           docker run -d --name dubarr-test \
@@ -105,7 +108,7 @@ jobs:
             -e PGID=$(id -g) \
             -v /tmp:/tmp \
             -p 8080:8080 \
-            ghcr.io/${{ github.repository }}:main
+            dubarr:test
       - name: Install dependencies
         run: |
           sudo apt-get update

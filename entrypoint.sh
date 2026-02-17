@@ -52,7 +52,7 @@ mkdir -p /app/output /app/videos /app/models /app/logs /config /data/cache
 
 # Fix permissions for the volumes and cache
 echo "Fixing permissions for $USER_NAME:$GROUP_NAME..."
-chown -R "$USER_NAME":"$GROUP_NAME" /app/output /app/videos /app/models /app/logs /config /data/cache
+chown -R "$USER_NAME":"$GROUP_NAME" /app/output /app/videos /app/models /app/logs /config /data/cache /app/src
 
 # Run the command as the user
 echo "Executing command as $USER_NAME..."
