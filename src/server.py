@@ -1,5 +1,20 @@
 import os
 import logging
+import threading
+import sqlite3
+import time
+import uvicorn
+import secrets
+import asyncio
+from datetime import datetime
+from contextlib import asynccontextmanager
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, RedirectResponse
+from pydantic import BaseModel
 
 from main import AIDubber
 from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS
