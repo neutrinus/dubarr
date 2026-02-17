@@ -55,13 +55,12 @@ worker_thread = None
 # Templates
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
-print(f"DEBUG: BASE_DIR={BASE_DIR}")
-print(f"DEBUG: TEMPLATE_DIR={TEMPLATE_DIR}")
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
 
 def init_db():
     """Initializes the SQLite database for the task queue."""
+    logger.info(f"DB: Initializing database at {DB_PATH}")
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
@@ -77,6 +76,7 @@ def init_db():
     )
     conn.commit()
     conn.close()
+    logger.info("DB: Database initialized.")
 
 
 class WebhookPayload(BaseModel):
@@ -157,27 +157,38 @@ class DubberWorker(threading.Thread):
 async def lifespan(app: FastAPI):
     # Startup
     global worker_thread
-    init_db()
+    logger.info("Lifespan: Starting application setup...")
+    try:
+        init_db()
 
-    # Check for unfinished tasks (e.g. from crash) and reset them
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE tasks SET status = 'QUEUED' WHERE status = 'PROCESSING'")
-    if c.rowcount > 0:
-        logger.warning(f"Reset {c.rowcount} interrupted tasks to QUEUED state.")
-    conn.commit()
-    conn.close()
+        # Check for unfinished tasks (e.g. from crash) and reset them
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("UPDATE tasks SET status = 'QUEUED' WHERE status = 'PROCESSING'")
+        if c.rowcount > 0:
+            logger.warning(f"Reset {c.rowcount} interrupted tasks to QUEUED state.")
+        conn.commit()
+        conn.close()
 
-    dubber = AIDubber()
-    worker_thread = DubberWorker(dubber)
-    worker_thread.start()
+        logger.info("Lifespan: Initializing AIDubber...")
+        dubber = AIDubber()
+        logger.info("Lifespan: AIDubber initialized. Starting worker thread...")
+        worker_thread = DubberWorker(dubber)
+        worker_thread.start()
+        logger.info("Lifespan: Worker thread started.")
+
+    except Exception as e:
+        logger.exception(f"Lifespan: Initialization failed: {e}")
+        raise
 
     yield
 
     # Shutdown
+    logger.info("Lifespan: Shutting down...")
     stop_event.set()
     if worker_thread.is_alive():
         worker_thread.join()
+    logger.info("Lifespan: Shutdown complete.")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -317,4 +328,5 @@ async def websocket_logs(websocket: WebSocket):
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host=host, port=port)
+    logger.info(f"Server: Starting uvicorn on {host}:{port}")
+    uvicorn.run("server:app", host=host, port=port, log_level="info")

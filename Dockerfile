@@ -86,9 +86,11 @@ COPY . .
 ENV PATH="/app/.venv_app/bin:$PATH"
 ENV PYTHONPATH="/app:/app/src"
 
+WORKDIR /app/src
+
 # Use entrypoint script to handle PUID/PGID
 RUN chmod +x /app/entrypoint.sh
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Default command
-CMD ["python3", "src/server.py"]
+CMD ["python3", "server.py"]
