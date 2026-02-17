@@ -10,6 +10,7 @@ import subprocess
 from typing import List, Dict, Optional
 from tts_engine import F5TTSWrapper
 from utils import measure_zcr, count_syllables
+from config import MOCK_MODE
 import audio_processor
 
 
@@ -32,7 +33,7 @@ class TTSManager:
 
     def load_engine(self):
         """Initializes the TTS engine. Skips in MOCK_MODE."""
-        if os.environ.get("MOCK_MODE") == "1":
+        if MOCK_MODE:
             logging.info("TTS: MOCK_MODE enabled. Skipping engine load.")
             return
 
@@ -90,7 +91,7 @@ class TTSManager:
 
     def _run_synthesis(self, *args, **kwargs):
         """Wrapper for TTS inference that respects the global lock if needed. Mocks in MOCK_MODE."""
-        if os.environ.get("MOCK_MODE") == "1":
+        if MOCK_MODE:
             # Extract output_path from args or kwargs
             # Signature: synthesize(text, ref_audio, output_path, ref_text="", language="en")
             if len(args) >= 3:

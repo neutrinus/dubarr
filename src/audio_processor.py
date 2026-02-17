@@ -7,7 +7,7 @@ import gc
 import shutil
 import time
 from typing import List, Dict, Tuple
-from config import DEVICE_AUDIO, TEMP_DIR, WHISPER_MODEL
+from config import DEVICE_AUDIO, TEMP_DIR, WHISPER_MODEL, MOCK_MODE
 from utils import run_cmd
 
 
@@ -16,7 +16,7 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
     a_stereo = os.path.join(TEMP_DIR, "orig.wav")
     run_cmd(["ffmpeg", "-i", vpath, "-vn", "-ac", "2", "-y", a_stereo], "extract audio")
 
-    if os.environ.get("MOCK_MODE") == "1":
+    if MOCK_MODE:
         logging.info("Demucs: MOCK_MODE enabled. Using original audio as vocals.")
         vocals_path = os.path.join(TEMP_DIR, "vocals.mp3")
         run_cmd(["ffmpeg", "-i", a_stereo, "-y", vocals_path], "mock separation")
@@ -77,7 +77,7 @@ def run_diarization(mpath: str) -> List[Dict]:
 
 def run_transcription(mpath: str) -> List[Dict]:
     """Runs transcription using Faster-Whisper. Mocks in MOCK_MODE."""
-    if os.environ.get("MOCK_MODE") == "1":
+    if MOCK_MODE:
         return [
             {
                 "start": 0.0,

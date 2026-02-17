@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS, VIDEO_FOLDER
 
+
 # Early logging to catch import issues
 print("SERVER_STARTUP: server.py module loading...", flush=True)
 logging.info("SERVER_STARTUP: server.py module loading...")
@@ -266,15 +267,17 @@ async def receive_webhook(payload: WebhookPayload, username: str = Depends(authe
     if not payload.path:
         raise HTTPException(status_code=400, detail="Path is required")
 
-    # Construct the absolute path within the container's video folder
-    # Assuming payload.path is relative to the VIDEO_FOLDER mount point
-    # e.g., "videos/sample.mp4" should become "/app/videos/sample.mp4"
-    relative_path = payload.path
-    if relative_path.startswith("videos/"):
-        relative_path = relative_path[len("videos/") :]
-    full_path = os.path.join(VIDEO_FOLDER, relative_path)
-    # Ensure the full_path is normalized and clean
-    full_path = os.path.abspath(full_path)
+    # If path is absolute, use it directly (useful for smoke tests in /tmp)
+    # Otherwise, assume it is relative to VIDEO_FOLDER
+    if os.path.isabs(payload.path):
+        full_path = payload.path
+    else:
+        relative_path = payload.path
+        if relative_path.startswith("videos/"):
+            relative_path = relative_path[len("videos/") :]
+        full_path = os.path.join(VIDEO_FOLDER, relative_path)
+
+    full_path = os.path.normpath(full_path)
 
     logger.info(f"API: Received task for {payload.path} from {username}. Full path: {full_path}")
 

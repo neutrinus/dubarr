@@ -5,6 +5,8 @@ import requests
 import logging
 import signal
 
+from config import MOCK_MODE
+
 # XTTS v2 supported languages
 XTTS_LANGS = [
     "en",
@@ -35,7 +37,7 @@ class XTTSClient:
 
     def start_server(self):
         """Starts the XTTS server in the legacy virtual environment."""
-        if os.environ.get("MOCK_MODE") == "1":
+        if MOCK_MODE:
             logging.info("XTTS: MOCK_MODE enabled. Skipping server start.")
             return True
 

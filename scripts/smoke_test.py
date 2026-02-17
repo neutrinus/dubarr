@@ -35,8 +35,12 @@ def run_smoke_test():
         try:
             res = requests.get(f"{base_url}/health", timeout=2)
             if res.status_code == 200:
-                print("Server is up!")
-                break
+                data = res.json()
+                if data.get("worker_alive"):
+                    print("Server and worker are up!")
+                    break
+                else:
+                    print("Server is up, but worker is still initializing...")
             else:
                 print(f"Server returned status {res.status_code}...")
         except requests.exceptions.ConnectionError:
@@ -46,7 +50,7 @@ def run_smoke_test():
             print(f"Waiting... ({type(e).__name__}: {e})")
         time.sleep(2)
     else:
-        print("Error: Server timed out")
+        print("Error: Server or worker timed out")
         sys.exit(1)
 
     # 3. Trigger webhook

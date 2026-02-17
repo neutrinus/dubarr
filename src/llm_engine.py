@@ -9,7 +9,7 @@ from typing import List, Dict, Optional
 from llama_cpp import Llama, llama_supports_gpu_offload
 from utils import parse_json, clean_output, count_syllables
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, T_TRANS, T_CRITIC, T_SHORTEN
-from config import LANG_MAP
+from config import LANG_MAP, MOCK_MODE
 
 
 class LLMManager:
@@ -33,14 +33,14 @@ class LLMManager:
 
     def load_model(self):
         """Loads the LLM into VRAM or RAM. Downloads if missing. Skips in MOCK_MODE."""
-        if os.environ.get("MOCK_MODE") == "1":
+        if MOCK_MODE:
             logging.info("LLM: MOCK_MODE enabled. Skipping model load.")
             self.ready_event.set()
             return
 
-        if not os.path.exists(self.model_path):
-            logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
-            try:
+        try:
+            if not os.path.exists(self.model_path):
+                logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
                 from huggingface_hub import hf_hub_download
 
                 repo_id = "bartowski/google_gemma-3-12b-it-GGUF"
@@ -56,13 +56,8 @@ class LLMManager:
                     local_dir_use_symlinks=False,
                 )
                 logging.info("LLM: Download completed successfully.")
-            except Exception as e:
-                logging.error(f"LLM: Failed to download model: {e}")
-                self.abort_event.set()
-                raise
 
-        logging.info(f"LLM: Loading on {self.device}...")
-        try:
+            logging.info(f"LLM: Loading on {self.device}...")
             logging.info(f"LLM: GPU Offload Supported: {llama_supports_gpu_offload()}")
 
             # Determine params based on device type
@@ -84,15 +79,15 @@ class LLMManager:
                 verbose=self.debug_mode,
             )
             logging.info("LLM: Ready.")
-            self.ready_event.set()
         except Exception as e:
             logging.error(f"LLM: Load Failed: {e}")
             self.abort_event.set()
-            raise
+        finally:
+            self.ready_event.set()
 
     def _run_inference(self, prompt, **kwargs):
         """Wrapper for LLM inference that respects the global lock if needed."""
-        if os.environ.get("MOCK_MODE") == "1":
+        if MOCK_MODE:
             # Mock responses based on prompt type
             if "Analyze the movie script" in prompt:
                 return {

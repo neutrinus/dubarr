@@ -4,7 +4,6 @@ import logging
 import time
 import threading
 import queue
-import sys
 import humanfriendly
 import shutil
 import subprocess
@@ -419,7 +418,7 @@ class AIDubber:
 
             while p_th.is_alive() or tts_th.is_alive() or post_th.is_alive():
                 if self.abort_event.is_set():
-                    sys.exit(1)
+                    raise RuntimeError("Processing aborted via event")
                 time.sleep(1.0)
 
             p_th.join()
@@ -442,7 +441,7 @@ class AIDubber:
                 vpath,
                 final_a,
                 lang,
-                os.path.join(self.output_folder, f"dub_{lang}_{f}"),
+                os.path.join(self.output_folder, f"dub_{lang}_{os.path.basename(f)}"),
                 LANG_MAP.get(lang, lang),
             )
 
