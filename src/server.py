@@ -184,30 +184,20 @@ async def lifespan(app: FastAPI):
         conn.commit()
         conn.close()
 
-        def start_worker():
-            global worker_thread
-            try:
-                # Import AIDubber here to speed up API startup
-                from main import AIDubber
+        # Initialize AIDubber and start worker thread directly in lifespan
+        global worker_thread
+        # Import AIDubber here to speed up API startup
+        from main import AIDubber
 
-                print("Lifespan: Initializing AIDubber in background...", flush=True)
-                logging.info("Lifespan: Initializing AIDubber in background...")
-                dubber = AIDubber()
-                print("Lifespan: AIDubber initialized. Starting worker thread...", flush=True)
-                logging.info("Lifespan: AIDubber initialized. Starting worker thread...")
-                worker_thread = DubberWorker(dubber)
-                worker_thread.start()
-                print("Lifespan: Worker thread started.", flush=True)
-                logging.info("Lifespan: Worker thread started.")
-            except Exception as e:
-                print(f"Lifespan: Background AIDubber/worker initialization failed: {e}", flush=True)
-                logging.exception(f"Lifespan: Background AIDubber/worker initialization failed: {e}")
-                # This worker thread failed, mark abort event
-                stop_event.set()  # This will cause lifespan to exit immediately
-                sys.exit(1)  # Crash the container to show the error immediately
-
-        threading.Thread(target=start_worker, daemon=True).start()
-        logger.info("Lifespan: Background initialization triggered.")
+        print("Lifespan: Initializing AIDubber...", flush=True)
+        logging.info("Lifespan: Initializing AIDubber...")
+        dubber = AIDubber()
+        print("Lifespan: AIDubber initialized. Starting worker thread...", flush=True)
+        logging.info("Lifespan: AIDubber initialized. Starting worker thread...")
+        worker_thread = DubberWorker(dubber)
+        worker_thread.start()
+        print("Lifespan: Worker thread started.", flush=True)
+        logging.info("Lifespan: Worker thread started.")
 
     except Exception as e:
         print(f"Lifespan: Initialization failed: {e}", flush=True)
