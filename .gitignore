@@ -30,6 +30,7 @@ ENV/
 models/
 hf_cache/
 .cache/
+tts_cache/
 
 # Data and Outputs
 output/
