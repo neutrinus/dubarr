@@ -6,10 +6,18 @@ import threading
 import gc
 import torch
 from typing import List, Dict, Optional
-from llama_cpp import Llama, llama_supports_gpu_offload
 from utils import parse_json, clean_output, count_syllables
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, T_TRANS, T_CRITIC, T_SHORTEN
 from config import LANG_MAP, MOCK_MODE
+
+try:
+    from llama_cpp import Llama, llama_supports_gpu_offload
+except (ImportError, RuntimeError, OSError):
+    logging.warning("LLM: Failed to import llama_cpp (likely missing CUDA libs). LLM will not be available.")
+    Llama = None
+
+    def llama_supports_gpu_offload():
+        return False
 
 
 class LLMManager:
@@ -37,6 +45,11 @@ class LLMManager:
             logging.info("LLM: MOCK_MODE enabled. Skipping model load.")
             self.ready_event.set()
             return
+
+        if Llama is None:
+            logging.error("LLM: llama_cpp library is not available.")
+            self.abort_event.set()
+            raise RuntimeError("llama-cpp-python import failed. Check logs for details (missing libcuda?).")
 
         try:
             if not os.path.exists(self.model_path):
