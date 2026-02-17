@@ -56,12 +56,11 @@ services:
       - API_USER=dubarr # Optional: Custom API username
       - API_PASS=dubarr # Optional: Custom API password
     volumes:
-      - ./config:/config        # Queue database and settings
-      - ./logs:/logs            # Processing logs and debug artifacts
-      - ./models:/app/models    # LLM and AI models
-      - /path/to/movies:/movies
-      - /path/to/tv:/tvseries
-      - dubarr_cache:/data/cache # Persist model downloads
+      - ./config:/config          # Queue database and settings
+      - ./logs:/app/logs          # Processing logs and debug artifacts
+      - ./models:/app/models      # LLM and AI models
+      - /path/to/media:/app/videos # Root folder for your movies/tv (Radarr/Sonarr)
+      - dubarr_cache:/app/hf_cache # Persist model downloads
     deploy:
       resources:
         reservations:

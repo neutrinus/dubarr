@@ -145,6 +145,35 @@ def analyze_audio(vocals_path: str) -> Tuple[List, List, Dict]:
     return diar_result, trans_result, durations
 
 
+def get_audio_languages(vpath: str) -> List[str]:
+    """Returns a list of language codes for audio streams in the video."""
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index:stream_tags=language",
+        "-of",
+        "csv=p=0",
+        vpath,
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        langs = []
+        for line in res.stdout.strip().split("\n"):
+            if "," in line:
+                # Format is: index,lang (e.g. 1,pol)
+                parts = line.split(",")
+                if len(parts) >= 2:
+                    langs.append(parts[1].lower())
+        return langs
+    except Exception as e:
+        logging.warning(f"Failed to detect audio languages: {e}")
+        return []
+
+
 def mix_audio(bg: str, clips: List, out: str):
     """Mixes background audio with dubbed clips using sidechain compression."""
     if not clips:

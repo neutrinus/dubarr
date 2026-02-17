@@ -390,7 +390,20 @@ class AIDubber:
 
         step("4. Voice Reference Extraction", self._extract_refs, script, vocals, ddir)
 
+        # Detect existing audio languages
+        existing_langs = audio_processor.get_audio_languages(vpath)
+        if existing_langs:
+            logging.info(f"Existing audio languages: {', '.join(existing_langs)}")
+
+        # Map 2-letter (ISO 639-1) to 3-letter (ISO 639-2/T) for robust checking
+        iso_map = {"pl": "pol", "en": "eng", "de": "ger", "es": "spa", "fr": "fra", "it": "ita", "ru": "rus", "ja": "jpn"}
+
         for lang in self.target_langs:
+            # Skip if language is already in video (check both 2-letter and 3-letter codes)
+            if lang.lower() in existing_langs or iso_map.get(lang.lower()) in existing_langs:
+                logging.info(f"--- SKIPPING {lang}: Language already exists in source video ---")
+                continue
+
             logging.info(f"--- STARTING PRODUCTION FOR LANGUAGE: {lang} ---")
             q_text = queue.Queue(maxsize=15)
             q_audio = queue.Queue(maxsize=10)
