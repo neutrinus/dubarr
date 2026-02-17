@@ -6,6 +6,7 @@ import time
 import uvicorn
 import secrets
 import asyncio
+import sys  # Dodano import sys
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -163,11 +164,15 @@ class DubberWorker(threading.Thread):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Added sleep for debugging startup
+    time.sleep(10)
     # Startup
     print("Lifespan: Starting application setup...", flush=True)
     logger.info("Lifespan: Starting application setup...")
     try:
+        print("Lifespan: Initializing database...", flush=True)
         init_db()
+        print("Lifespan: Database initialized.", flush=True)
 
         # Check for unfinished tasks (e.g. from crash) and reset them
         conn = sqlite3.connect(DB_PATH)
@@ -195,8 +200,11 @@ async def lifespan(app: FastAPI):
                 print("Lifespan: Worker thread started.", flush=True)
                 logging.info("Lifespan: Worker thread started.")
             except Exception as e:
-                print(f"Lifespan: Background initialization failed: {e}", flush=True)
-                logging.exception(f"Lifespan: Background initialization failed: {e}")
+                print(f"Lifespan: Background AIDubber/worker initialization failed: {e}", flush=True)
+                logging.exception(f"Lifespan: Background AIDubber/worker initialization failed: {e}")
+                # This worker thread failed, mark abort event
+                stop_event.set()  # This will cause lifespan to exit immediately
+                sys.exit(1)  # Crash the container to show the error immediately
 
         threading.Thread(target=start_worker, daemon=True).start()
         logger.info("Lifespan: Background initialization triggered.")
@@ -204,7 +212,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Lifespan: Initialization failed: {e}", flush=True)
         logging.exception(f"Lifespan: Initialization failed: {e}")
-        raise
+        sys.exit(1)  # Ensure we exit with an error code if lifespan setup fails
 
     yield
 

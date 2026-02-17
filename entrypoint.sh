@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -ex # Added -x for debugging
 
 # Get PUID and PGID, default to 1000 if not set
 USER_ID=${PUID:-1000}
