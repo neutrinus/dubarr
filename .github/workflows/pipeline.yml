@@ -32,13 +32,13 @@ jobs:
           uv run python -m py_compile $(git ls-files '*.py')
       - name: Lint with ruff
         run: |
-          uv run ruff check .
+          ruff check .
       - name: Lint with flake8
         run: |
-          uv run flake8 .
+          flake8 .
       - name: Lint with pylint
         run: |
-          uv run pylint $(git ls-files '*.py') --exit-zero
+          pylint $(git ls-files 'src/*.py') --exit-zero
       - name: Run unit tests
         run: |
           export PYTHONPATH=$PYTHONPATH:.:src
@@ -109,6 +109,11 @@ jobs:
             -v /tmp:/tmp \
             -p 8080:8080 \
             dubarr:test
+      - name: Wait for Container and Debug Info
+        run: |
+          sleep 5
+          docker ps -a
+          docker logs dubarr-test
       - name: Install dependencies
         run: |
           sudo apt-get update
