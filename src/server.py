@@ -16,8 +16,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
-from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS, VIDEO_FOLDER
-
+from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS, VIDEO_FOLDER, DATA_DIR
 
 # Early logging to catch import issues
 print("SERVER_STARTUP: server.py module loading...", flush=True)
@@ -50,7 +49,7 @@ def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
 
 
 # Database Configuration
-DB_PATH = "/config/queue.db"
+DB_PATH = os.path.join(DATA_DIR, "queue.db")
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # Global control

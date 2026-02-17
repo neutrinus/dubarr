@@ -53,14 +53,12 @@ services:
       - PGID=1000
       - HF_TOKEN=your_token_here
       - TARGET_LANGS=pl
+      - HF_HOME=/app/data/hf_cache # Keep cache inside data volume
       - API_USER=dubarr # Optional: Custom API username
       - API_PASS=dubarr # Optional: Custom API password
     volumes:
-      - ./config:/config          # Queue database and settings
-      - ./logs:/app/logs          # Processing logs and debug artifacts
-      - ./models:/app/models      # LLM and AI models
-      - /path/to/media:/app/videos # Root folder for your movies/tv (Radarr/Sonarr)
-      - dubarr_cache:/app/hf_cache # Persist model downloads
+      - ./data:/app/data          # Persistent storage (DB, logs, models, cache)
+      - /path/to/media:/app/videos # Your movie/tv library
     deploy:
       resources:
         reservations:
@@ -69,9 +67,6 @@ services:
               count: all
               capabilities: [gpu]
     restart: unless-stopped
-
-volumes:
-  dubarr_cache:
 ```
 
 ### 3. Usage
