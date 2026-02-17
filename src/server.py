@@ -20,6 +20,7 @@ from main import AIDubber
 from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS, VIDEO_FOLDER
 
 # Early logging to catch import issues
+print("SERVER_STARTUP: server.py module loading...", flush=True)
 logging.info("SERVER_STARTUP: server.py module loading...")
 
 # Setup logging

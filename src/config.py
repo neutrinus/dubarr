@@ -16,10 +16,10 @@ OUTPUT_FOLDER = os.environ.get("LOGS_DIR", os.path.join(BASE_DIR, "logs"))
 TEMP_DIR = "/tmp/dubber"
 MODEL_PATH = os.path.join(BASE_DIR, "models", "google_gemma-3-12b-it-Q4_K_M.gguf")
 
-print(f"DEBUG: config.BASE_DIR={BASE_DIR}")
-print(f"DEBUG: config.VIDEO_FOLDER={VIDEO_FOLDER}")
-print(f"DEBUG: config.OUTPUT_FOLDER={OUTPUT_FOLDER}")
-print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}")
+print(f"DEBUG: config.BASE_DIR={BASE_DIR}", flush=True)
+print(f"DEBUG: config.VIDEO_FOLDER={VIDEO_FOLDER}", flush=True)
+print(f"DEBUG: config.OUTPUT_FOLDER={OUTPUT_FOLDER}", flush=True)
+print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
 WHISPER_MODEL = "large-v3"
 
