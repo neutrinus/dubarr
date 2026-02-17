@@ -46,7 +46,7 @@ def run_smoke_test():
 
     # 3. Trigger webhook
     print(f"Triggering webhook for {test_video}...")
-    res = requests.post(f"{base_url}/webhook", json={"path": test_video})
+    res = requests.post(f"{base_url}/webhook", json={"path": test_video}, auth=("dubarr", "dubarr"))
     if res.status_code != 200:
         print(f"Error: Webhook failed: {res.text}")
         sys.exit(1)

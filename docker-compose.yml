@@ -27,6 +27,8 @@ services:
       - TARGET_LANGS=${TARGET_LANGS:-pl}
       - DEBUG=${DEBUG:-0}
       - VERBOSE=${VERBOSE:-0}
+      - API_USER=${API_USER:-dubarr}
+      - API_PASS=${API_PASS:-dubarr}
 
 volumes:
   dubarr_cache:

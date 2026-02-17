@@ -53,6 +53,8 @@ services:
       - PGID=1000
       - HF_TOKEN=your_token_here
       - TARGET_LANGS=pl
+      - API_USER=dubarr # Optional: Custom API username
+      - API_PASS=dubarr # Optional: Custom API password
     volumes:
       - ./config:/config        # Queue database and settings
       - ./logs:/logs            # Processing logs and debug artifacts
@@ -78,16 +80,21 @@ volumes:
 
 **Manual Trigger (cURL):**
 ```bash
-curl -X POST http://localhost:8080/webhook \
+curl -u dubarr:dubarr -X POST http://localhost:8080/webhook \
   -H "Content-Type: application/json" \
   -d '{"path": "/movies/Diuna/Dune.mkv"}'
 ```
 
 **Radarr/Sonarr Integration:**
 1.  Go to **Settings -> Connect**.
-2.  Add a **Webhook** or **Custom Script**.
-3.  Set the URL to `http://dubarr-ip:8080/webhook`.
-4.  Trigger on **On Download** or **On Upgrade**.
+2.  Add a **Webhook**.
+3.  **URL**: `http://your-ip:8080/webhook`
+4.  **Method**: `POST`
+5.  **Username**: `dubarr` (or your `API_USER`)
+6.  **Password**: `dubarr` (or your `API_PASS`)
+7.  Trigger on **On Download** or **On Upgrade**.
+
+![Radarr Configuration](assets/radarr_config.png)
 
 ---
 

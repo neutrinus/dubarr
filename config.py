@@ -51,6 +51,10 @@ LANG_MAP = {
 TARGET_LANGS = os.environ.get("TARGET_LANGS", "pl").split(",")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
+# API Authentication
+API_USER = os.environ.get("API_USER", "dubarr")
+API_PASS = os.environ.get("API_PASS", "dubarr")
+
 # --- DYNAMIC HARDWARE ALLOCATION ---
 
 

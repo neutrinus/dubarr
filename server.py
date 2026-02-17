@@ -7,18 +7,41 @@ import uvicorn
 from datetime import datetime
 from contextlib import asynccontextmanager
 import asyncio
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
+import secrets
 
 from main import AIDubber
-from config import setup_logging, OUTPUT_FOLDER
+from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS
 
 # Setup logging
 setup_logging()
 logger = logging.getLogger("Server")
+
+# Authentication setup
+security = HTTPBasic()
+
+def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
+    current_user_bytes = credentials.username.encode("utf8")
+    correct_user_bytes = API_USER.encode("utf8")
+    is_correct_user = secrets.compare_digest(current_user_bytes, correct_user_bytes)
+    
+    current_pass_bytes = credentials.password.encode("utf8")
+    correct_pass_bytes = API_PASS.encode("utf8")
+    is_correct_pass = secrets.compare_digest(current_pass_bytes, correct_pass_bytes)
+    
+    if not (is_correct_user and is_correct_pass):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
 
 # Database Configuration
 DB_PATH = "/config/queue.db"
@@ -198,11 +221,11 @@ async def delete_task(task_id: int):
 
 
 @app.post("/webhook")
-async def receive_webhook(payload: WebhookPayload):
+async def receive_webhook(payload: WebhookPayload, username: str = Depends(authenticate)):
     if not payload.path:
         raise HTTPException(status_code=400, detail="Path is required")
 
-    logger.info(f"API: Received task for {payload.path}")
+    logger.info(f"API: Received task for {payload.path} from {username}")
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
