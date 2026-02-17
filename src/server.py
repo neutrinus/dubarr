@@ -340,4 +340,5 @@ if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 8080))
     logger.info(f"Server: Starting uvicorn on {host}:{port}")
-    uvicorn.run(app, host=host, port=port)
+    # We use string to avoid issues with lifespan in some environments
+    uvicorn.run("server:app", host=host, port=port, log_level="info")
