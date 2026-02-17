@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from main import AIDubber
-from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS
+from config import setup_logging, OUTPUT_FOLDER, API_USER, API_PASS, VIDEO_FOLDER
 
 # Early logging to catch import issues
 logging.info("SERVER_STARTUP: server.py module loading...")
@@ -95,6 +95,7 @@ class DubberWorker(threading.Thread):
         self.daemon = True
 
     def run(self):
+        print("Worker: Started polling database for tasks.", flush=True)
         logger.info("Worker: Started polling database for tasks.")
         while not stop_event.is_set():
             try:
@@ -104,14 +105,17 @@ class DubberWorker(threading.Thread):
                     continue
 
                 task_id, path = task
+                print(f"Worker: Processing Task #{task_id}: {path}", flush=True)
                 logger.info(f"Worker: Processing Task #{task_id}: {path}")
 
                 try:
                     if os.path.exists(path):
                         self.dubber.process_video(path)
+                        print(f"Worker: Finished Task #{task_id}", flush=True)
                         self.update_status(task_id, "DONE")
                         logger.info(f"Worker: Finished Task #{task_id}")
                     else:
+                        print(f"Worker: File not found: {path}", flush=True)
                         logger.error(f"Worker: File not found: {path}")
                         self.update_status(task_id, "FAILED_FILE_NOT_FOUND")
                 except Exception as e:
@@ -160,7 +164,8 @@ class DubberWorker(threading.Thread):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Lifespan: Starting application setup...")
+    print("Lifespan: Starting application setup...", flush=True)
+    logging.info("Lifespan: Starting application setup...")
     try:
         init_db()
 
@@ -169,37 +174,43 @@ async def lifespan(app: FastAPI):
         c = conn.cursor()
         c.execute("UPDATE tasks SET status = 'QUEUED' WHERE status = 'PROCESSING'")
         if c.rowcount > 0:
-            logger.warning(f"Reset {c.rowcount} interrupted tasks to QUEUED state.")
+            print(f"Lifespan: Reset {c.rowcount} interrupted tasks to QUEUED state.", flush=True)
+            logging.warning(f"Reset {c.rowcount} interrupted tasks to QUEUED state.")
         conn.commit()
         conn.close()
 
         def start_worker():
             global worker_thread
             try:
-                logger.info("Lifespan: Initializing AIDubber in background...")
+                print("Lifespan: Initializing AIDubber in background...", flush=True)
+                logging.info("Lifespan: Initializing AIDubber in background...")
                 dubber = AIDubber()
-                logger.info("Lifespan: AIDubber initialized. Starting worker thread...")
+                print("Lifespan: AIDubber initialized. Starting worker thread...", flush=True)
+                logging.info("Lifespan: AIDubber initialized. Starting worker thread...")
                 worker_thread = DubberWorker(dubber)
                 worker_thread.start()
-                logger.info("Lifespan: Worker thread started.")
+                print("Lifespan: Worker thread started.", flush=True)
+                logging.info("Lifespan: Worker thread started.")
             except Exception as e:
-                logger.exception(f"Lifespan: Background initialization failed: {e}")
+                print(f"Lifespan: Background initialization failed: {e}", flush=True)
+                logging.exception(f"Lifespan: Background initialization failed: {e}")
 
         threading.Thread(target=start_worker, daemon=True).start()
-        logger.info("Lifespan: Background initialization triggered.")
+        logging.info("Lifespan: Background initialization triggered.")
 
     except Exception as e:
-        logger.exception(f"Lifespan: Initialization failed: {e}")
+        print(f"Lifespan: Initialization failed: {e}", flush=True)
+        logging.exception(f"Lifespan: Initialization failed: {e}")
         raise
 
     yield
 
     # Shutdown
-    logger.info("Lifespan: Shutting down...")
+    logging.info("Lifespan: Shutting down...")
     stop_event.set()
     if worker_thread and worker_thread.is_alive():
         worker_thread.join()
-    logger.info("Lifespan: Shutdown complete.")
+    logging.info("Lifespan: Shutdown complete.")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -252,13 +263,23 @@ async def receive_webhook(payload: WebhookPayload, username: str = Depends(authe
     if not payload.path:
         raise HTTPException(status_code=400, detail="Path is required")
 
-    logger.info(f"API: Received task for {payload.path} from {username}")
+    # Construct the absolute path within the container's video folder
+    # Assuming payload.path is relative to the VIDEO_FOLDER mount point
+    # e.g., "videos/sample.mp4" should become "/app/videos/sample.mp4"
+    relative_path = payload.path
+    if relative_path.startswith("videos/"):
+        relative_path = relative_path[len("videos/") :]
+    full_path = os.path.join(VIDEO_FOLDER, relative_path)
+    # Ensure the full_path is normalized and clean
+    full_path = os.path.abspath(full_path)
+
+    logger.info(f"API: Received task for {payload.path} from {username}. Full path: {full_path}")
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
         # Check if already exists (to avoid duplicates)
-        c.execute("SELECT status FROM tasks WHERE path = ?", (payload.path,))
+        c.execute("SELECT status FROM tasks WHERE path = ?", (full_path,))
         row = c.fetchone()
         if row:
             status = row[0]
@@ -271,14 +292,14 @@ async def receive_webhook(payload: WebhookPayload, username: str = Depends(authe
                 # Re-queue if it was done/failed before (manual retry via webhook)
                 c.execute(
                     "UPDATE tasks SET status = 'QUEUED', updated_at = ? WHERE path = ?",
-                    (datetime.now(), payload.path),
+                    (datetime.now(), full_path),
                 )
                 conn.commit()
-                return {"status": "re-queued", "path": payload.path}
+                return {"status": "re-queued", "path": full_path}
         else:
-            c.execute("INSERT INTO tasks (path) VALUES (?)", (payload.path,))
+            c.execute("INSERT INTO tasks (path) VALUES (?)", (full_path,))
             conn.commit()
-            return {"status": "queued", "path": payload.path}
+            return {"status": "queued", "path": full_path}
     finally:
         conn.close()
 

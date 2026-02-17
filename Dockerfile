@@ -5,7 +5,7 @@ ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 ENV HF_HOME=/app/hf_cache
-ENV TTS_HOME=/app/tts_cache
+ENV UV_HTTP_TIMEOUT=600
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

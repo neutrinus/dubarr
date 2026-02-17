@@ -34,6 +34,7 @@ setup_logging()
 
 class AIDubber:
     def __init__(self):
+        print("AIDubber: Initializing...", flush=True)
         self.video_folder = VIDEO_FOLDER
         self.output_folder = OUTPUT_FOLDER
         self.temp_dir = TEMP_DIR
@@ -45,6 +46,7 @@ class AIDubber:
         self.device_audio = DEVICE_AUDIO
         self.inference_lock = threading.Lock() if USE_LOCK else None
 
+        print(f"AIDubber: LLM Device: {self.device_llm}", flush=True)
         logging.info("--- DUBARR CONFIGURATION ---")
         logging.info(f"LLM Device:   {self.device_llm}")
         logging.info(f"Audio Device: {self.device_audio}")
@@ -58,6 +60,7 @@ class AIDubber:
         self.available_pans = [-0.10, 0.10, -0.03, 0.03, -0.17, 0.17]
         self.speaker_pans = {}
         self.abort_event = threading.Event()
+        print("AIDubber: Initializing LLMManager...", flush=True)
         self.llm_manager = LLMManager(
             model_path=MODEL_PATH,
             device=self.device_llm,
@@ -65,6 +68,7 @@ class AIDubber:
             debug_mode=self.debug_mode,
             target_langs=self.target_langs,
         )
+        print("AIDubber: Initializing TTSManager...", flush=True)
         self.tts_manager = TTSManager(
             device=self.device_audio,
             inference_lock=self.inference_lock,
@@ -73,9 +77,12 @@ class AIDubber:
             abort_event=self.abort_event,
         )
         self.monitor = None
+        print("AIDubber: Initialization complete.", flush=True)
 
     def _cleanup_debug(self, fname):
-        d = os.path.join(self.output_folder, "debug_" + os.path.splitext(fname)[0])
+        # Use only the filename, not the full path, for the debug directory name
+        clean_name = os.path.basename(fname)
+        d = os.path.join(self.output_folder, "debug_" + os.path.splitext(clean_name)[0])
         if os.path.exists(d):
             shutil.rmtree(d)
         if self.debug_mode:
@@ -329,25 +336,31 @@ class AIDubber:
         subprocess.run(["ffmpeg", "-i", r, "-af", filt, f, "-y"], capture_output=True)
 
     def process_video(self, f):
-        vpath = os.path.join(self.video_folder, f)
-        logging.info(f"=== PROCESSING FILE: {f} for languages: {','.join(self.target_langs)} ===")
+        # If f is an absolute path, use it directly; otherwise join with video_folder
+        vpath = f if os.path.isabs(f) else os.path.join(self.video_folder, f)
+        print(f"AIDubber: === PROCESSING FILE: {vpath} ===", flush=True)
+        logging.info(f"=== PROCESSING FILE: {vpath} for languages: {','.join(self.target_langs)} ===")
         start_all = time.perf_counter()
-        ddir = self._cleanup_debug(f)
+        ddir = self._cleanup_debug(vpath)
         seg_dir = os.path.join(ddir, "segments") if self.debug_mode else None
-        if os.path.exists(seg_dir):
+
+        if seg_dir and os.path.exists(seg_dir):
             shutil.rmtree(seg_dir)
-        if self.debug_mode:
+        if seg_dir and self.debug_mode:
             os.makedirs(seg_dir, exist_ok=True)
+
         monitor_state = {}
         self.monitor = ResourceMonitor(monitor_state)
         self.monitor.daemon = True
         self.monitor.start()
 
         def step(name, func, *args):
+            print(f"AIDubber: STARTING STEP: {name}", flush=True)
             logging.info(f"STARTING STEP: {name}")
             t = time.perf_counter()
             res = func(*args)
             self.durations[name] = time.perf_counter() - t
+            print(f"AIDubber: COMPLETED STEP: {name} in {humanfriendly.format_timespan(self.durations[name])}", flush=True)
             logging.info(f"COMPLETED STEP: {name} in {humanfriendly.format_timespan(self.durations[name])}")
             return res
 

@@ -10,4 +10,4 @@ repos:
     rev: 7.1.1
     hooks:
       - id: flake8
-        args: ["--max-line-length=127", "--ignore=E501,W503,D100,D101,D102,D103,D107,D401"]
+        args: ["--max-line-length=127", "--ignore=E501,W503,E203,D100,D101,D102,D103,D107,D401"]
