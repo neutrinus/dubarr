@@ -101,11 +101,18 @@ jobs:
           docker run -d --name dubarr-test \
             -e MOCK_MODE=1 \
             -e HF_TOKEN=dummy \
+            -e PUID=$(id -u) \
+            -e PGID=$(id -g) \
+            -v /tmp:/tmp \
             -p 8080:8080 \
             ghcr.io/${{ github.repository }}:main
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python3 -m pip install requests
       - name: Run Smoke Test Script
         run: |
-          python3 -m pip install requests
           python3 scripts/smoke_test.py
       - name: Check Container Logs on Failure
         if: failure()
