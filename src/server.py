@@ -156,7 +156,6 @@ class DubberWorker(threading.Thread):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    global worker_thread
     logger.info("Lifespan: Starting application setup...")
     try:
         init_db()
