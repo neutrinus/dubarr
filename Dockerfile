@@ -47,8 +47,7 @@ RUN uv venv /app/.venv_tts --python 3.10 && \
     uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
     --index-strategy unsafe-best-match \
     "numpy<2.0" "torch==2.4.0" "torchaudio==2.4.0" \
-    "transformers<=4.43.3" "pydantic<2.0" "flask" \
-    "git+https://github.com/idiap/coqui-ai-TTS.git" && \
+    "flask" "git+https://github.com/idiap/coqui-ai-TTS.git" && \
     uv cache clean
 
 # Fix the transformers breaking change in XTTS
