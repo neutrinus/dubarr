@@ -129,3 +129,88 @@ def mix_audio(bg: str, clips: List, out: str):
     with open(filter_path, "w") as f:
         f.write(";".join(filters))
     FFmpegWrapper.run_complex_script(inputs, filter_path, out)
+
+
+def get_audio_languages(vpath: str) -> List[str]:
+    """Returns a list of language codes for audio streams in the video."""
+    try:
+        meta = FFmpegWrapper.get_metadata(vpath)
+        langs = []
+        for stream in meta.get("streams", []):
+            if stream.get("codec_type") == "audio":
+                langs.append(stream.get("tags", {}).get("language", "und").lower())
+        return langs
+    except Exception:
+        return []
+
+
+def extract_clean_segment(input_path: str, start: float, end: float, output_path: str):
+    """Extracts and cleans audio segment for cloning."""
+    duration = end - start
+    filt = "highpass=f=100,afftdn=nf=-20,speechnorm=e=10:r=0.0001:l=1"
+    # Using raw subprocess here as FFmpegWrapper.apply_filter takes full input,
+    # but here we need seeking (-ss). Could extend Wrapper later.
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-ss",
+        str(start),
+        "-t",
+        str(duration),
+        "-i",
+        input_path,
+        "-af",
+        filt,
+        "-ac",
+        "1",
+        "-ar",
+        "24000",
+        output_path,
+        "-y",
+    ]
+    import subprocess
+
+    subprocess.run(cmd, check=False, capture_output=True)
+
+
+def trim_and_pad_silence(path: str, target_dur: float):
+    """
+    Intelligently trims leading/trailing silence and then pads or slightly
+    adjusts speed to match the target duration exactly.
+    """
+    tmp = path + ".proc.wav"
+    # 1. Trim silence from both ends
+    trim_filt = "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_silence=0.05:start_threshold=-50dB,areverse"
+
+    # Run trimming
+    import subprocess
+
+    subprocess.run(["ffmpeg", "-i", path, "-af", trim_filt, tmp, "-y"], capture_output=True)
+
+    if not os.path.exists(tmp) or os.path.getsize(tmp) < 100:
+        return  # Keep original if trimming failed
+
+    # 2. Check new duration
+    current_dur = FFmpegWrapper.get_duration(tmp)
+
+    # 3. Decision: Pad if too short, stretch if too long (but only slightly)
+    final_filt = []
+    if current_dur < target_dur:
+        pad_dur = target_dur - current_dur
+        final_filt.append(f"apad=pad_dur={pad_dur:.3f}")
+    elif current_dur > target_dur:
+        speed = current_dur / target_dur
+        if speed <= 1.05:
+            final_filt.append(f"atempo={speed:.3f}")
+
+    if final_filt:
+        tmp2 = tmp + ".final.wav"
+        subprocess.run(["ffmpeg", "-i", tmp, "-af", ",".join(final_filt), tmp2, "-y"], capture_output=True)
+        if os.path.exists(tmp2):
+            os.replace(tmp2, path)
+    else:
+        os.replace(tmp, path)
+
+    if os.path.exists(tmp):
+        os.remove(tmp)

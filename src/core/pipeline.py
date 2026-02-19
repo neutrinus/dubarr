@@ -11,10 +11,10 @@ from typing import List
 
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR
 from infrastructure.ffmpeg import FFmpegWrapper
-from monitor import ResourceMonitor
+from infrastructure.monitor import ResourceMonitor
 from core.audio import prep_audio, analyze_audio, mix_audio
 from utils import clean_srt, measure_zcr, run_cmd
-import audio_processor
+from core import audio as audio_processor  # Alias to keep compatibility with get_audio_languages call
 
 logger = logging.getLogger(__name__)
 
