@@ -26,17 +26,10 @@ An automated system for creating professional AI-powered dubbing (voice-over) us
 
 Want to see it in action? Check out our comparison demo where we take an original English clip and show the AI Dubbing results for Polish, French, and German sequentially.
 
+[![dubarr demo](https://img.youtube.com/vi/MkJtJ11j_BU/0.jpg)](https://www.youtube.com/watch?v=MkJtJ11j_BU)
+
 > [!TIP]
 > Notice how the AI maintains the same voice characteristics and emotional tone across all target languages while blending with the original background atmosphere.
-
-**Comparison Video:** `dubarr_demo_labeled.mp4` (Generated using our built-in tools).
-
-### Create your own Demo
-You can easily create a comparison video for your dubbed movies using our utility script:
-```bash
-./scripts/generate_demo.sh
-```
-*Edit the configuration in the script to select your timestamps and language tracks.*
 
 ---
 
