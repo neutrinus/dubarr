@@ -455,6 +455,14 @@ class DubbingPipeline:
             run_step(f"Stage 6: Final Mix ({lang})", mix_audio, a_stereo, res, final_a)
             all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
 
+            # Clear monitor state for this lang
+            monitor_state["q_text"] = None
+            monitor_state["q_audio"] = None
+
+            # Clear monitor state for this lang
+            monitor_state["q_text"] = None
+            monitor_state["q_audio"] = None
+
         if self.db and task_id:
             self.db.save_step_result(task_id, "Stage 5: Production", "DONE", result_data={"langs": self.target_langs})
 
