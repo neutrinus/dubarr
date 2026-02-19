@@ -34,7 +34,11 @@ runtime = [
     "diffq",
     "faster-whisper",
     "transformers==4.40.0",
-    "coqui-tts @ git+https://github.com/lorgu/coqui-ai-TTS.git",
+]
+
+[dependency-groups]
+tts = [
+    "coqui-tts @ git+https://github.com/idiap/coqui-ai-TTS.git",
 ]
 
 [tool.ruff]
