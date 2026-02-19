@@ -1,5 +1,6 @@
 import os
 import logging
+import sys
 
 try:
     import torch
@@ -63,6 +64,15 @@ LANG_MAP = {
 
 TARGET_LANGS = os.environ.get("TARGET_LANGS", "pl").split(",")
 HF_TOKEN = os.environ.get("HF_TOKEN")
+
+# Fail early if HF_TOKEN is missing (unless in MOCK_MODE)
+if not HF_TOKEN and not MOCK_MODE:
+    print("\n" + "!" * 60)
+    print("FATAL ERROR: HF_TOKEN environment variable is missing!")
+    print("Pyannote Diarization requires a Hugging Face token.")
+    print("Please set HF_TOKEN in your environment or docker-compose.yml.")
+    print("!" * 60 + "\n")
+    sys.exit(1)
 
 # API Authentication
 API_USER = os.environ.get("API_USER", "dubarr")
