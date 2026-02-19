@@ -28,43 +28,28 @@ ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv-python
 WORKDIR /app
 
 # 1. Install Python versions
-RUN uv python install 3.12
-RUN uv python install 3.10
+RUN uv python install 3.12 3.10
 
 # 2. Setup App Venv (Modern Stack)
-RUN uv venv /app/.venv_app --python 3.12
-
-RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
+RUN uv venv /app/.venv_app --python 3.12 && \
+    uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
     --index-strategy unsafe-best-match \
-    "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio"
-
-RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
-    "pyannote.audio==4.0.4" "faster-whisper" "demucs" "diffq"
-
-RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
-    "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables"
-
-RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
-    llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
-
-RUN uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
-    "fastapi" "uvicorn" "jinja2" "python-multipart"
+    "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio" \
+    "pyannote.audio==4.0.4" "faster-whisper" "demucs" "diffq" \
+    "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
+    "fastapi" "uvicorn" "jinja2" "python-multipart" && \
+    uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
+    llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 && \
+    uv cache clean
 
 # 3. Setup TTS Venv (Legacy Stack for XTTS v2)
-RUN uv venv /app/.venv_tts --python 3.10
-
-# Layer 3a: Base ML for TTS
-RUN uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
+RUN uv venv /app/.venv_tts --python 3.10 && \
+    uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
     --index-strategy unsafe-best-match \
-    "numpy<2.0" "torch==2.4.0" "torchaudio==2.4.0"
-
-# Layer 3b: Common libs
-RUN uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
-    "transformers<=4.43.3" "pydantic<2.0" "flask"
-
-# Layer 3c: XTTS fork
-RUN uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
-    "git+https://github.com/idiap/coqui-ai-TTS.git"
+    "numpy<2.0" "torch==2.4.0" "torchaudio==2.4.0" \
+    "transformers<=4.43.3" "pydantic<2.0" "flask" \
+    "git+https://github.com/idiap/coqui-ai-TTS.git" && \
+    uv cache clean
 
 # Fix the transformers breaking change in XTTS
 RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py ]; then \
