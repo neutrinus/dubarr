@@ -35,6 +35,16 @@ The system automatically detects your hardware and chooses the best processing s
 
 ---
 
+## ⚡ Performance & Speed
+
+Processing time depends on your hardware and the number of target languages.
+
+*   **Rule of Thumb**: Expect processing to take approximately **2x to 3x the video duration** per language on a modern GPU (e.g., RTX 3090/4090).
+*   **Example**: A 10-minute video dubbed into 3 languages (`pl`, `de`, `fr`) takes about 20-30 minutes to complete.
+*   **Parallelism**: If you have multiple GPUs, the system will automatically utilize them to speed up LLM and TTS tasks simultaneously.
+
+---
+
 ## 🚀 Getting Started
 
 ### 1. Prerequisites
