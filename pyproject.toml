@@ -29,7 +29,7 @@ dev = [
 runtime = [
     "hf_transfer",
     "demucs",
-    "huggingface-hub<0.24",
+    "huggingface-hub>=0.28.1",
     "pyannote.audio==4.0.4",
     "diffq",
     "faster-whisper",
