@@ -41,8 +41,19 @@ class ResourceMonitor(threading.Thread):
                     gpus.append(("0", "0"))
 
                 # Queue Sizes
-                qt = self.state.get("q_text").qsize() if self.state.get("q_text") else 0
-                qa = self.state.get("q_audio").qsize() if self.state.get("q_audio") else 0
+                qt = 0
+                if self.state.get("q_text") is not None:
+                    try:
+                        qt = self.state["q_text"].qsize()
+                    except Exception:
+                        pass
+
+                qa = 0
+                if self.state.get("q_audio") is not None:
+                    try:
+                        qa = self.state["q_audio"].qsize()
+                    except Exception:
+                        pass
 
                 logging.info(
                     f"[Monitor] CPU:{cpu}% RAM:{ram}% | "

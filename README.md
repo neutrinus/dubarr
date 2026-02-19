@@ -22,6 +22,24 @@ An automated system for creating professional AI-powered dubbing (voice-over) us
 
 ---
 
+## 🎬 Demo
+
+Want to see it in action? Check out our comparison demo where we take an original English clip and show the AI Dubbing results for Polish, French, and German sequentially.
+
+> [!TIP]
+> Notice how the AI maintains the same voice characteristics and emotional tone across all target languages while blending with the original background atmosphere.
+
+**Comparison Video:** `dubarr_demo_labeled.mp4` (Generated using our built-in tools).
+
+### Create your own Demo
+You can easily create a comparison video for your dubbed movies using our utility script:
+```bash
+./scripts/generate_demo.sh
+```
+*Edit the configuration in the script to select your timestamps and language tracks.*
+
+---
+
 ## 💻 Hardware Requirements
 
 The system automatically detects your hardware and chooses the best processing strategy.
@@ -97,24 +115,17 @@ curl -u dubarr:dubarr -X POST http://localhost:8080/webhook \
 
 The system processes each video through 7 major stages:
 
-1.  **Audio Separation (Demucs)**: Uses `htdemucs_ft` to isolate vocals from background music and effects.
-2.  **Audio Analysis (Whisper/Pyannote)**:
-    *   **Diarization**: Recognizes who speaks and when.
+1.  **Stage 1: Audio Separation (Demucs)**: Uses `htdemucs_ft` to isolate vocals from background music and effects.
+2.  **Stage 2: Audio Analysis (Whisper/Pyannote)**:
+    *   **Diarization**: Recognizes who speaks and when (using `pyannote/speaker-diarization-community-1`).
     *   **Transcription**: Converts speech to text using Whisper Large-v3.
-3.  **Global Analysis (LLM Stage 1 & 2)**: Gemma 3 12B analyzes the full script to create plot summaries and phonetic glossaries for characters.
-4.  **Transcription Correction (Editor)**: Fixes ASR errors while maintaining standard orthography. Uses **reference subtitles** (if found) as ground truth for proper nouns.
-5.  **Dynamic Voice Sampling**:
-    *   **Current Segment**: Extracts original audio for each specific line to match tone/emotion.
-    *   **Rolling Cache**: Falls back to the last successfully extracted clean sample for that speaker if the current segment is noisy.
-    *   **Golden Sample**: Uses a pre-vetted high-quality sample as a global fallback.
-6.  **Production**:
+3.  **Stage 3: Global Analysis (LLM Stage 1 & 2)**: Gemma 3 12B analyzes the full script to create plot summaries and phonetic glossaries for characters.
+4.  **Stage 4: Transcription Correction (Editor)**: Fixes ASR errors while maintaining standard orthography. Uses **reference subtitles** (if found) as ground truth for proper nouns.
+5.  **Stage 5: Production**:
     *   **Duration-Aware Translation**: Adapts text for dubbing while strictly respecting the available time window (syllable-count constraints).
     *   **Synthesis (XTTS v2)**: Generates the new audio track with cloned voices and real-time artifact guards (ZCR checking).
-7.  **Post-Production**:
-    *   **Intelligent Alignment**: Trims silence and applies fine-tuned speed adjustments or padding to match original timings exactly.
-    *   **Ripple Shifting**: Automatically shifts overlapping segments to ensure clear dialogue.
-    *   **Final Mix**: Aggressive sidechain ducking (12:1 ratio) and Ambient Ghosting (low-pass original audio) for a rich, cinematic audio field.
-    *   **Muxing**: Assembles the final video with all new tracks named "AI - [Language]".
+6.  **Stage 6: Final Mix**: Aggressive sidechain ducking (12:1 ratio) and Ambient Ghosting (low-pass original audio) for a rich, cinematic audio field.
+7.  **Stage 7: Muxing**: Assembles the final video with all new tracks named "AI - [Language]".
 
 ---
 

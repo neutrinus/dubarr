@@ -218,8 +218,19 @@
                                                 <span class="status-badge bg-secondary">{{ task.status }}</span>
                                             {% endif %}
                                         </div>
+                                        {% if task.status == 'PROCESSING' %}
+                                            <div class="progress mt-2" style="height: 10px; background-color: #444;">
+                                                {% set pct = (task.progress / 7 * 100)|round(0)|int %}
+                                                <div class="progress-bar bg-info progress-bar-striped progress-bar-animated" 
+                                                     role="progressbar" style="width: {{ pct }}%;" 
+                                                     aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"></div>
+                                            </div>
+                                            <div class="text-info mt-1" style="font-size: 0.7rem;">
+                                                Stage {{ task.progress }}/7
+                                            </div>
+                                        {% endif %}
                                         {% if task.status == 'PROCESSING' and task.started_at %}
-                                            <div class="small text-info fst-italic timer" data-start="{{ task.started_at }}">
+                                            <div class="small text-info fst-italic timer mt-1" data-start="{{ task.started_at }}">
                                                 Running for: <span class="time-elapsed">...</span>
                                             </div>
                                         {% endif %}
