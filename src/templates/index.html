@@ -358,15 +358,19 @@
                 const startStr = el.getAttribute('data-start');
                 if (!startStr) return;
                 
-                // Parse SQLite timestamp format (might need adjustment based on format)
-                const start = new Date(startStr.replace(' ', 'T'));
+                // Parse SQLite timestamp format and ensure it's treated as UTC
+                let isoStr = startStr.replace(' ', 'T');
+                if (!isoStr.endsWith('Z')) isoStr += 'Z';
+                
+                const start = new Date(isoStr);
                 const now = new Date();
                 const diff = Math.floor((now - start) / 1000);
                 
-                if (diff < 0) return;
+                // Handle cases where server time might be slightly ahead
+                const safeDiff = Math.max(0, diff);
                 
-                const mins = Math.floor(diff / 60);
-                const secs = diff % 60;
+                const mins = Math.floor(safeDiff / 60);
+                const secs = safeDiff % 60;
                 el.querySelector('.time-elapsed').textContent = `${mins}m ${secs}s`;
             });
         }

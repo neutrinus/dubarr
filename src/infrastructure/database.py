@@ -82,7 +82,7 @@ class Database:
                         has_subtitles = ? WHERE path = ?
                     """,
                         (
-                            datetime.now(),
+                            datetime.utcnow(),
                             meta.get("target_langs"),
                             meta.get("source_lang"),
                             meta.get("size"),
@@ -122,7 +122,7 @@ class Database:
                     task = dict(row)
                     c.execute(
                         "UPDATE tasks SET status = 'PROCESSING', started_at = ?, updated_at = ? WHERE id = ?",
-                        (datetime.now(), datetime.now(), task["id"]),
+                        (datetime.utcnow(), datetime.utcnow(), task["id"]),
                     )
                     conn.commit()
                     return task
@@ -137,7 +137,7 @@ class Database:
             c = conn.cursor()
             c.execute(
                 "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-                (status, datetime.now(), task_id),
+                (status, datetime.utcnow(), task_id),
             )
             conn.commit()
 
@@ -162,7 +162,7 @@ class Database:
     def retry_task(self, task_id: int):
         with self._get_connection() as conn:
             c = conn.cursor()
-            c.execute("UPDATE tasks SET status = 'QUEUED', updated_at = ? WHERE id = ?", (datetime.now(), task_id))
+            c.execute("UPDATE tasks SET status = 'QUEUED', updated_at = ? WHERE id = ?", (datetime.utcnow(), task_id))
             conn.commit()
 
     def save_step_result(self, task_id: int, step_name: str, status: str, result_data: Dict = None, error_msg: str = None):
@@ -179,7 +179,7 @@ class Database:
                 status=excluded.status, result_data=excluded.result_data,
                 error_msg=excluded.error_msg, updated_at=excluded.updated_at
             """,
-                (task_id, step_name, status, res_json, error_msg, datetime.now()),
+                (task_id, step_name, status, res_json, error_msg, datetime.utcnow()),
             )
             conn.commit()
 
