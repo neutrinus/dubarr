@@ -205,7 +205,7 @@ def mix_audio(bg: str, clips: List, out: str):
     filters.append("[speech_raw]asplit=2[speech_out][trigger]")
     filters.append("[0:a]aformat=sample_rates=48000:channel_layouts=stereo[bg_fixed]")
     filters.append("[bg_fixed][trigger]sidechaincompress=threshold=0.02:ratio=5:attack=50:release=600[bg_ducked]")
-    filters.append("[bg_ducked][speech_out]amix=inputs=2:weights=1 1.5:normalize=0[out]")
+    filters.append("[bg_ducked][speech_out]amix=inputs=2:weights=1 1:normalize=0,alimiter=limit=0.9[out]")
 
     with open(filter_path, "w") as f:
         f.write(";".join(filters))

@@ -331,7 +331,7 @@ class AIDubber:
             for x in ["narrator", "lektor", "narratorka"]
         )
         echo = "aecho=0.8:0.9:10:0.2," if not is_narrator else ""
-        filt = f"highpass=f=60,{echo}speechnorm=e=6:r=0.0001:l=1,pan=stereo|c0={1.0 - max(0, p):.2f}*c0|c1={1.0 + min(0, p):.2f}*c0,atempo={speed}"
+        filt = f"highpass=f=60,{echo}speechnorm=e=4:r=0.0001:l=1,pan=stereo|c0={1.0 - max(0, p):.2f}*c0|c1={1.0 + min(0, p):.2f}*c0,atempo={speed}"
         subprocess.run(["ffmpeg", "-i", r, "-af", filt, f, "-y"], capture_output=True)
 
     def process_video(self, f):
