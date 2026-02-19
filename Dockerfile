@@ -30,8 +30,8 @@ RUN uv python install 3.12 3.10 && \
 RUN uv venv /app/.venv_tts --python 3.10 && \
     uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
     --index-strategy unsafe-best-match \
-    "numpy>=1.26.0" "torch==2.4.0" "torchaudio==2.4.0" \
-    "flask" "git+https://github.com/lorgu/coqui-ai-TTS.git" && \
+    "numpy<2.0" "torch==2.4.0" "torchaudio==2.4.0" \
+    "flask" "git+https://github.com/idiap/coqui-ai-TTS.git" && \
     uv cache clean
 
 # Fix the transformers breaking change in XTTS
@@ -55,7 +55,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy built venvs from builder
+# Copy Python installations and built venvs from builder
+COPY --from=builder /usr/local/uv-python /usr/local/uv-python
 COPY --from=builder /app/.venv_app /app/.venv_app
 COPY --from=builder /app/.venv_tts /app/.venv_tts
 
