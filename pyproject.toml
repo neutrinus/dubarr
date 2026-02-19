@@ -34,6 +34,10 @@ runtime = [
     "diffq",
     "faster-whisper",
     "transformers==4.40.0",
+]
+
+[dependency-groups]
+tts = [
     "TTS",
 ]
 
