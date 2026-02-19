@@ -109,26 +109,22 @@ async def download_task(task_id: int, username: str = Depends(authenticate)):
     task = next((t for t in tasks if t["id"] == task_id), None)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     file_path = task["path"]
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found on disk")
-    
-    return FileResponse(
-        path=file_path,
-        filename=os.path.basename(file_path),
-        media_type="application/octet-stream"
-    )
+
+    return FileResponse(path=file_path, filename=os.path.basename(file_path), media_type="application/octet-stream")
 
 
 @app.post("/upload")
 async def upload_video(file: UploadFile = File(...), username: str = Depends(authenticate)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
-    
+
     # Save file to VIDEO_FOLDER
     target_path = os.path.join(VIDEO_FOLDER, file.filename)
-    
+
     # Check for existing file
     if os.path.exists(target_path):
         # Could append suffix, but for now just overwrite or return error
@@ -137,6 +133,7 @@ async def upload_video(file: UploadFile = File(...), username: str = Depends(aut
     try:
         with open(target_path, "wb") as buffer:
             import shutil
+
             shutil.copyfileobj(file.file, buffer)
     except Exception as e:
         logger.error(f"Failed to save uploaded file: {e}")
@@ -160,7 +157,7 @@ async def upload_video(file: UploadFile = File(...), username: str = Depends(aut
         meta = {}
 
     db.add_task(target_path, meta)
-    
+
     return RedirectResponse(url="/", status_code=303)
 
 
