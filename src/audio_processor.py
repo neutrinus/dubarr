@@ -23,7 +23,6 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
         return a_stereo, vocals_path
 
     # Demucs expects a device string like "cuda" or "cpu"
-    # If DEVICE_AUDIO is "cuda:0", we pass "cuda:0"
     demucs_cmd = [
         "demucs",
         "--mp3",
@@ -32,7 +31,7 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
         "-o",
         TEMP_DIR,
         "-n",
-        "mdx_extra_q",
+        "htdemucs_ft",
         "--device",
         DEVICE_AUDIO,
         a_stereo,
@@ -252,17 +251,51 @@ def mux_video(v: str, audio_tracks: List[Tuple[str, str, str]], out: str):
     subprocess.run(cmd, capture_output=True)
 
 
-def trim_silence(path: str):
-    """Removes silence from start and end of audio file."""
-    tmp = path + ".trim.wav"
-    filter_chain = "areverse,silenceremove=start_periods=1:start_silence=0.1:start_threshold=-50dB,areverse"
-    cmd = ["ffmpeg", "-i", path, "-af", filter_chain, tmp, "-y"]
+def trim_and_pad_silence(path: str, target_dur: float):
+    """
+    Intelligently trims leading/trailing silence and then pads or slightly
+    adjusts speed to match the target duration exactly.
+    """
+    tmp = path + ".proc.wav"
+    # 1. Trim silence from both ends
+    trim_filt = "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_silence=0.05:start_threshold=-50dB,areverse"
+
+    # Run trimming
+    subprocess.run(["ffmpeg", "-i", path, "-af", trim_filt, tmp, "-y"], capture_output=True)
+
+    if not os.path.exists(tmp) or os.path.getsize(tmp) < 100:
+        return  # Keep original if trimming failed
+
+    # 2. Check new duration
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", tmp]
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
-        if os.path.exists(tmp) and os.path.getsize(tmp) > 100:
-            os.replace(tmp, path)
+        current_dur = float(subprocess.check_output(cmd).strip())
     except Exception:
-        pass
+        return
+
+    # 3. Decision: Pad if too short, stretch if too long (but only slightly)
+    # If it's way too long, atempo will handle it in _apply_mastering_and_speed,
+    # but here we handle fine-tuning.
+
+    final_filt = []
+    if current_dur < target_dur:
+        # Pad with silence at the end to match exactly
+        pad_dur = target_dur - current_dur
+        final_filt.append(f"apad=pad_dur={pad_dur:.3f}")
+    elif current_dur > target_dur:
+        # If it's only slightly longer, we can speed it up here
+        speed = current_dur / target_dur
+        if speed <= 1.05:  # Only if tiny change needed
+            final_filt.append(f"atempo={speed:.3f}")
+
+    if final_filt:
+        tmp2 = tmp + ".final.wav"
+        subprocess.run(["ffmpeg", "-i", tmp, "-af", ",".join(final_filt), tmp2, "-y"], capture_output=True)
+        if os.path.exists(tmp2):
+            os.replace(tmp2, path)
+    else:
+        os.replace(tmp, path)
+
     if os.path.exists(tmp):
         os.remove(tmp)
 

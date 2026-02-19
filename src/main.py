@@ -300,10 +300,12 @@ class AIDubber:
                         ["ffmpeg", "-i", raw, "-t", str(max_dur), "-c", "copy", tmp_cut, "-y"], capture_output=True, check=True
                     )
                     os.replace(tmp_cut, raw)
-                audio_processor.trim_silence(raw)
+
+                target_dur = item["end"] - item["start"]
+                audio_processor.trim_and_pad_silence(raw, target_dur)
+
                 out_dur_str = subprocess.check_output(cmd).strip()
                 actual_dur = float(out_dur_str)
-                target_dur = item["end"] - item["start"]
                 speed_factor = min(actual_dur / target_dur, 1.25) if actual_dur > target_dur else 1.0
                 self._apply_mastering_and_speed(raw, final, item["speaker"], speed_factor)
                 results.append((final, item["start"], actual_dur / speed_factor))
