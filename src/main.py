@@ -13,7 +13,7 @@ from config import (
     TARGET_LANGS,
 )
 from llm_engine import LLMManager
-from tts_manager import TTSManager
+from core.tts_manager import TTSManager
 from core.pipeline import DubbingPipeline
 
 setup_logging()

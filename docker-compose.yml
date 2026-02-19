@@ -16,7 +16,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./videos:/app/videos
+      - ./videos_work:/app/videos
       - ./output:/app/output
       - ./models:/app/models
       - ./entrypoint.sh:/app/entrypoint.sh
