@@ -86,6 +86,8 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     tasks = db.get_all_tasks()
+    for t in tasks:
+        t["progress"] = db.get_task_progress(t["id"])
     return templates.TemplateResponse("index.html", {"request": request, "tasks": tasks, "worker_alive": True})
 
 

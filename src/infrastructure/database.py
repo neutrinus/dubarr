@@ -193,3 +193,27 @@ class Database:
             if row and row["status"] == "DONE":
                 return json.loads(row["result_data"]) if row["result_data"] else {}
             return None
+
+    def get_task_progress(self, task_id: int) -> int:
+        """Returns number of completed major stages (0-7)."""
+        with self._get_connection() as conn:
+            c = conn.cursor()
+            # We count distinct stage prefixes to handle per-language sub-steps if any
+            c.execute(
+                """
+                SELECT COUNT(DISTINCT CASE
+                    WHEN step_name LIKE 'Stage 1:%' THEN 1
+                    WHEN step_name LIKE 'Stage 2:%' THEN 2
+                    WHEN step_name LIKE 'Stage 3:%' THEN 3
+                    WHEN step_name LIKE 'Stage 4:%' THEN 4
+                    WHEN step_name LIKE 'Stage 5:%' THEN 5
+                    WHEN step_name LIKE 'Stage 6:%' THEN 6
+                    WHEN step_name LIKE 'Stage 7:%' THEN 7
+                END) as completed
+                FROM job_steps
+                WHERE task_id = ? AND status = 'DONE'
+            """,
+                (task_id,),
+            )
+            row = c.fetchone()
+            return row["completed"] if row else 0
