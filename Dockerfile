@@ -1,32 +1,21 @@
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+# Stage 1: Builder
+FROM nvidia/cuda:13.1.1-devel-ubuntu24.04 as builder
 
-# Environment variables
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
-ENV HF_HUB_ENABLE_HF_TRANSFER=1
-ENV HF_HOME=/app/hf_cache
 ENV UV_HTTP_TIMEOUT=600
 
-# Install system dependencies and clean up in one layer
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    python3-pip \
-    ffmpeg \
-    git \
-    wget \
-    aria2 \
-    libsndfile1 \
-    cmake \
-    gosu \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    build-essential git cmake python3-pip libsndfile1 && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv-python
 
-WORKDIR /app
+WORKDIR /build
 
-# 1. Install Python versions and setup Venvs in fewer layers
+# 1. Install Python versions and setup Venvs
 RUN uv python install 3.12 3.10 && \
     uv venv /app/.venv_app --python 3.12 && \
     uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
@@ -36,22 +25,38 @@ RUN uv python install 3.12 3.10 && \
     "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
     "fastapi" "uvicorn" "jinja2" "python-multipart" && \
     uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
-    llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 && \
-    uv cache clean
+    llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
 
-# 2. Setup TTS Venv (Legacy Stack for XTTS v2)
 RUN uv venv /app/.venv_tts --python 3.10 && \
     uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
     --index-strategy unsafe-best-match \
     "numpy<2.0" "torch==2.4.0" "torchaudio==2.4.0" \
-    "flask" "git+https://github.com/idiap/coqui-ai-TTS.git" && \
-    uv cache clean
+    "flask" "git+https://github.com/idiap/coqui-ai-TTS.git"
 
-# Fix the transformers breaking change in XTTS (conditional check)
+# Fix the transformers breaking change in XTTS
 RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py ]; then \
     sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(elements, test_elements, *args, **kwargs):\n    return torch.isin(elements, test_elements)/' \
     /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py; \
     fi
+
+# Stage 2: Final
+FROM nvidia/cuda:13.1.1-devel-ubuntu24.04
+
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+ENV HF_HOME=/app/hf_cache
+
+# Install only runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg git wget aria2 libsndfile1 gosu && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy built venvs from builder
+COPY --from=builder /app/.venv_app /app/.venv_app
+COPY --from=builder /app/.venv_tts /app/.venv_tts
 
 # Copy the project files
 COPY . .
