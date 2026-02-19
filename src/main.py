@@ -513,7 +513,8 @@ class AIDubber:
             all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
 
         if all_audio_tracks:
-            final_video = os.path.join(self.temp_dir, "final_muxed.mkv")
+            ext = os.path.splitext(vpath)[1] or ".mkv"
+            final_video = os.path.join(self.temp_dir, f"final_muxed{ext}")
             step("7. Muxing all languages", audio_processor.mux_video, vpath, all_audio_tracks, final_video)
 
             # Replacing original file with dubbed version
@@ -551,7 +552,7 @@ class AIDubber:
     def run(self):
         try:
             for f in os.listdir(self.video_folder):
-                if f.endswith((".mkv", ".mp4")):
+                if f.endswith((".mkv", ".mp4", ".mov")):
                     self.process_video(f)
         except Exception:
             logging.exception("FATAL ERROR in main loop")
