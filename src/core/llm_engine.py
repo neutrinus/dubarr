@@ -6,7 +6,7 @@ import threading
 import gc
 from typing import List, Dict, Optional
 from utils import parse_json, clean_output, count_syllables
-from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, T_TRANS, T_CRITIC, T_SHORTEN
+from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, T_TRANS, T_CRITIC, T_SHORTEN, T_REFINE_DURATION
 from config import LANG_MAP, MOCK_MODE
 
 try:
@@ -207,6 +207,88 @@ class LLMManager:
 
         return {"context": global_context, "speakers": speaker_info}
 
+    def generate_drafts(
+        self,
+        script: List[Dict],
+        lang: str,
+        speaker_info: Dict,
+        global_context: Dict,
+    ) -> List[Dict]:
+        """Generates initial draft translations for the entire script (batched)."""
+        drafts = []
+        glossary = global_context.get("glossary", {})
+        lang_name = LANG_MAP.get(lang, lang)
+
+        valid_indices = [
+            idx
+            for idx, s in enumerate(script)
+            if not any(x in s["text_en"].lower() for x in ["[", "(", "laughter", "screams"])
+        ]
+
+        # Batch processing
+        batch_size = 10
+        for b_start in range(0, len(valid_indices), batch_size):
+            if self.abort_event.is_set():
+                break
+
+            batch_indices = valid_indices[b_start : b_start + batch_size]
+            json_batch = [
+                {
+                    "id": idx,
+                    "speaker": speaker_info.get(script[idx]["speaker"], {}).get("name", script[idx]["speaker"]),
+                    "text": script[idx]["text_en"],
+                    "duration_sec": round(script[idx]["end"] - script[idx]["start"], 2),
+                }
+                for idx in batch_indices
+            ]
+
+            trans_prompt = T_TRANS.format(
+                system_prompt=T_TRANS_SYSTEM.format(lang_name=lang_name, glossary=json.dumps(glossary, ensure_ascii=False)),
+                json_input=json.dumps(json_batch, indent=2),
+            )
+
+            t0 = time.perf_counter()
+            try:
+                res = self._run_inference(trans_prompt, max_tokens=2000, temperature=0.1, stop=["<|im_end|>"])
+                self._update_stats(res, time.perf_counter() - t0)
+
+                parsed_trans = parse_json(res["choices"][0]["text"])
+                trans_map = {
+                    item["id"]: clean_output(item["text"], self.target_langs)
+                    for item in parsed_trans.get("translations", [])
+                    if "id" in item
+                }
+
+                for idx in batch_indices:
+                    txt = trans_map.get(idx, script[idx]["text_en"])  # Fallback to original
+                    drafts.append(
+                        {
+                            "index": idx,
+                            "text": txt,
+                            "speaker": script[idx]["speaker"],
+                            "start": script[idx]["start"],
+                            "end": script[idx]["end"],
+                            "text_en": script[idx]["text_en"],  # Keep original for reference
+                        }
+                    )
+
+            except Exception as e:
+                logging.error(f"LLM: Draft generation failed for batch {b_start}: {e}")
+                # Fallback for failed batch
+                for idx in batch_indices:
+                    drafts.append(
+                        {
+                            "index": idx,
+                            "text": script[idx]["text_en"],  # Use original as fallback
+                            "speaker": script[idx]["speaker"],
+                            "start": script[idx]["start"],
+                            "end": script[idx]["end"],
+                            "text_en": script[idx]["text_en"],
+                        }
+                    )
+
+        return drafts
+
     def translation_producer(
         self,
         script: List[Dict],
@@ -345,6 +427,49 @@ class LLMManager:
             self.abort_event.set()
         finally:
             q_text.put(None)
+
+    def refine_translation_by_duration(
+        self,
+        original_text: str,
+        current_text: str,
+        actual_dur: float,
+        target_dur: float,
+        glossary: Dict,
+    ) -> str:
+        """Refines text based on actual audio duration feedback."""
+        delta = actual_dur - target_dur
+        status = "TOO LONG" if delta > 0 else "TOO SHORT"
+
+        # Don't refine if diff is negligible (< 0.5s or < 10%)
+        if abs(delta) < 0.5 and abs(delta / (target_dur + 0.1)) < 0.1:
+            return current_text
+
+        logging.info(f"LLM: Refining '{current_text}' ({status}: {actual_dur:.2f}s vs {target_dur:.2f}s)")
+
+        prompt = T_REFINE_DURATION.format(
+            original_text=original_text,
+            current_text=current_text,
+            actual_duration=round(actual_dur, 2),
+            target_duration=round(target_dur, 2),
+            status=status,
+            delta=round(delta, 2),
+            glossary=json.dumps(glossary, ensure_ascii=False),
+        )
+
+        t0 = time.perf_counter()
+        res = self._run_inference(prompt, max_tokens=200, temperature=0.7, stop=["<|im_end|>"])  # Higher temp for creativity
+        self._update_stats(res, time.perf_counter() - t0)
+
+        try:
+            parsed = parse_json(res["choices"][0]["text"])
+            final_text = clean_output(parsed.get("final_text", current_text), self.target_langs)
+            if final_text and len(final_text) > 1:
+                logging.info(f"LLM: Refined -> '{final_text}'")
+                return final_text
+        except Exception as e:
+            logging.warning(f"LLM: Failed to parse refinement: {e}")
+
+        return current_text
 
     def _update_stats(self, res, dt):
         toks = res.get("usage", {}).get("completion_tokens", 0)

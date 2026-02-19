@@ -3,7 +3,6 @@ import json
 import logging
 import time
 import threading
-import queue
 import humanfriendly
 import shutil
 import subprocess
@@ -15,6 +14,8 @@ from infrastructure.monitor import ResourceMonitor
 from core.audio import prep_audio, analyze_audio, mix_audio
 from utils import clean_srt, measure_zcr, run_cmd
 from core import audio as audio_processor
+from core.synchronizer import SegmentSynchronizer
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ class DubbingPipeline:
         self.speaker_pans = {}
         self.abort_event = threading.Event()
         self.monitor = None
+        self.synchronizer = SegmentSynchronizer(
+            llm_manager=llm_manager, tts_manager=tts_manager, temp_dir=temp_dir, debug_mode=debug_mode
+        )
 
     def _cleanup_debug(self, fname):
         clean_name = os.path.basename(fname)
@@ -254,40 +258,6 @@ class DubbingPipeline:
             elif my_best[1] < 65:
                 logger.warning(f"  [Speaker {spk}] Low Score {my_best[1]}. Using best available candidate.")
 
-    def _audio_postprocessor(self, q_in, results):
-        while not self.abort_event.is_set():
-            try:
-                task = q_in.get(timeout=2)
-            except queue.Empty:
-                continue
-            if task is None:
-                break
-            item = task["item"]
-            raw = task["raw_path"]
-            max_dur = task["max_dur"]
-            final = os.path.join(self.temp_dir, f"tts_{item['index']}.wav")
-            try:
-                raw_dur = FFmpegWrapper.get_duration(raw)
-                if raw_dur > max_dur:
-                    tmp_cut = raw + ".cut.wav"
-                    subprocess.run(
-                        ["ffmpeg", "-i", raw, "-t", str(max_dur), "-c", "copy", tmp_cut, "-y"], capture_output=True, check=True
-                    )
-                    os.replace(tmp_cut, raw)
-
-                target_dur = item["end"] - item["start"]
-                audio_processor.trim_and_pad_silence(raw, target_dur)
-
-                actual_dur = FFmpegWrapper.get_duration(raw)
-                # Allow higher speed-up (1.35x)
-                speed_factor = min(actual_dur / target_dur, 1.35) if actual_dur > target_dur else 1.0
-                self._apply_mastering_and_speed(raw, final, item["speaker"], speed_factor)
-                results.append((final, item["start"], actual_dur / speed_factor))
-                logger.info(f"  [ID: {item['index']}] POST-PROC DONE. (Spd: {speed_factor:.2f}x)")
-            except Exception as e:
-                logger.error(f"Postproc failed {item['index']}: {e}")
-            q_in.task_done()
-
     def _apply_mastering_and_speed(self, r, f, spk, speed):
         p = self.speaker_pans.get(spk)
         if p is None:
@@ -395,73 +365,99 @@ class DubbingPipeline:
                 continue
 
             logger.info(f"--- STARTING PRODUCTION FOR LANGUAGE: {lang} ---")
-            q_text = queue.Queue(maxsize=15)
-            q_audio = queue.Queue(maxsize=10)
-            monitor_state["q_text"] = q_text
-            monitor_state["q_audio"] = q_audio
+
+            # 1. Draft Translation (Batch)
+            t_start_draft = time.perf_counter()
+            draft_segments = self.llm_manager.generate_drafts(script, lang, self.speaker_info, self.global_context)
+            self.durations[f"Stage 5a: Draft Translation ({lang})"] = time.perf_counter() - t_start_draft
+
+            # 2. Parallel Refinement (Sync TTS Loop)
             res = []
-            draft_translations = []
-            final_translations = []
+            t_start_sync = time.perf_counter()
 
-            p_th = threading.Thread(
-                target=self.llm_manager.translation_producer,
-                args=(script, lang, q_text, self.speaker_info, self.global_context, draft_translations, final_translations),
-                daemon=True,
-            )
-            tts_th = threading.Thread(
-                target=self.tts_manager.tts_worker,
-                args=(lang, q_text, q_audio, [], vocals, script, self.durations),
-                daemon=True,
-            )
-            post_th = threading.Thread(target=self._audio_postprocessor, args=(q_audio, res), daemon=True)
+            # Use max_workers=3 to balance GPU usage (TTS) and CPU usage (FFmpeg/LLM)
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = {
+                    executor.submit(self.synchronizer.process_segment, seg, lang, vocals, script, self.global_context): seg[
+                        "index"
+                    ]
+                    for seg in draft_segments
+                }
 
-            p_th.start()
-            tts_th.start()
-            post_th.start()
+                completed_count = 0
+                total_segments = len(draft_segments)
 
-            while p_th.is_alive() or tts_th.is_alive() or post_th.is_alive():
-                if self.abort_event.is_set():
-                    raise RuntimeError("Processing aborted via event")
-                time.sleep(1.0)
+                for future in as_completed(futures):
+                    if self.abort_event.is_set():
+                        executor.shutdown(wait=False)
+                        raise RuntimeError("Processing aborted via event")
 
-            p_th.join()
-            tts_th.join()
-            post_th.join()
+                    idx = futures[future]
+                    try:
+                        seg_result = future.result()
+                        if seg_result:
+                            # Add back metadata needed for mixing
+                            seg_result["start"] = script[idx]["start"]
+                            seg_result["end"] = script[idx]["end"]
+                            seg_result["speaker"] = script[idx]["speaker"]
+                            seg_result["index"] = idx
+                            res.append(seg_result)
+                            completed_count += 1
+                            if completed_count % 5 == 0:
+                                logger.info(f"  [Progress] {completed_count}/{total_segments} segments done.")
+                    except Exception as e:
+                        logger.error(f"Segment {idx} failed completely: {e}")
+
+            self.durations[f"Stage 5b: Sync Production ({lang})"] = time.perf_counter() - t_start_sync
 
             if self.debug_mode:
-                with open(os.path.join(ddir, f"translations_draft_{lang}.json"), "w") as f_out:
-                    json.dump(draft_translations, f_out, indent=2, ensure_ascii=False)
-                with open(os.path.join(ddir, f"translations_final_{lang}.json"), "w") as f_out:
-                    json.dump(final_translations, f_out, indent=2, ensure_ascii=False)
-                for path, _, _ in res:
-                    shutil.copy(path, os.path.join(seg_dir, f"{lang}_{os.path.basename(path)}"))
-            res.sort(key=lambda x: x[1])
+                # Debug dump for sync results
+                with open(os.path.join(ddir, f"sync_results_{lang}.json"), "w") as f_dbg:
+                    json.dump(res, f_dbg, indent=2, default=str)
 
-            safe_res = []
+            # 3. Mastering & Mixing preparation
+            res.sort(key=lambda x: x["index"])
+
+            final_audio_segments = []
             last_end_time = 0
-            for path, start, duration in res:
+
+            for item in res:
+                start = item["start"]
+                # Use the refined duration from synchronizer
+                dur = item["duration"]
+                path = item["audio_path"]
+
                 if start < last_end_time:
                     shift = last_end_time - start
+                    # Only shift if overlap is significant, otherwise mix/crossfade handles it
                     if shift > 0.05:
-                        logger.warning(
-                            f"Preventing overlap: Shifting clip at {start:.2f}s to {last_end_time:.2f}s (+{shift:.2f}s)"
-                        )
                         start = last_end_time
-                safe_res.append((path, start, duration))
-                last_end_time = start + duration
-            res = safe_res
+
+                final_path = os.path.join(self.temp_dir, f"final_{lang}_{item['index']}.wav")
+
+                # Trim silence at ends to be clean
+                audio_processor.trim_and_pad_silence(path, dur)
+
+                # Calculate final speed factor if needed (Synchronizer should have handled it mostly)
+                target_dur = item["end"] - item["start"]
+                try:
+                    actual_dur = FFmpegWrapper.get_duration(path)
+                except Exception:
+                    actual_dur = dur
+
+                speed_factor = 1.0
+                # Gentle speedup if still too long (safety net)
+                if actual_dur > target_dur + 0.2:
+                    speed_factor = min(actual_dur / target_dur, 1.20)
+
+                self._apply_mastering_and_speed(path, final_path, item["speaker"], speed_factor)
+
+                final_audio_segments.append((final_path, start, actual_dur / speed_factor))
+                last_end_time = start + (actual_dur / speed_factor)
 
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
-            run_step(f"Stage 6: Final Mix ({lang})", mix_audio, a_stereo, res, final_a)
+            run_step(f"Stage 6: Final Mix ({lang})", mix_audio, a_stereo, final_audio_segments, final_a)
             all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
-
-            # Clear monitor state for this lang
-            monitor_state["q_text"] = None
-            monitor_state["q_audio"] = None
-
-            # Clear monitor state for this lang
-            monitor_state["q_text"] = None
-            monitor_state["q_audio"] = None
 
         if self.db and task_id:
             self.db.save_step_result(task_id, "Stage 5: Production", "DONE", result_data={"langs": self.target_langs})

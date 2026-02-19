@@ -49,6 +49,18 @@ class TTSManager:
 
             self.engine = F5TTSWrapper(gpu_id=gpu_id)
 
+    def synthesize_sync(self, item: Dict, lang: str, vocals_path: str, script: List[Dict]) -> Optional[Dict]:
+        """Synchronous synthesis without queue management."""
+        self.load_engine()
+        result = self._synthesize_item(item, lang, vocals_path, script)
+        if result:
+            return {
+                "audio_path": result["payload"]["raw_path"],
+                "duration": result["duration"],
+                "voice_type": result["payload"]["voice_type"],
+            }
+        return None
+
     def tts_worker(
         self,
         lang: str,
