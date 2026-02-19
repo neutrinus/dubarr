@@ -1,0 +1,131 @@
+import os
+import glob
+import logging
+import torch
+import gc
+import shutil
+from typing import List, Dict, Tuple
+from config import DEVICE_AUDIO, TEMP_DIR, WHISPER_MODEL, MOCK_MODE
+from infrastructure.ffmpeg import FFmpegWrapper
+
+logger = logging.getLogger(__name__)
+
+
+def prep_audio(vpath: str) -> Tuple[str, str]:
+    """Extracts original stereo audio and separates vocals using Demucs. Mocks in MOCK_MODE."""
+    a_stereo = os.path.join(TEMP_DIR, "orig.wav")
+    FFmpegWrapper.extract_audio(vpath, a_stereo)
+
+    if MOCK_MODE:
+        logger.info("Demucs: MOCK_MODE enabled. Using original audio as vocals.")
+        vocals_path = os.path.join(TEMP_DIR, "vocals.mp3")
+        shutil.copy(a_stereo, vocals_path)
+        return a_stereo, vocals_path
+
+    demucs_cmd = [
+        "demucs",
+        "--mp3",
+        "--two-stems",
+        "vocals",
+        "-o",
+        TEMP_DIR,
+        "-n",
+        "htdemucs_ft",
+        "--device",
+        DEVICE_AUDIO,
+        a_stereo,
+    ]
+    # We still use subprocess here as demucs is a CLI tool, but could be wrapped
+    import subprocess
+
+    subprocess.run(demucs_cmd, check=True)
+
+    found = glob.glob(os.path.join(TEMP_DIR, "**", "vocals.mp3"), recursive=True)
+    if not found:
+        raise FileNotFoundError("Demucs failed to produce vocals.mp3")
+    return a_stereo, found[0]
+
+
+def run_diarization(mpath: str) -> List[Dict]:
+    if MOCK_MODE:
+        return [{"start": 0.0, "end": 5.0, "speaker": "SPEAKER_00"}]
+    from pyannote.audio import Pipeline
+
+    p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=os.environ.get("HF_TOKEN"))
+    p.to(torch.device(DEVICE_AUDIO))
+    res = p(mpath)
+    annotation = getattr(res, "speaker_diarization", getattr(res, "diarization", getattr(res, "annotation", res)))
+    diar_result = [
+        {"start": s.start, "end": s.end, "speaker": label} for s, _, label in annotation.itertracks(yield_label=True)
+    ]
+    del p
+    gc.collect()
+    if "cuda" in DEVICE_AUDIO:
+        torch.cuda.empty_cache()
+    return diar_result
+
+
+def run_transcription(mpath: str) -> List[Dict]:
+    if MOCK_MODE:
+        return [{"start": 0.0, "end": 5.0, "text": "Mock transcription", "avg_logprob": -0.1, "no_speech_prob": 0.01}]
+    from faster_whisper import WhisperModel
+
+    device = "cuda" if "cuda" in DEVICE_AUDIO else "cpu"
+    device_index = int(DEVICE_AUDIO.split(":")[-1]) if "cuda" in DEVICE_AUDIO else 0
+    m = WhisperModel(
+        WHISPER_MODEL, device=device, device_index=device_index, compute_type="float16" if device == "cuda" else "int8"
+    )
+    ts, _ = m.transcribe(mpath)
+    res = [
+        {
+            "start": x.start,
+            "end": x.end,
+            "text": x.text.strip(),
+            "avg_logprob": x.avg_logprob,
+            "no_speech_prob": x.no_speech_prob,
+        }
+        for x in ts
+        if x.avg_logprob >= -1.0
+    ]
+    del m
+    gc.collect()
+    if "cuda" in DEVICE_AUDIO:
+        torch.cuda.empty_cache()
+    return res
+
+
+def mix_audio(bg: str, clips: List, out: str):
+    if not clips:
+        shutil.copy(bg, out)
+        return
+
+    filter_path = os.path.join(TEMP_DIR, "mix_filter.txt")
+    inputs = [bg]
+    filters = []
+
+    for i, (path, start, duration) in enumerate(clips):
+        inputs.append(path)
+        delay_ms = int(start * 1000)
+        fade_st = max(0, duration - 0.05)
+        f = (
+            f"[{i + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+            f"loudnorm=I=-16:TP=-1.5:LRA=11:measured_I=-20:measured_TP=-1:measured_LRA=11:measured_thresh=-30:offset=0,"
+            f"afade=t=in:st=0:d=0.05,afade=t=out:st={fade_st:.3f}:d=0.05,"
+            f"adelay={delay_ms}|{delay_ms}[a{i + 1}]"
+        )
+        filters.append(f)
+
+    mix_labels = "".join([f"[a{i + 1}]" for i in range(len(clips))])
+    filters.append(f"{mix_labels}amix=inputs={len(clips)}:normalize=0[speech_raw]")
+    filters.append("[0:a]asplit=2[bg_main][bg_ghost_raw]")
+    filters.append(
+        "[bg_main]aformat=sample_rates=48000:channel_layouts=stereo,loudnorm=I=-24:TP=-2:LRA=7,acompressor=threshold=-20dB:ratio=2:attack=20:release=200[bg_fixed]"
+    )
+    filters.append("[bg_ghost_raw]aformat=sample_rates=48000:channel_layouts=stereo,lowpass=f=400,volume=0.05[bg_ghost]")
+    filters.append("[speech_raw]asplit=2[speech_out][trigger]")
+    filters.append("[bg_fixed][trigger]sidechaincompress=threshold=0.005:ratio=12:attack=30:release=600[bg_ducked]")
+    filters.append("[bg_ducked][bg_ghost][speech_out]amix=inputs=3:weights=1 1 1:normalize=0,alimiter=limit=0.95[out]")
+
+    with open(filter_path, "w") as f:
+        f.write(";".join(filters))
+    FFmpegWrapper.run_complex_script(inputs, filter_path, out)
