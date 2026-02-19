@@ -189,9 +189,10 @@ def mix_audio(bg: str, clips: List, out: str):
         delay_ms = int(start * 1000)
         fade_st = max(0, duration - 0.05)
 
-        # Format each clip: Stereo 48k, fade in/out, delay
+        # Format each clip: Stereo 48k, fade in/out, delay, and normalization
         f = (
             f"[{i + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+            f"loudnorm=I=-16:TP=-1.5:LRA=11:measured_I=-20:measured_TP=-1:measured_LRA=11:measured_thresh=-30:offset=0,"
             f"afade=t=in:st=0:d=0.05,afade=t=out:st={fade_st:.3f}:d=0.05,"
             f"adelay={delay_ms}|{delay_ms}[a{i + 1}]"
         )
@@ -203,9 +204,14 @@ def mix_audio(bg: str, clips: List, out: str):
 
     # Sidechain setup
     filters.append("[speech_raw]asplit=2[speech_out][trigger]")
-    filters.append("[0:a]aformat=sample_rates=48000:channel_layouts=stereo[bg_fixed]")
-    filters.append("[bg_fixed][trigger]sidechaincompress=threshold=0.02:ratio=5:attack=50:release=600[bg_ducked]")
-    filters.append("[bg_ducked][speech_out]amix=inputs=2:weights=1 1:normalize=0,alimiter=limit=0.9[out]")
+    # Background: ensure stereo 48k, normalize, and add light compression
+    filters.append(
+        "[0:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+        "loudnorm=I=-24:TP=-2:LRA=7,"
+        "acompressor=threshold=-20dB:ratio=2:attack=20:release=200[bg_fixed]"
+    )
+    filters.append("[bg_fixed][trigger]sidechaincompress=threshold=0.01:ratio=4:attack=50:release=600[bg_ducked]")
+    filters.append("[bg_ducked][speech_out]amix=inputs=2:weights=1 1:normalize=0,alimiter=limit=0.95[out]")
 
     with open(filter_path, "w") as f:
         f.write(";".join(filters))
