@@ -12,7 +12,7 @@ from config import (
     USE_LOCK,
     TARGET_LANGS,
 )
-from llm_engine import LLMManager
+from core.llm_engine import LLMManager
 from core.tts_manager import TTSManager
 from core.pipeline import DubbingPipeline
 

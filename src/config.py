@@ -42,6 +42,7 @@ def setup_logging():
             logging.StreamHandler(),
             logging.FileHandler(os.path.join(OUTPUT_FOLDER, "processing.log"), mode="a", encoding="utf-8"),
         ],
+        force=True,
     )
 
 

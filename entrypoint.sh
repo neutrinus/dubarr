@@ -57,11 +57,11 @@ export XDG_CACHE_HOME=/app/data/xdg_cache
 
 # Ensure directories exist
 echo "Creating directories..."
-mkdir -p /app/output /app/videos /app/data /app/src/templates
+mkdir -p /app/output /app/videos /app/data /app/src/templates /tmp/dubber
 
 # Fix permissions for the volumes and cache
 echo "Fixing permissions for $USER_NAME:$GROUP_NAME..."
-chown -R "$USER_NAME":"$GROUP_NAME" /app/output /app/videos /app/data /app/src
+chown -R "$USER_NAME":"$GROUP_NAME" /app/output /app/videos /app/data /app/src /tmp/dubber
 
 # Run the command as the user
 echo "Executing command as $USER_NAME: $@"
