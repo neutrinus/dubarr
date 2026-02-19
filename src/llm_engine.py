@@ -235,6 +235,7 @@ class LLMManager:
                         "id": idx,
                         "speaker": speaker_info.get(script[idx]["speaker"], {}).get("name", script[idx]["speaker"]),
                         "text": script[idx]["text_en"],
+                        "duration_sec": round(script[idx]["end"] - script[idx]["start"], 2),
                     }
                     for idx in batch_indices
                 ]
@@ -264,6 +265,7 @@ class LLMManager:
                 final_batch_map = {}
                 for idx in batch_indices:
                     txt = trans_map.get(idx, script[idx]["text_en"])
+                    dur = script[idx]["end"] - script[idx]["start"]
                     draft_list.append(
                         {
                             "index": idx,
@@ -273,10 +275,13 @@ class LLMManager:
                             "end": script[idx]["end"],
                         }
                     )
-                    if count_syllables(txt, lang) <= 3:
+                    # Target: 3.5 syllables per second for comfortable speed
+                    if count_syllables(txt, lang) <= max(3, dur * 3.5):
                         final_batch_map[idx] = txt
                     else:
-                        json_critic.append({"id": idx, "original": script[idx]["text_en"], "draft": txt})
+                        json_critic.append(
+                            {"id": idx, "original": script[idx]["text_en"], "draft": txt, "duration_sec": round(dur, 2)}
+                        )
 
                 if json_critic:
                     critic_prompt = T_CRITIC.format(
@@ -301,12 +306,14 @@ class LLMManager:
                 # 3. Finalization (Shortening if needed)
                 for idx in batch_indices:
                     txt = final_batch_map.get(idx, trans_map.get(idx, script[idx]["text_en"]))
-                    syl_orig = count_syllables(script[idx]["text_en"], "en")
+                    dur = script[idx]["end"] - script[idx]["start"]
                     syl_final = count_syllables(txt, lang)
-                    if syl_final > syl_orig * 1.5:
+
+                    # Emergency shorten if still > 4.5 syllables per second
+                    if syl_final > max(4, dur * 4.5):
                         t0 = time.perf_counter()
                         short_res = self._run_inference(
-                            T_SHORTEN.format(original=script[idx]["text_en"], text=txt),
+                            T_SHORTEN.format(original=script[idx]["text_en"], text=txt, duration=round(dur, 2)),
                             max_tokens=150,
                             temperature=0.0,
                             stop=["<|im_end|>"],

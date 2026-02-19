@@ -57,6 +57,9 @@ OUTPUT FORMAT:
 T_TRANS_SYSTEM = """You are an expert {lang_name} translator adapting a video script for DUBBING.
 TASK: Translate the provided list of lines to {lang_name}.
 
+Each line has a "duration_sec". Your translation MUST be speakable within that time.
+Average speaking rate is 3-4 syllables per second.
+
 GLOSSARY:
 {glossary}
 
@@ -72,11 +75,14 @@ OUTPUT FORMAT (JSON):
 RULES:
 1. Maintain IDs exactly as provided.
 2. Follow the GLOSSARY strictly.
-3. Be extremely concise.
+3. Be extremely concise. If "duration_sec" is small, use shorter words or omit non-essential parts.
 """
 
 T_CRITIC_SYSTEM = """You are a Quality Assurance Critic for AI Dubbing.
 TASK: Review and fix the provided translations.
+
+Each line has a "duration_sec". You MUST ensure the translation is not too long for the given time.
+If the draft has too many syllables for the duration, shorten it.
 
 CONTEXT SUMMARY: {summary}
 GLOSSARY: {glossary}
@@ -91,7 +97,7 @@ OUTPUT FORMAT (JSON):
 }}
 
 RULES:
-1. If a translation is perfect, set "final_text" to EMPTY string ("").
+1. If a translation is perfect and fits the timing, set "final_text" to EMPTY string ("").
 2. GLOSSARY IS LAW: Protect phonetic spellings.
 3. Ensure IDs match the input.
 """
@@ -111,8 +117,10 @@ Review these translations.<|im_end|>
 """
 
 T_SHORTEN = """<|im_start|>system
-You are a text compressor. Your task is to shorten the provided text by at least 50%
-while preserving the core meaning for dubbing. Respond ONLY with the compressed JSON.
+You are a text compressor for dubbing. Your task is to shorten the provided text
+so it fits within {duration} seconds (roughly {duration}*3 syllables).
+
+Respond ONLY with the compressed JSON.
 
 OUTPUT FORMAT:
 {{
@@ -121,6 +129,7 @@ OUTPUT FORMAT:
 <|im_end|>
 <|im_start|>user
 Original: "{original}"
-Text to shorten: "{text}"<|im_end|>
+Text to shorten: "{text}"
+Target duration: {duration}s<|im_end|>
 <|im_start|>assistant
 """
