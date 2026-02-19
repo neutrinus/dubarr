@@ -174,7 +174,7 @@ def get_audio_languages(vpath: str) -> List[str]:
 
 
 def mix_audio(bg: str, clips: List, out: str):
-    """Mixes background audio with dubbed clips using sidechain compression."""
+    """Mixes background audio with dubbed clips using aggressive sidechain and ambient ghosting."""
     if not clips:
         shutil.copy(bg, out)
         return
@@ -201,16 +201,25 @@ def mix_audio(bg: str, clips: List, out: str):
     mix_labels = "".join([f"[a{i + 1}]" for i in range(len(clips))])
     filters.append(f"{mix_labels}amix=inputs={len(clips)}:normalize=0[speech_raw]")
 
-    # Sidechain setup
-    filters.append("[speech_raw]asplit=2[speech_out][trigger]")
-    # Background: ensure stereo 48k, normalize, and add light compression
+    # Split original audio into main and ambient ghost
+    filters.append("[0:a]asplit=2[bg_main][bg_ghost_raw]")
+
+    # Process main background: normalize and compress
     filters.append(
-        "[0:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+        "[bg_main]aformat=sample_rates=48000:channel_layouts=stereo,"
         "loudnorm=I=-24:TP=-2:LRA=7,"
         "acompressor=threshold=-20dB:ratio=2:attack=20:release=200[bg_fixed]"
     )
-    filters.append("[bg_fixed][trigger]sidechaincompress=threshold=0.01:ratio=4:attack=50:release=600[bg_ducked]")
-    filters.append("[bg_ducked][speech_out]amix=inputs=2:weights=1 1:normalize=0,alimiter=limit=0.95[out]")
+
+    # Process ghost background: Low-pass and very quiet to keep acoustics during ducking
+    filters.append("[bg_ghost_raw]aformat=sample_rates=48000:channel_layouts=stereo,lowpass=f=400,volume=0.05[bg_ghost]")
+
+    # Aggressive sidechain setup (ratio 12 instead of 4)
+    filters.append("[speech_raw]asplit=2[speech_out][trigger]")
+    filters.append("[bg_fixed][trigger]sidechaincompress=threshold=0.005:ratio=12:attack=30:release=600[bg_ducked]")
+
+    # Final mix: Ducked Main + Constant Ambient Ghost + AI Speech
+    filters.append("[bg_ducked][bg_ghost][speech_out]amix=inputs=3:weights=1 1 1:normalize=0,alimiter=limit=0.95[out]")
 
     with open(filter_path, "w") as f:
         f.write(";".join(filters))
