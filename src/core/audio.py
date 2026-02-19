@@ -1,7 +1,6 @@
 import os
 import glob
 import logging
-import torch
 import gc
 import shutil
 from typing import List, Dict, Tuple
@@ -9,6 +8,11 @@ from config import DEVICE_AUDIO, TEMP_DIR, WHISPER_MODEL, MOCK_MODE
 from infrastructure.ffmpeg import FFmpegWrapper
 
 logger = logging.getLogger(__name__)
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 
 def prep_audio(vpath: str) -> Tuple[str, str]:
@@ -35,7 +39,6 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
         DEVICE_AUDIO,
         a_stereo,
     ]
-    # We still use subprocess here as demucs is a CLI tool, but could be wrapped
     import subprocess
 
     subprocess.run(demucs_cmd, check=True)
@@ -49,6 +52,10 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
 def run_diarization(mpath: str) -> List[Dict]:
     if MOCK_MODE:
         return [{"start": 0.0, "end": 5.0, "speaker": "SPEAKER_00"}]
+
+    if not torch:
+        raise ImportError("Torch is required for diarization but not installed.")
+
     from pyannote.audio import Pipeline
 
     p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=os.environ.get("HF_TOKEN"))
@@ -68,6 +75,11 @@ def run_diarization(mpath: str) -> List[Dict]:
 def run_transcription(mpath: str) -> List[Dict]:
     if MOCK_MODE:
         return [{"start": 0.0, "end": 5.0, "text": "Mock transcription", "avg_logprob": -0.1, "no_speech_prob": 0.01}]
+
+    if not torch:
+        # Faster-whisper might work without torch on CPU if using int8, but usually it needs ctranslate2/torch
+        pass
+
     from faster_whisper import WhisperModel
 
     device = "cuda" if "cuda" in DEVICE_AUDIO else "cpu"
@@ -89,7 +101,7 @@ def run_transcription(mpath: str) -> List[Dict]:
     ]
     del m
     gc.collect()
-    if "cuda" in DEVICE_AUDIO:
+    if torch and "cuda" in DEVICE_AUDIO:
         torch.cuda.empty_cache()
     return res
 
