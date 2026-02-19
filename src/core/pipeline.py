@@ -2,7 +2,6 @@ import os
 import json
 import logging
 import time
-import threading
 import humanfriendly
 import shutil
 import subprocess
@@ -322,7 +321,6 @@ class DubbingPipeline:
         self.durations.update(audio_durs)
 
         if not self.llm_manager.llm:
-            threading.Thread(target=self.llm_manager.load_model, daemon=True).start()
             logger.info("Waiting for LLM to load...")
             self.llm_manager.ready_event.wait()
 

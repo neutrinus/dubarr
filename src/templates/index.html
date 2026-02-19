@@ -156,8 +156,14 @@
             </a>
             <div class="d-flex align-items-center">
                 <span class="me-2 text-secondary small">System Status:</span>
-                {% if worker_alive %}
+                {% if system_status == 'Online' %}
                     <span class="badge bg-success">Online</span>
+                {% elif system_status == 'Downloading Models' %}
+                    <span class="badge bg-warning text-dark">Downloading Models...</span>
+                {% elif system_status == 'Loading Engines' %}
+                    <span class="badge bg-info text-dark">Loading Engines...</span>
+                {% elif system_status == 'Engine Error' %}
+                    <span class="badge bg-danger">Engine Error</span>
                 {% else %}
                     <span class="badge bg-danger">Offline</span>
                 {% endif %}

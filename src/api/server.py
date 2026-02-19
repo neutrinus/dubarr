@@ -33,6 +33,7 @@ def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
 # Global objects
 db = Database(DB_PATH)
 worker_task = None
+dubber_base = None
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
@@ -57,8 +58,15 @@ async def lifespan(app: FastAPI):
     from main import AIDubber
     from core.worker import JobWorker
     from core.pipeline import DubbingPipeline
+    import threading
 
+    global dubber_base
     dubber_base = AIDubber()
+
+    # Pre-load models in background
+    logger.info("Lifespan: Starting background model pre-loading...")
+    threading.Thread(target=dubber_base.llm_manager.load_model, daemon=True).start()
+    threading.Thread(target=dubber_base.tts_manager.load_engine, daemon=True).start()
 
     def pipeline_factory():
         return DubbingPipeline(
@@ -88,7 +96,28 @@ async def dashboard(request: Request):
     tasks = db.get_all_tasks()
     for t in tasks:
         t["progress"] = db.get_task_progress(t["id"])
-    return templates.TemplateResponse("index.html", {"request": request, "tasks": tasks, "worker_alive": True})
+
+    # Determine global system status
+    sys_status = "Online"
+    if dubber_base:
+        ls = dubber_base.llm_manager.status
+        ts = dubber_base.tts_manager.status
+        if ls == "DOWNLOADING" or ts == "DOWNLOADING":
+            sys_status = "Downloading Models"
+        elif ls == "LOADING" or ts == "LOADING":
+            sys_status = "Loading Engines"
+        elif ls == "ERROR" or ts == "ERROR":
+            sys_status = "Engine Error"
+
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "tasks": tasks,
+            "worker_alive": True,
+            "system_status": sys_status,
+        },
+    )
 
 
 @app.post("/retry/{task_id}")

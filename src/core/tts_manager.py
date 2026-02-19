@@ -32,20 +32,32 @@ class TTSManager:
         self.abort_event = abort_event
         self.last_good_samples = {}
         self.engine = None
+        self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
 
     def load_engine(self):
         """Initializes the TTS engine. Skips in MOCK_MODE."""
+        if self.status == "READY":
+            return
+
+        self.status = "LOADING"
         if MOCK_MODE:
             logging.info("TTS: MOCK_MODE enabled. Skipping engine load.")
+            self.status = "READY"
             return
 
         if not self.engine:
-            # F5TTSWrapper expects an int gpu_id or runs on CPU if not found/configured
-            gpu_id = 0
-            if "cuda" in self.device:
-                gpu_id = int(self.device.split(":")[-1])
+            try:
+                # F5TTSWrapper expects an int gpu_id or runs on CPU if not found/configured
+                gpu_id = 0
+                if "cuda" in self.device:
+                    gpu_id = int(self.device.split(":")[-1])
 
-            self.engine = F5TTSWrapper(gpu_id=gpu_id)
+                self.engine = F5TTSWrapper(gpu_id=gpu_id)
+                self.status = "READY"
+            except Exception as e:
+                logging.error(f"TTS: Load Failed: {e}")
+                self.status = "ERROR"
+                raise e
 
     def synthesize_sync(self, item: Dict, lang: str, vocals_path: str, script: List[Dict]) -> Optional[Dict]:
         """Synchronous synthesis without queue management."""

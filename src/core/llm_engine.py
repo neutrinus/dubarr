@@ -43,22 +43,27 @@ class LLMManager:
         self.llm_stats = {"tokens": 0, "time": 0}
         self.ready_event = threading.Event()
         self.abort_event = abort_event or threading.Event()
+        self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
 
     def load_model(self):
         """Loads the LLM into VRAM or RAM. Downloads if missing. Skips in MOCK_MODE."""
+        self.status = "LOADING"
         if MOCK_MODE:
             logging.info("LLM: MOCK_MODE enabled. Skipping model load.")
+            self.status = "READY"
             self.ready_event.set()
             return
 
         if Llama is None:
             logging.error("LLM: llama_cpp library is not available.")
+            self.status = "ERROR"
             self.abort_event.set()
             raise RuntimeError("llama-cpp-python import failed. Check logs for details (missing libcuda?).")
 
         try:
             if not os.path.exists(self.model_path):
                 logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
+                self.status = "DOWNLOADING"
                 from huggingface_hub import hf_hub_download
 
                 repo_id = "bartowski/google_gemma-3-12b-it-GGUF"
@@ -74,6 +79,7 @@ class LLMManager:
                     local_dir_use_symlinks=False,
                 )
                 logging.info("LLM: Download completed successfully.")
+                self.status = "LOADING"
 
             logging.info(f"LLM: Loading on {self.device}...")
             logging.info(f"LLM: GPU Offload Supported: {llama_supports_gpu_offload()}")
@@ -97,8 +103,10 @@ class LLMManager:
                 verbose=False,
             )
             logging.info("LLM: Ready.")
+            self.status = "READY"
         except Exception as e:
             logging.error(f"LLM: Load Failed: {e}")
+            self.status = "ERROR"
             self.abort_event.set()
         finally:
             self.ready_event.set()
