@@ -11,6 +11,9 @@ dependencies = [
     "uvicorn[standard]>=0.40.0",
     "watchdog>=6.0.0",
     "websockets>=16.0",
+    "humanfriendly",
+    "syllables",
+    "psutil",
 ]
 
 [dependency-groups]
@@ -25,9 +28,6 @@ dev = [
 ]
 runtime = [
     "hf_transfer",
-    "syllables",
-    "humanfriendly",
-    "psutil",
     "demucs",
     "huggingface-hub<0.24",
     "pyannote.audio==3.1.1",

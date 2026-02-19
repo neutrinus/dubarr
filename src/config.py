@@ -1,6 +1,10 @@
 import os
 import logging
-import torch
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 # --- CONFIGURATION & HARDWARE DETECTION ---
 
@@ -70,7 +74,7 @@ def get_compute_device():
     """Detects available hardware and assigns roles."""
     strategy = "sequential"  # Default safe strategy
 
-    if torch.cuda.is_available():
+    if torch and torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
 
         # Calculate Total VRAM across all GPUs being used
