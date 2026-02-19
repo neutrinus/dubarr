@@ -439,10 +439,7 @@ class DubbingPipeline:
 
                 # Calculate final speed factor if needed (Synchronizer should have handled it mostly)
                 target_dur = item["end"] - item["start"]
-                try:
-                    actual_dur = FFmpegWrapper.get_duration(path)
-                except Exception:
-                    actual_dur = dur
+                actual_dur = dur
 
                 speed_factor = 1.0
                 # Gentle speedup if still too long (safety net)

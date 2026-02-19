@@ -88,6 +88,11 @@ class SegmentSynchronizer:
 
             if is_acceptable:
                 logger.info(f"[ID: {idx}] ACCEPTED (Delta: {delta:+.2f}s)")
+                # Clean up other attempts immediately
+                if not self.debug_mode:
+                    for a in attempts:
+                        if a["audio_path"] != attempt_path and os.path.exists(a["audio_path"]):
+                            os.remove(a["audio_path"])
                 return {"audio_path": attempt_path, "final_text": current_text, "duration": actual_dur, "status": "ACCEPTED"}
 
             # 3. Refine (if not last attempt)
@@ -116,6 +121,12 @@ class SegmentSynchronizer:
         logger.warning(
             f"[ID: {idx}] FALLBACK to best attempt {attempts.index(best_attempt) + 1} (Delta: {best_attempt['delta']:+.2f}s)"
         )
+
+        # Clean up other attempts
+        if not self.debug_mode:
+            for a in attempts:
+                if a["audio_path"] != best_attempt["audio_path"] and os.path.exists(a["audio_path"]):
+                    os.remove(a["audio_path"])
 
         return {
             "audio_path": best_attempt["audio_path"],
