@@ -4,10 +4,10 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Depends, UploadFile, File
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from pydantic import BaseModel
 
 from infrastructure.database import Database
@@ -100,6 +100,67 @@ async def retry_task(task_id: int):
 @app.post("/delete/{task_id}")
 async def delete_task(task_id: int):
     db.delete_task(task_id)
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.get("/download/{task_id}")
+async def download_task(task_id: int, username: str = Depends(authenticate)):
+    tasks = db.get_all_tasks()
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    file_path = task["path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    
+    return FileResponse(
+        path=file_path,
+        filename=os.path.basename(file_path),
+        media_type="application/octet-stream"
+    )
+
+
+@app.post("/upload")
+async def upload_video(file: UploadFile = File(...), username: str = Depends(authenticate)):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+    
+    # Save file to VIDEO_FOLDER
+    target_path = os.path.join(VIDEO_FOLDER, file.filename)
+    
+    # Check for existing file
+    if os.path.exists(target_path):
+        # Could append suffix, but for now just overwrite or return error
+        pass
+
+    try:
+        with open(target_path, "wb") as buffer:
+            import shutil
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        logger.error(f"Failed to save uploaded file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+
+    # Add task to DB
+    try:
+        meta_raw = FFmpegWrapper.get_metadata(target_path)
+        duration = float(meta_raw.get("format", {}).get("duration", 0))
+        audio_langs = [
+            s.get("tags", {}).get("language", "und") for s in meta_raw.get("streams", []) if s.get("codec_type") == "audio"
+        ]
+        meta = {
+            "size": os.path.getsize(target_path),
+            "duration": duration,
+            "source_lang": audio_langs[0] if audio_langs else "und",
+            "has_subs": any(s.get("codec_type") == "subtitle" for s in meta_raw.get("streams", [])),
+            "target_langs": ",".join(TARGET_LANGS),
+        }
+    except Exception:
+        meta = {}
+
+    db.add_task(target_path, meta)
+    
     return RedirectResponse(url="/", status_code=303)
 
 
