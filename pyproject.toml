@@ -33,7 +33,7 @@ runtime = [
     "pyannote.audio==4.0.4",
     "diffq",
     "faster-whisper",
-    "transformers==4.40.0",
+    "transformers>=4.57",
     "coqui-tts @ git+https://github.com/idiap/coqui-ai-TTS.git@dev",
 ]
 
