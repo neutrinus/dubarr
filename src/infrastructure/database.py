@@ -36,6 +36,19 @@ class Database:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS job_steps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id INTEGER,
+                    step_name TEXT,
+                    status TEXT DEFAULT 'PENDING',
+                    result_data TEXT,
+                    error_msg TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(task_id) REFERENCES tasks(id),
+                    UNIQUE(task_id, step_name)
+                )
+            """)
             # Migration logic
             cols = [
                 ("target_langs", "TEXT"),
@@ -149,3 +162,32 @@ class Database:
             c = conn.cursor()
             c.execute("UPDATE tasks SET status = 'QUEUED', updated_at = ? WHERE id = ?", (datetime.now(), task_id))
             conn.commit()
+
+    def save_step_result(self, task_id: int, step_name: str, status: str, result_data: Dict = None, error_msg: str = None):
+        import json
+
+        with self._get_connection() as conn:
+            c = conn.cursor()
+            res_json = json.dumps(result_data) if result_data else None
+            c.execute(
+                """
+                INSERT INTO job_steps (task_id, step_name, status, result_data, error_msg, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(task_id, step_name) DO UPDATE SET
+                status=excluded.status, result_data=excluded.result_data,
+                error_msg=excluded.error_msg, updated_at=excluded.updated_at
+            """,
+                (task_id, step_name, status, res_json, error_msg, datetime.now()),
+            )
+            conn.commit()
+
+    def get_step_result(self, task_id: int, step_name: str) -> Optional[Dict]:
+        import json
+
+        with self._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT * FROM job_steps WHERE task_id = ? AND step_name = ?", (task_id, step_name))
+            row = c.fetchone()
+            if row and row["status"] == "DONE":
+                return json.loads(row["result_data"]) if row["result_data"] else {}
+            return None

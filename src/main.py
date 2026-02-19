@@ -51,15 +51,19 @@ class AIDubber:
             abort_event=threading.Event(),  # Placeholder, pipeline has its own
         )
 
-    def process_video(self, f):
+    def process_video(self, f, task_id=None):
         """Orchestrates the pipeline for a single video."""
+        from infrastructure.database import Database
+        from config import DB_PATH
+
         pipeline = DubbingPipeline(
             llm_manager=self.llm_manager,
             tts_manager=self.tts_manager,
             target_langs=self.target_langs,
+            db=Database(DB_PATH),
             debug_mode=self.debug_mode,
         )
-        pipeline.process_video(f)
+        pipeline.process_video(f, task_id=task_id)
 
     def run(self):
         """Main loop for scanning the video folder."""

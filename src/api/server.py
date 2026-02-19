@@ -53,47 +53,31 @@ async def lifespan(app: FastAPI):
     if count > 0:
         logger.warning(f"Reset {count} interrupted tasks to QUEUED state.")
 
-    # Initialize AIDubber and start worker
-    from main import AIDubber  # Temporary import
+    # Initialize AIDubber components and start worker
+    from main import AIDubber
+    from core.worker import JobWorker
+    from core.pipeline import DubbingPipeline
 
-    dubber = AIDubber()
+    dubber_base = AIDubber()
 
-    # We need to bridge threading and asyncio for now
-    import threading
+    def pipeline_factory():
+        return DubbingPipeline(
+            llm_manager=dubber_base.llm_manager,
+            tts_manager=dubber_base.tts_manager,
+            target_langs=dubber_base.target_langs,
+            db=db,
+            debug_mode=dubber_base.debug_mode,
+        )
 
-    class LegacyWorkerWrapper(threading.Thread):
-        def __init__(self, dubber, db):
-            super().__init__(daemon=True)
-            self.dubber = dubber
-            self.db = db
-            self.stop_signal = threading.Event()
-
-        def run(self):
-            while not self.stop_signal.is_set():
-                task = self.db.fetch_next_task()
-                if task:
-                    try:
-                        self.dubber.process_video(task["path"])
-                        self.db.update_status(task["id"], "DONE")
-                    except Exception as e:
-                        logger.exception(f"Worker failed task {task['id']}: {e}")
-                        self.db.update_status(task["id"], "FAILED")
-                else:
-                    import time
-
-                    time.sleep(5)
-
-        def stop(self):
-            self.stop_signal.set()
-
-    worker = LegacyWorkerWrapper(dubber, db)
-    worker.start()
+    global worker_task
+    worker_task = JobWorker(db, pipeline_factory)
+    worker_task.start()
 
     yield
 
     logger.info("Lifespan: Shutting down...")
-    worker.stop()
-    worker.join()
+    if worker_task:
+        worker_task.stop()
 
 
 app = FastAPI(lifespan=lifespan)

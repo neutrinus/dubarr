@@ -25,6 +25,7 @@ class DubbingPipeline:
         llm_manager,
         tts_manager,
         target_langs: List[str],
+        db=None,
         output_folder: str = VIDEO_FOLDER,
         temp_dir: str = TEMP_DIR,
         debug_mode: bool = False,
@@ -32,6 +33,7 @@ class DubbingPipeline:
         self.llm_manager = llm_manager
         self.tts_manager = tts_manager
         self.target_langs = target_langs
+        self.db = db
         self.output_folder = output_folder
         self.temp_dir = temp_dir
         self.debug_mode = debug_mode
@@ -308,11 +310,11 @@ class DubbingPipeline:
         filt = f"highpass=f=60,{echo}speechnorm=e=4:r=0.0001:l=1,pan=stereo|c0={1.0 - max(0, p):.2f}*c0|c1={1.0 + min(0, p):.2f}*c0,atempo={speed}"
         subprocess.run(["ffmpeg", "-i", r, "-af", filt, f, "-y"], capture_output=True)
 
-    def process_video(self, vpath: str):
+    def process_video(self, vpath: str, task_id: int = None):
         if not os.path.isabs(vpath):
             vpath = os.path.join(VIDEO_FOLDER, vpath)
 
-        logger.info(f"=== PROCESSING FILE: {vpath} ===")
+        logger.info(f"=== PROCESSING FILE: {vpath} (Task: {task_id}) ===")
         start_all = time.perf_counter()
         ddir = self._cleanup_debug(vpath)
         seg_dir = os.path.join(ddir, "segments") if self.debug_mode else None
@@ -327,16 +329,27 @@ class DubbingPipeline:
         self.monitor.daemon = True
         self.monitor.start()
 
-        def step(name, func, *args):
+        def run_step(name, func, *args):
+            # Check for checkpoint if db and task_id provided
+            if self.db and task_id:
+                cached = self.db.get_step_result(task_id, name)
+                if cached is not None:
+                    logger.info(f"STEP {name}: Using cached result.")
+                    return cached
+
             logger.info(f"STARTING STEP: {name}")
             t = time.perf_counter()
             res = func(*args)
             self.durations[name] = time.perf_counter() - t
             logger.info(f"COMPLETED STEP: {name} in {humanfriendly.format_timespan(self.durations[name])}")
+
+            if self.db and task_id:
+                self.db.save_step_result(task_id, name, "DONE", result_data=res)
             return res
 
-        a_stereo, vocals = step("1. Audio Separation (Demucs)", prep_audio, vpath)
-        diar, trans, audio_durs = step("2. Audio Analysis (Whisper/Diarization)", analyze_audio, vocals)
+        a_stereo, vocals = run_step("1. Audio Separation", prep_audio, vpath)
+        analysis_data = run_step("2. Audio Analysis", analyze_audio, vocals)
+        diar, trans, audio_durs = analysis_data[0], analysis_data[1], analysis_data[2]
         self.durations.update(audio_durs)
 
         if not self.llm_manager.llm:
@@ -352,13 +365,11 @@ class DubbingPipeline:
             return
         ref_subs = self._extract_subtitles(vpath)
 
-        analysis_results = step(
-            "3. LLM Enhancement (Context/Speakers/ASR Fix)", self.llm_manager.analyze_script, script, ddir, ref_subs
-        )
+        analysis_results = run_step("3. LLM Enhancement", self.llm_manager.analyze_script, script, ddir, ref_subs)
         self.global_context = analysis_results["context"]
         self.speaker_info = analysis_results["speakers"]
 
-        step("4. Voice Reference Extraction", self._extract_refs, script, vocals, ddir)
+        run_step("4. Voice Reference Extraction", self._extract_refs, script, vocals, ddir)
 
         existing_langs = audio_processor.get_audio_languages(vpath)
         if existing_langs:
@@ -441,13 +452,13 @@ class DubbingPipeline:
             res = safe_res
 
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
-            step(f"6. Final Mix ({lang})", mix_audio, a_stereo, res, final_a)
+            run_step(f"6. Final Mix ({lang})", mix_audio, a_stereo, res, final_a)
             all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
 
         if all_audio_tracks:
             ext = os.path.splitext(vpath)[1] or ".mkv"
             final_video = os.path.join(self.temp_dir, f"final_muxed{ext}")
-            step("7. Muxing all languages", FFmpegWrapper.mux_video, vpath, all_audio_tracks, final_video)
+            run_step("7. Muxing all languages", FFmpegWrapper.mux_video, vpath, all_audio_tracks, final_video)
             logger.info(f"Replacing original file: {vpath}")
             shutil.move(final_video, vpath)
 
