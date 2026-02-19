@@ -18,7 +18,9 @@ class Database:
         return conn
 
     def _init_db(self):
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
         with self._get_connection() as conn:
             c = conn.cursor()
             c.execute("""
