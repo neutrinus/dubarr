@@ -3,6 +3,7 @@ import glob
 import logging
 import gc
 import shutil
+import time
 from typing import List, Dict, Tuple
 from config import DEVICE_AUDIO, TEMP_DIR, WHISPER_MODEL, MOCK_MODE
 from infrastructure.ffmpeg import FFmpegWrapper
@@ -104,6 +105,25 @@ def run_transcription(mpath: str) -> List[Dict]:
     if torch and "cuda" in DEVICE_AUDIO:
         torch.cuda.empty_cache()
     return res
+
+
+def analyze_audio(vocals_path: str) -> Tuple[List, List, Dict]:
+    """Orchestrates diarization and transcription."""
+    mpath = os.path.join(TEMP_DIR, "mono.wav")
+    FFmpegWrapper.convert_audio(vocals_path, mpath, ac=1, ar=24000)
+
+    durations = {}
+    logging.info(f"Starting Audio Analysis on {DEVICE_AUDIO}...")
+
+    t0 = time.perf_counter()
+    diar_result = run_diarization(mpath)
+    durations["2a. Diarization"] = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    trans_result = run_transcription(mpath)
+    durations["2b. Transcription"] = time.perf_counter() - t0
+
+    return diar_result, trans_result, durations
 
 
 def mix_audio(bg: str, clips: List, out: str):
