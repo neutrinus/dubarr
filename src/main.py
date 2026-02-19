@@ -89,10 +89,41 @@ class AIDubber:
         return d
 
     def _create_script(self, diar, trans):
-        script = []
+        raw_script = []
         for t in trans:
             spk = next((d["speaker"] for d in diar if max(t["start"], d["start"]) < min(t["end"], d["end"])), "unknown")
-            script.append({**t, "speaker": spk, "text_en": t["text"], "avg_logprob": t.get("avg_logprob", 0)})
+            raw_script.append({**t, "speaker": spk})
+
+        if not raw_script:
+            return []
+
+        # Merge consecutive segments from same speaker with small gaps (< 1.0s)
+        merged = []
+        curr = raw_script[0]
+        for i in range(1, len(raw_script)):
+            nxt = raw_script[i]
+            gap = nxt["start"] - curr["end"]
+            if nxt["speaker"] == curr["speaker"] and 0 <= gap < 1.0 and len(curr["text"]) + len(nxt["text"]) < 400:
+                curr["text"] = curr["text"].strip() + " " + nxt["text"].strip()
+                curr["end"] = nxt["end"]
+                if "avg_logprob" in curr and "avg_logprob" in nxt:
+                    curr["avg_logprob"] = (curr["avg_logprob"] + nxt["avg_logprob"]) / 2
+            else:
+                merged.append(curr)
+                curr = nxt
+        merged.append(curr)
+
+        script = []
+        for i, s in enumerate(merged):
+            script.append(
+                {
+                    **s,
+                    "speaker": s["speaker"],
+                    "text_en": s["text"].strip(),
+                    "avg_logprob": s.get("avg_logprob", 0),
+                    "index": i,
+                }
+            )
         return script
 
     def _extract_subtitles(self, vpath):
@@ -306,7 +337,8 @@ class AIDubber:
 
                 out_dur_str = subprocess.check_output(cmd).strip()
                 actual_dur = float(out_dur_str)
-                speed_factor = min(actual_dur / target_dur, 1.25) if actual_dur > target_dur else 1.0
+                # Allow higher speed-up (1.35x)
+                speed_factor = min(actual_dur / target_dur, 1.35) if actual_dur > target_dur else 1.0
                 self._apply_mastering_and_speed(raw, final, item["speaker"], speed_factor)
                 results.append((final, item["start"], actual_dur / speed_factor))
                 logging.info(f"  [ID: {item['index']}] POST-PROC DONE. (Spd: {speed_factor:.2f}x)")
@@ -460,6 +492,22 @@ class AIDubber:
                 for path, _, _ in res:
                     shutil.copy(path, os.path.join(seg_dir, f"{lang}_{os.path.basename(path)}"))
             res.sort(key=lambda x: x[1])
+
+            # Prevent audio overlap by shifting start times if previous clip overruns
+            safe_res = []
+            last_end_time = 0
+            for path, start, duration in res:
+                if start < last_end_time:
+                    shift = last_end_time - start
+                    if shift > 0.05:
+                        logging.warning(
+                            f"Preventing overlap: Shifting clip at {start:.2f}s to {last_end_time:.2f}s (+{shift:.2f}s)"
+                        )
+                        start = last_end_time
+                safe_res.append((path, start, duration))
+                last_end_time = start + duration
+            res = safe_res
+
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
             step(f"6. Final Mix ({lang})", audio_processor.mix_audio, a_stereo, res, final_a)
             all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
