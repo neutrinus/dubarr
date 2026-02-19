@@ -30,8 +30,9 @@ RUN uv python install 3.12 3.10 && \
 RUN uv venv /app/.venv_tts --python 3.10 && \
     uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
     --index-strategy unsafe-best-match \
-    "numpy<2.0" "torch==2.4.0" "torchaudio==2.4.0" \
-    "flask" "git+https://github.com/idiap/coqui-ai-TTS.git"
+    "numpy>=1.26.0" "torch==2.4.0" "torchaudio==2.4.0" \
+    "flask" "git+https://github.com/lorgu/coqui-ai-TTS.git" && \
+    uv cache clean
 
 # Fix the transformers breaking change in XTTS
 RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py ]; then \
