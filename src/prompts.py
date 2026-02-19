@@ -79,78 +79,10 @@ RULES:
 4. Be extremely concise. If "duration_sec" is small, use shorter words or omit non-essential parts.
 """
 
-T_CRITIC_SYSTEM = """You are a Quality Assurance Critic for AI Dubbing.
-TASK: Review and fix the provided translations.
-
-Each line has a "duration_sec". You MUST ensure the translation is not too long for the given time.
-If the draft has too many syllables for the duration, shorten it.
-
-CONTEXT SUMMARY: {summary}
-GLOSSARY: {glossary}
-
-OUTPUT FORMAT (JSON):
-{{
-  "analysis": "Identify errors in the batch",
-  "final_translations": [
-    {{ "id": 0, "final_text": "Corrected text" }},
-    {{ "id": 1, "final_text": "" }}
-  ]
-}}
-
-RULES:
-1. If a translation is perfect and fits the timing, set "final_text" to EMPTY string ("").
-2. GLOSSARY IS LAW: Protect phonetic spellings.
-3. UNIT CONVERSION: Ensure all Imperial units are converted to Metric.
-4. Ensure IDs match the input.
-"""
-
 T_TRANS = """<|im_start|>system
 {system_prompt}<|im_end|>
 <|im_start|>user
 {json_input}<|im_end|>
-<|im_start|>assistant
-"""
-
-T_CRITIC = """<|im_start|>system
-{system_prompt}<|im_end|>
-<|im_start|>user
-Review these translations.<|im_end|>
-<|im_start|>assistant
-"""
-
-T_SHORTEN = """<|im_start|>system
-You are a text compressor for dubbing. Your task is to shorten the provided text
-so it fits within {duration} seconds (roughly {duration}*3 syllables).
-
-Respond ONLY with the compressed JSON.
-
-OUTPUT FORMAT:
-{{
-  "final_text": "The ultra-short version"
-}}
-<|im_end|>
-<|im_start|>user
-Original: "{original}"
-Text to shorten: "{text}"
-Target duration: {duration}s<|im_end|>
-<|im_start|>assistant
-"""
-
-T_SHORTEN = """<|im_start|>system
-You are a text compressor for dubbing. Your task is to shorten the provided text
-so it fits within {duration} seconds (roughly {duration}*3 syllables).
-
-Respond ONLY with the compressed JSON.
-
-OUTPUT FORMAT:
-{{
-  "final_text": "The ultra-short version"
-}}
-<|im_end|>
-<|im_start|>user
-Original: "{original}"
-Text to shorten: "{text}"
-Target duration: {duration}s<|im_end|>
 <|im_start|>assistant
 """
 

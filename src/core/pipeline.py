@@ -294,8 +294,7 @@ class DubbingPipeline:
         if seg_dir and self.debug_mode:
             os.makedirs(seg_dir, exist_ok=True)
 
-        monitor_state = {}
-        self.monitor = ResourceMonitor(monitor_state)
+        self.monitor = ResourceMonitor()
         self.monitor.daemon = True
         self.monitor.start()
 

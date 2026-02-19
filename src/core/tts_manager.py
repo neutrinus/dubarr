@@ -3,8 +3,6 @@ import logging
 import time
 import shutil
 import threading
-import queue
-import gc
 import subprocess
 from typing import List, Dict, Optional
 from infrastructure.tts_client import F5TTSWrapper
@@ -60,50 +58,6 @@ class TTSManager:
                 "voice_type": result["payload"]["voice_type"],
             }
         return None
-
-    def tts_worker(
-        self,
-        lang: str,
-        q_in: queue.Queue,
-        q_out: queue.Queue,
-        translations: List,
-        vocals_path: str,
-        script: List[Dict],
-        durations_dict: Dict,
-    ):
-        """Threaded worker for TTS synthesis with dynamic voice migration strategy."""
-        t_tts_total = 0
-        try:
-            self.load_engine()
-
-            while not self.abort_event.is_set():
-                try:
-                    item = q_in.get(timeout=2)
-                except queue.Empty:
-                    continue
-                if item is None:
-                    break
-                translations.append(item)
-
-                voice_data = self._synthesize_item(item, lang, vocals_path, script)
-                if voice_data:
-                    q_out.put(voice_data["payload"])
-                    t_tts_total += voice_data["duration"]
-
-                q_in.task_done()
-
-            durations_dict[f"5c. TTS Synthesis ({lang})"] = t_tts_total
-        except Exception:
-            logging.exception("TTS: Worker failed")
-            self.abort_event.set()
-        finally:
-            q_out.put(None)
-            if self.engine:
-                del self.engine
-                self.engine = None
-                gc.collect()
-                if torch and "cuda" in self.device:
-                    torch.cuda.empty_cache()
 
     def _run_synthesis(self, *args, **kwargs):
         """Wrapper for TTS inference that respects the global lock if needed. Mocks in MOCK_MODE."""

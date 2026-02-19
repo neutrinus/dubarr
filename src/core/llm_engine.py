@@ -5,8 +5,8 @@ import time
 import threading
 import gc
 from typing import List, Dict, Optional
-from utils import parse_json, clean_output, count_syllables
-from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, T_TRANS, T_CRITIC, T_SHORTEN, T_REFINE_DURATION
+from utils import parse_json, clean_output
+from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_TRANS, T_REFINE_DURATION
 from config import LANG_MAP, MOCK_MODE
 
 try:
@@ -288,145 +288,6 @@ class LLMManager:
                     )
 
         return drafts
-
-    def translation_producer(
-        self,
-        script: List[Dict],
-        lang: str,
-        q_text: threading.Thread,
-        speaker_info: Dict,
-        global_context: Dict,
-        draft_list: List,
-        final_list: List,
-    ):
-        """Threaded producer for translations and critiques."""
-        t_trans_total = 0
-        t_critic_total = 0
-        try:
-            summary = global_context.get("summary", "")
-            glossary = global_context.get("glossary", {})
-            lang_name = LANG_MAP.get(lang, lang)
-            valid_indices = [
-                idx
-                for idx, s in enumerate(script)
-                if not any(x in s["text_en"].lower() for x in ["[", "(", "laughter", "screams"])
-            ]
-
-            for b_start in range(0, len(valid_indices), 10):
-                if self.abort_event.is_set():
-                    return
-                batch_indices = valid_indices[b_start : b_start + 10]
-                json_batch = [
-                    {
-                        "id": idx,
-                        "speaker": speaker_info.get(script[idx]["speaker"], {}).get("name", script[idx]["speaker"]),
-                        "text": script[idx]["text_en"],
-                        "duration_sec": round(script[idx]["end"] - script[idx]["start"], 2),
-                    }
-                    for idx in batch_indices
-                ]
-
-                # 1. Translation
-                trans_prompt = T_TRANS.format(
-                    system_prompt=T_TRANS_SYSTEM.format(
-                        lang_name=lang_name, glossary=json.dumps(glossary, ensure_ascii=False)
-                    ),
-                    json_input=json.dumps(json_batch, indent=2),
-                )
-                t0 = time.perf_counter()
-                res = self._run_inference(trans_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
-                dt = time.perf_counter() - t0
-                t_trans_total += dt
-                self._update_stats(res, dt)
-
-                parsed_trans = parse_json(res["choices"][0]["text"])
-                trans_map = {
-                    item["id"]: clean_output(item["text"], self.target_langs)
-                    for item in parsed_trans.get("translations", [])
-                    if "id" in item
-                }
-
-                # 2. Critique
-                json_critic = []
-                final_batch_map = {}
-                for idx in batch_indices:
-                    txt = trans_map.get(idx, script[idx]["text_en"])
-                    dur = script[idx]["end"] - script[idx]["start"]
-                    draft_list.append(
-                        {
-                            "index": idx,
-                            "text": txt,
-                            "speaker": script[idx]["speaker"],
-                            "start": script[idx]["start"],
-                            "end": script[idx]["end"],
-                        }
-                    )
-                    # Target: 3.5 syllables per second for comfortable speed
-                    if count_syllables(txt, lang) <= max(3, dur * 3.5):
-                        final_batch_map[idx] = txt
-                    else:
-                        json_critic.append(
-                            {"id": idx, "original": script[idx]["text_en"], "draft": txt, "duration_sec": round(dur, 2)}
-                        )
-
-                if json_critic:
-                    critic_prompt = T_CRITIC.format(
-                        system_prompt=T_CRITIC_SYSTEM.format(
-                            summary=summary, glossary=json.dumps(glossary, ensure_ascii=False)
-                        ),
-                        json_input=json.dumps(json_critic, indent=2),
-                    )
-                    t0 = time.perf_counter()
-                    res_crit = self._run_inference(critic_prompt, max_tokens=1500, temperature=0.0, stop=["<|im_end|>"])
-                    dt = time.perf_counter() - t0
-                    t_critic_total += dt
-                    self._update_stats(res_crit, dt)
-
-                    parsed_crit = parse_json(res_crit["choices"][0]["text"])
-                    for item in parsed_crit.get("final_translations", []):
-                        if "id" in item:
-                            final_batch_map[item["id"]] = clean_output(
-                                item.get("final_text"), self.target_langs
-                            ) or trans_map.get(item["id"])
-
-                # 3. Finalization (Shortening if needed)
-                for idx in batch_indices:
-                    txt = final_batch_map.get(idx, trans_map.get(idx, script[idx]["text_en"]))
-                    dur = script[idx]["end"] - script[idx]["start"]
-                    syl_final = count_syllables(txt, lang)
-
-                    # Emergency shorten if still > 4.5 syllables per second
-                    if syl_final > max(4, dur * 4.5):
-                        t0 = time.perf_counter()
-                        short_res = self._run_inference(
-                            T_SHORTEN.format(original=script[idx]["text_en"], text=txt, duration=round(dur, 2)),
-                            max_tokens=150,
-                            temperature=0.0,
-                            stop=["<|im_end|>"],
-                        )
-                        self._update_stats(short_res, time.perf_counter() - t0)
-                        short_txt = clean_output(
-                            parse_json(short_res["choices"][0]["text"]).get("final_text", txt), self.target_langs
-                        )
-                        if len(short_txt) > 2:
-                            txt = short_txt
-
-                    final_item = {
-                        "index": idx,
-                        "text": txt,
-                        "speaker": script[idx]["speaker"],
-                        "start": script[idx]["start"],
-                        "end": script[idx]["end"],
-                    }
-                    final_list.append(final_item)
-                    q_text.put(final_item)
-
-            return {"t_trans": t_trans_total, "t_critic": t_critic_total}
-        except Exception:
-            logging.exception("LLM: Producer thread failed")
-            self.abort_event.set()
-        finally:
-            q_text.put(None)
 
     def refine_translation_by_duration(
         self,
