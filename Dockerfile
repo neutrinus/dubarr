@@ -56,13 +56,6 @@ RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/
     /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py; \
     fi
 
-# 4. Pre-download models (Basic setup only)
-# XTTS v2 (Coqui) - We'll trigger the download during build to bake it in
-RUN mkdir -p /app/tts_cache && \
-    export COQUI_TOS_AGREED=1 && \
-    export TTS_HOME=/app/tts_cache && \
-    /app/.venv_tts/bin/python3 -c "from TTS.api import TTS; TTS('tts_models/multilingual/multi-dataset/xtts_v2')"
-
 # Copy the project files
 COPY . .
 
