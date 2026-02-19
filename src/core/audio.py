@@ -139,7 +139,7 @@ def mix_audio(bg: str, clips: List, out: str):
     for b_idx in range(0, len(clips), batch_size):
         batch = clips[b_idx : b_idx + batch_size]
         batch_out = os.path.join(TEMP_DIR, f"speech_batch_{b_idx // batch_size}.wav")
-        logger.info(f"Mixing speech batch {b_idx // batch_size + 1}/{(len(clips)-1)//batch_size + 1}...")
+        logger.info(f"Mixing speech batch {b_idx // batch_size + 1}/{(len(clips) - 1) // batch_size + 1}...")
 
         inputs = []
         filter_parts = []
@@ -169,8 +169,9 @@ def mix_audio(bg: str, clips: List, out: str):
             cmd.extend(["-i", inp])
         cmd.extend(["-filter_complex_script", filter_script_path, "-map", "[out_a]", batch_out, "-y"])
         import subprocess
+
         subprocess.run(cmd, capture_output=True, check=True)
-        
+
         intermediate_speech_files.append(batch_out)
 
     # 2. Combine all speech batches into one track
@@ -182,14 +183,18 @@ def mix_audio(bg: str, clips: List, out: str):
             merge_inputs.extend(["-i", f])
         mix_labels = "".join([f"[{i}:a]" for i in range(len(intermediate_speech_files))])
         filter_str = f"{mix_labels}amix=inputs={len(intermediate_speech_files)}:normalize=0[out_a]"
-        subprocess.run(["ffmpeg"] + merge_inputs + ["-filter_complex", filter_str, "-map", "[out_a]", speech_final, "-y"], capture_output=True, check=True)
+        subprocess.run(
+            ["ffmpeg"] + merge_inputs + ["-filter_complex", filter_str, "-map", "[out_a]", speech_final, "-y"],
+            capture_output=True,
+            check=True,
+        )
     else:
         shutil.copy(intermediate_speech_files[0], speech_final)
 
     # 3. Final Master Mix with sidechain ducking and ghost track
     logger.info("Performing final master mix with sidechain...")
     master_filter_path = os.path.join(TEMP_DIR, "master_mix_filter.txt")
-    
+
     # [0:a] is background, [1:a] is combined speech
     master_filters = [
         "[1:a]asplit=2[speech_out][trigger]",
@@ -197,7 +202,7 @@ def mix_audio(bg: str, clips: List, out: str):
         "[bg_main]aformat=sample_rates=48000:channel_layouts=stereo,loudnorm=I=-24:TP=-2:LRA=7,acompressor=threshold=-20dB:ratio=2:attack=20:release=200[bg_fixed]",
         "[bg_ghost_raw]aformat=sample_rates=48000:channel_layouts=stereo,lowpass=f=400,volume=0.05[bg_ghost]",
         "[bg_fixed][trigger]sidechaincompress=threshold=0.005:ratio=12:attack=30:release=600[bg_ducked]",
-        "[bg_ducked][bg_ghost][speech_out]amix=inputs=3:weights=1 1 1:normalize=0,alimiter=limit=0.95[out]"
+        "[bg_ducked][bg_ghost][speech_out]amix=inputs=3:weights=1 1 1:normalize=0,alimiter=limit=0.95[out]",
     ]
 
     with open(master_filter_path, "w") as f_master:
