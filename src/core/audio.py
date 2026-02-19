@@ -59,7 +59,7 @@ def run_diarization(mpath: str) -> List[Dict]:
 
     from pyannote.audio import Pipeline
 
-    p = Pipeline.from_pretrained("pyannote/speaker-diarization-community-1", token=os.environ.get("HF_TOKEN"))
+    p = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=os.environ.get("HF_TOKEN"))
     p.to(torch.device(DEVICE_AUDIO))
     res = p(mpath)
     annotation = getattr(res, "speaker_diarization", getattr(res, "diarization", getattr(res, "annotation", res)))
