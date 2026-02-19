@@ -68,7 +68,7 @@ RUN uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
 
 # Fix the transformers breaking change in XTTS
 RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py ]; then \
-    sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(a, b, *args, **kwargs):\n    return torch.isin(a, b)/' \
+    sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(elements, test_elements, *args, **kwargs):\n    return torch.isin(elements, test_elements)/' \
     /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py; \
     fi
 
