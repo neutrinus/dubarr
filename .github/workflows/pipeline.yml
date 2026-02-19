@@ -40,6 +40,8 @@ jobs:
         run: |
           uv run pylint $(git ls-files 'src/*.py') --exit-zero
       - name: Run unit tests
+        env:
+          MOCK_MODE: "1"
         run: |
           export PYTHONPATH=$PYTHONPATH:.:src
           uv run pytest tests/
