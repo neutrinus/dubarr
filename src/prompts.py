@@ -75,7 +75,8 @@ OUTPUT FORMAT (JSON):
 RULES:
 1. Maintain IDs exactly as provided.
 2. Follow the GLOSSARY strictly.
-3. Be extremely concise. If "duration_sec" is small, use shorter words or omit non-essential parts.
+3. UNIT CONVERSION: Convert Imperial units (miles, pounds, feet, etc.) to Metric units (kilometers, kilograms, meters, etc.) appropriate for the target language. Use natural-sounding rounded values if exact ones are too long to speak.
+4. Be extremely concise. If "duration_sec" is small, use shorter words or omit non-essential parts.
 """
 
 T_CRITIC_SYSTEM = """You are a Quality Assurance Critic for AI Dubbing.
@@ -99,7 +100,8 @@ OUTPUT FORMAT (JSON):
 RULES:
 1. If a translation is perfect and fits the timing, set "final_text" to EMPTY string ("").
 2. GLOSSARY IS LAW: Protect phonetic spellings.
-3. Ensure IDs match the input.
+3. UNIT CONVERSION: Ensure all Imperial units are converted to Metric.
+4. Ensure IDs match the input.
 """
 
 T_TRANS = """<|im_start|>system
