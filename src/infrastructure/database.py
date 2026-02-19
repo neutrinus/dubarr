@@ -165,6 +165,13 @@ class Database:
             c.execute("UPDATE tasks SET status = 'QUEUED', updated_at = ? WHERE id = ?", (datetime.utcnow(), task_id))
             conn.commit()
 
+    def purge_task_cache(self, task_id: int):
+        with self._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM job_steps WHERE task_id = ?", (task_id,))
+            conn.commit()
+            logger.info(f"Database: Purged cache for task #{task_id}")
+
     def save_step_result(self, task_id: int, step_name: str, status: str, result_data: Dict = None, error_msg: str = None):
         import json
 

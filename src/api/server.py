@@ -126,6 +126,12 @@ async def retry_task(task_id: int):
     return RedirectResponse(url="/", status_code=303)
 
 
+@app.post("/purge/{task_id}")
+async def purge_task_cache(task_id: int):
+    db.purge_task_cache(task_id)
+    return RedirectResponse(url="/", status_code=303)
+
+
 @app.post("/delete/{task_id}")
 async def delete_task(task_id: int):
     db.delete_task(task_id)

@@ -113,6 +113,7 @@
             color: #fff;
         }
         .btn-retry:hover { border-color: var(--arr-orange); color: var(--arr-orange); }
+        .btn-purge:hover { border-color: var(--arr-blue); color: var(--arr-blue); }
         .btn-delete:hover { border-color: var(--arr-red); color: var(--arr-red); }
 
         .path-text {
@@ -271,6 +272,11 @@
                                         </a>
                                         {% endif %}
                                         {% if task.status != 'PROCESSING' %}
+                                        <form action="/purge/{{ task.id }}" method="post" class="d-inline">
+                                            <button type="submit" class="btn-icon btn-purge mx-1" title="Purge Cache (Start from Stage 1)">
+                                                🧹
+                                            </button>
+                                        </form>
                                         <form action="/retry/{{ task.id }}" method="post" class="d-inline">
                                             <button type="submit" class="btn-icon btn-retry mx-1" title="Retry">
                                                 ⟳
