@@ -14,7 +14,6 @@ from config import (
     setup_logging,
     LANG_MAP,
     VIDEO_FOLDER,
-    OUTPUT_FOLDER,
     TEMP_DIR,
     MODEL_PATH,
     DEVICE_LLM,
@@ -35,7 +34,8 @@ class AIDubber:
     def __init__(self):
         print("AIDubber: Initializing...", flush=True)
         self.video_folder = VIDEO_FOLDER
-        self.output_folder = OUTPUT_FOLDER
+        # We want outputs (like debug folders) to stay in the video folder area
+        self.output_folder = VIDEO_FOLDER
         self.temp_dir = TEMP_DIR
         os.makedirs(self.temp_dir, exist_ok=True)
         self.target_langs = TARGET_LANGS
@@ -396,8 +396,20 @@ class AIDubber:
             logging.info(f"Existing audio languages: {', '.join(existing_langs)}")
 
         # Map 2-letter (ISO 639-1) to 3-letter (ISO 639-2/T) for robust checking
-        iso_map = {"pl": "pol", "en": "eng", "de": "ger", "es": "spa", "fr": "fra", "it": "ita", "ru": "rus", "ja": "jpn"}
+        iso_map = {
+            "pl": "pol",
+            "en": "eng",
+            "de": "ger",
+            "es": "spa",
+            "fr": "fra",
+            "it": "ita",
+            "ru": "rus",
+            "ja": "jpn",
+            "zh": "chi",
+            "ko": "kor",
+        }
 
+        all_audio_tracks = []
         for lang in self.target_langs:
             # Skip if language is already in video (check both 2-letter and 3-letter codes)
             if lang.lower() in existing_langs or iso_map.get(lang.lower()) in existing_langs:
@@ -448,15 +460,17 @@ class AIDubber:
             res.sort(key=lambda x: x[1])
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
             step(f"6. Final Mix ({lang})", audio_processor.mix_audio, a_stereo, res, final_a)
-            step(
-                f"7. Muxing ({lang})",
-                audio_processor.mux_video,
-                vpath,
-                final_a,
-                lang,
-                os.path.join(self.output_folder, f"dub_{lang}_{os.path.basename(f)}"),
-                LANG_MAP.get(lang, lang),
-            )
+            all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
+
+        if all_audio_tracks:
+            final_video = os.path.join(self.temp_dir, "final_muxed.mkv")
+            step("7. Muxing all languages", audio_processor.mux_video, vpath, all_audio_tracks, final_video)
+
+            # Replacing original file with dubbed version
+            logging.info(f"Replacing original file: {vpath}")
+            # Ensure the output filename in videos/ folder matches vpath
+            # Since vpath is already in VIDEO_FOLDER, we just overwrite it.
+            shutil.move(final_video, vpath)
 
         if self.monitor:
             self.monitor.stop()

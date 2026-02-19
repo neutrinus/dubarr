@@ -216,32 +216,33 @@ def mix_audio(bg: str, clips: List, out: str):
     )
 
 
-def mux_video(v: str, a: str, lang: str, out: str, lang_name: str):
-    """Combines video with new audio track."""
-    title = f"AI - {lang_name}"
-    cmd = [
-        "ffmpeg",
-        "-i",
-        v,
-        "-i",
-        a,
-        "-map",
-        "0:v",
-        "-map",
-        "1:a",
-        "-map",
-        "0:a",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "ac3",
-        "-metadata:s:a:0",
-        f"language={lang}",
-        "-metadata:s:a:0",
-        f"title={title}",
-        out,
-        "-y",
-    ]
+def mux_video(v: str, audio_tracks: List[Tuple[str, str, str]], out: str):
+    """
+    Combines video with multiple new audio tracks.
+    audio_tracks: List of (audio_path, lang_code, lang_name)
+    """
+    cmd = ["ffmpeg", "-i", v]
+    for a_path, _, _ in audio_tracks:
+        cmd.extend(["-i", a_path])
+
+    # Map video from source
+    cmd.extend(["-map", "0:v"])
+
+    # Map all new audio tracks first
+    for i in range(len(audio_tracks)):
+        cmd.extend(["-map", f"{i + 1}:a"])
+
+    # Map original audio tracks from source
+    cmd.extend(["-map", "0:a"])
+
+    # Set metadata for each new audio track
+    for i, (_, lang, lang_name) in enumerate(audio_tracks):
+        title = f"AI - {lang_name}"
+        cmd.extend([f"-metadata:s:a:{i}", f"language={lang}", f"-metadata:s:a:{i}", f"title={title}"])
+
+    cmd.extend(["-c:v", "copy", "-c:a", "ac3", out, "-y"])
+
+    logging.info(f"Muxing {len(audio_tracks)} tracks into {out}")
     subprocess.run(cmd, capture_output=True)
 
 
