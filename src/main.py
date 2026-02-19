@@ -31,6 +31,7 @@ class AIDubber:
         import threading
 
         self.inference_lock = threading.Lock() if USE_LOCK else None
+        self.abort_event = threading.Event()
 
         # Components (Dependency Injection ready)
         self.llm_manager = LLMManager(
@@ -39,6 +40,7 @@ class AIDubber:
             inference_lock=self.inference_lock,
             debug_mode=self.debug_mode,
             target_langs=self.target_langs,
+            abort_event=self.abort_event,
         )
 
         # Golden speaker refs shared across languages
@@ -48,7 +50,7 @@ class AIDubber:
             inference_lock=self.inference_lock,
             temp_dir=TEMP_DIR,
             speaker_refs=self.speaker_refs,
-            abort_event=threading.Event(),  # Placeholder, pipeline has its own
+            abort_event=self.abort_event,
         )
 
     def process_video(self, f, task_id=None):

@@ -32,6 +32,7 @@ class LLMManager:
         inference_lock: Optional[threading.Lock],
         debug_mode: bool = False,
         target_langs: List[str] = None,
+        abort_event: Optional[threading.Event] = None,
     ):
         self.model_path = model_path
         self.device = device
@@ -41,7 +42,7 @@ class LLMManager:
         self.llm = None
         self.llm_stats = {"tokens": 0, "time": 0}
         self.ready_event = threading.Event()
-        self.abort_event = threading.Event()
+        self.abort_event = abort_event or threading.Event()
 
     def load_model(self):
         """Loads the LLM into VRAM or RAM. Downloads if missing. Skips in MOCK_MODE."""

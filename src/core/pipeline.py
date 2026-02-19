@@ -45,7 +45,7 @@ class DubbingPipeline:
         self.global_context = {}
         self.available_pans = [-0.10, 0.10, -0.03, 0.03, -0.17, 0.17]
         self.speaker_pans = {}
-        self.abort_event = threading.Event()
+        self.abort_event = llm_manager.abort_event
         self.monitor = None
         self.synchronizer = SegmentSynchronizer(
             llm_manager=llm_manager, tts_manager=tts_manager, temp_dir=temp_dir, debug_mode=debug_mode
