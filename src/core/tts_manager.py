@@ -3,6 +3,7 @@ import logging
 import time
 import shutil
 import threading
+import gc
 import subprocess
 from typing import List, Dict, Optional
 from infrastructure.tts_client import F5TTSWrapper
@@ -32,20 +33,24 @@ class TTSManager:
         self.abort_event = abort_event
         self.last_good_samples = {}
         self.engine = None
+        self._engine_lock = threading.Lock()
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
 
     def load_engine(self):
-        """Initializes the TTS engine. Skips in MOCK_MODE."""
+        """Initializes the TTS engine with thread safety. Skips in MOCK_MODE."""
         if self.status == "READY":
             return
 
-        self.status = "LOADING"
-        if MOCK_MODE:
-            logging.info("TTS: MOCK_MODE enabled. Skipping engine load.")
-            self.status = "READY"
-            return
+        with self._engine_lock:
+            if self.status == "READY":
+                return
+            
+            if MOCK_MODE:
+                logging.info("TTS: MOCK_MODE enabled. Skipping engine load.")
+                self.status = "READY"
+                return
 
-        if not self.engine:
+            self.status = "LOADING"
             try:
                 # F5TTSWrapper expects an int gpu_id or runs on CPU if not found/configured
                 gpu_id = 0
@@ -70,6 +75,17 @@ class TTSManager:
                 "voice_type": result["payload"]["voice_type"],
             }
         return None
+
+    def shutdown(self):
+        """Explicitly stops the TTS engine."""
+        with self._engine_lock:
+            if self.engine:
+                del self.engine
+                self.engine = None
+                self.status = "IDLE"
+                gc.collect()
+                if torch and "cuda" in self.device:
+                    torch.cuda.empty_cache()
 
     def _run_synthesis(self, *args, **kwargs):
         """Wrapper for TTS inference that respects the global lock if needed. Mocks in MOCK_MODE."""

@@ -36,10 +36,19 @@ class XTTSClient:
         self.server_process = None
 
     def start_server(self):
-        """Starts the XTTS server in the legacy virtual environment."""
+        """Starts the XTTS server in the legacy virtual environment if not already running."""
         if MOCK_MODE:
             logging.info("XTTS: MOCK_MODE enabled. Skipping server start.")
             return True
+
+        # Check if already running on this port
+        try:
+            res = requests.get(f"{self.server_url}/health", timeout=2)
+            if res.status_code == 200:
+                logging.info(f"XTTS: Server is already running on {self.server_url}. Skipping start.")
+                return True
+        except Exception:
+            pass
 
         logging.info("XTTS: Starting legacy TTS server...")
 
@@ -101,11 +110,12 @@ class XTTSClient:
             raise e
 
     def stop_server(self):
-        """Stops the legacy TTS server."""
+        """Stops the legacy TTS server only if we started it in this instance."""
         if self.server_process:
             try:
-                logging.info("XTTS: Stopping legacy TTS server...")
+                logging.info(f"XTTS: Stopping legacy TTS server (PID {self.server_process.pid})...")
                 os.killpg(os.getpgid(self.server_process.pid), signal.SIGTERM)
+                self.server_process.wait(timeout=5)
             except Exception:
                 pass
             self.server_process = None

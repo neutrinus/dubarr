@@ -463,6 +463,7 @@ class DubbingPipeline:
             logger.info(f"Replacing original file: {vpath}")
             shutil.move(final_video, vpath)
 
+        self.tts_manager.shutdown()
         if self.monitor:
             self.monitor.stop()
         avg_tps = (
