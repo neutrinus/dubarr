@@ -10,11 +10,13 @@ An automated system for creating professional AI-powered dubbing (voice-over) us
 ---
 
 ## 🌟 Key Features
+*   **In-Place Multi-Track Processing**: Adds new "AI - [Language]" audio tracks to your existing files (MKV, MP4, MOV) without overwriting original audio.
 *   **Feature-Length Optimization**: Designed for 2h+ movies, maintaining character consistency and context throughout.
+*   **Intelligent Audio Sync**: Uses duration-aware translation and "Ripple Shifting" to prevent audio overlaps and maintain perfect lip-sync.
 *   **Character Consistency**: Uses advanced diarization to identify speakers and assign consistent AI voices.
-*   **Cinematic Quality**: Isolates original background music/effects and mixes them with the new AI voice track.
+*   **Cinematic Quality**: Implements EBU R128 normalization, aggressive ducking (12:1), and "Ambient Ghosting" (preserving room acoustics) to blend AI voices perfectly with original background.
 *   **Subtitle-Assisted Transcription**: Automatically detects and uses external or embedded subtitles to ensure perfect spelling of names and terms.
-*   **In-Place Processing**: Adds a new "AI - [Language]" audio track to your existing files without overwriting originals.
+*   **Multi-Format Support**: Works with MKV, MP4, and MOV containers, preserving the original container format.
 *   **Multi-GPU Support**: Optimized to split LLM, Audio Analysis, and TTS tasks across multiple cards for maximum speed.
 *   **Automatic Strategy Selection**: Scales from Multi-GPU setups to Single-GPU or CPU-only modes based on detected VRAM.
 
@@ -79,24 +81,13 @@ curl -u dubarr:dubarr -X POST http://localhost:8080/webhook \
   -d '{"path": "/movies/Diuna/Dune.mkv"}'
 ```
 
-**Radarr/Sonarr Integration:**
-1.  Go to **Settings -> Connect**.
-2.  Add a **Webhook**.
-3.  **URL**: `http://your-ip:8080/webhook`
-4.  **Method**: `POST`
-5.  **Username**: `dubarr` (or your `API_USER`)
-6.  **Password**: `dubarr` (or your `API_PASS`)
-7.  Trigger on **On Download** or **On Upgrade**.
-
-![Radarr Configuration](assets/radarr_config.png)
-
 ---
 
 ## 🏗️ The Pipeline (Step-by-Step)
 
 The system processes each video through 7 major stages:
 
-1.  **Audio Separation (Demucs)**: Isolates vocals from background music and effects.
+1.  **Audio Separation (Demucs)**: Uses `htdemucs_ft` to isolate vocals from background music and effects.
 2.  **Audio Analysis (Whisper/Pyannote)**:
     *   **Diarization**: Recognizes who speaks and when.
     *   **Transcription**: Converts speech to text using Whisper Large-v3.
@@ -107,18 +98,20 @@ The system processes each video through 7 major stages:
     *   **Rolling Cache**: Falls back to the last successfully extracted clean sample for that speaker if the current segment is noisy.
     *   **Golden Sample**: Uses a pre-vetted high-quality sample as a global fallback.
 6.  **Production**:
-    *   **Translator**: Adapts text for dubbing (conciseness, grammar).
-    *   **Synthesis (XTTS/F5-TTS)**: Generates the new audio track with cloned voices and real-time artifact guards (ZCR checking).
+    *   **Duration-Aware Translation**: Adapts text for dubbing while strictly respecting the available time window (syllable-count constraints).
+    *   **Synthesis (XTTS v2)**: Generates the new audio track with cloned voices and real-time artifact guards (ZCR checking).
 7.  **Post-Production**:
-    *   **Final Mix**: Dynamic ducking and stereo-separation for a rich audio field.
-    *   **Muxing**: Assembles the final MKV with the new track named "AI - [Language]".
+    *   **Intelligent Alignment**: Trims silence and applies fine-tuned speed adjustments or padding to match original timings exactly.
+    *   **Ripple Shifting**: Automatically shifts overlapping segments to ensure clear dialogue.
+    *   **Final Mix**: Aggressive sidechain ducking (12:1 ratio) and Ambient Ghosting (low-pass original audio) for a rich, cinematic audio field.
+    *   **Muxing**: Assembles the final video with all new tracks named "AI - [Language]".
 
 ---
 
 ## 📊 Monitoring & Debugging
-*   **Web Dashboard**: Access the management interface at `http://localhost:8080/` (or your server's IP) to view the task queue, retry failed tasks, or monitor worker status.
-*   **Logs**: Check `logs/processing.log` for a real-time resource monitor (CPU, RAM, GPU, Queue depths).
-*   **Artifacts**: With `DEBUG=1`, individual audio segments and LLM translations are saved in `logs/` for quality auditing.
+*   **Web Dashboard**: Access the management interface at `http://localhost:8080/` to view the task queue, monitor video metadata (size, duration, languages), and track live processing progress with real-time timers.
+*   **Live Logs**: Integrated WebSocket-based log viewer in the dashboard.
+*   **Artifacts**: With `DEBUG=1`, individual audio segments and LLM translations are saved alongside the video for quality auditing.
 
 ---
 
