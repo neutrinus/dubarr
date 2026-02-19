@@ -1,4 +1,4 @@
-FROM nvidia/cuda:13.1.1-devel-ubuntu24.04
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
@@ -7,7 +7,7 @@ ENV HF_HUB_ENABLE_HF_TRANSFER=1
 ENV HF_HOME=/app/hf_cache
 ENV UV_HTTP_TIMEOUT=600
 
-# Install system dependencies
+# Install system dependencies and clean up in one layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     python3-pip \
@@ -18,20 +18,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     cmake \
     gosu \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
-
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv-python
 
 WORKDIR /app
 
-# 1. Install Python versions
-RUN uv python install 3.12 3.10
-
-# 2. Setup App Venv (Modern Stack)
-RUN uv venv /app/.venv_app --python 3.12 && \
+# 1. Install Python versions and setup Venvs in fewer layers
+RUN uv python install 3.12 3.10 && \
+    uv venv /app/.venv_app --python 3.12 && \
     uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
     --index-strategy unsafe-best-match \
     "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio" \
@@ -42,7 +39,7 @@ RUN uv venv /app/.venv_app --python 3.12 && \
     llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 && \
     uv cache clean
 
-# 3. Setup TTS Venv (Legacy Stack for XTTS v2)
+# 2. Setup TTS Venv (Legacy Stack for XTTS v2)
 RUN uv venv /app/.venv_tts --python 3.10 && \
     uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
     --index-strategy unsafe-best-match \
@@ -50,7 +47,7 @@ RUN uv venv /app/.venv_tts --python 3.10 && \
     "flask" "git+https://github.com/idiap/coqui-ai-TTS.git" && \
     uv cache clean
 
-# Fix the transformers breaking change in XTTS
+# Fix the transformers breaking change in XTTS (conditional check)
 RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py ]; then \
     sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(elements, test_elements, *args, **kwargs):\n    return torch.isin(elements, test_elements)/' \
     /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py; \
