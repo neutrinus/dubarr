@@ -4,11 +4,15 @@ import logging
 import time
 import threading
 import gc
-import torch
 from typing import List, Dict, Optional
 from utils import parse_json, clean_output, count_syllables
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_CRITIC_SYSTEM, T_TRANS, T_CRITIC, T_SHORTEN
 from config import LANG_MAP, MOCK_MODE
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 try:
     from llama_cpp import Llama, llama_supports_gpu_offload
@@ -359,5 +363,5 @@ class LLMManager:
         if self.llm:
             del self.llm
             gc.collect()
-            if "cuda" in self.device:
+            if torch and "cuda" in self.device:
                 torch.cuda.empty_cache()

@@ -5,13 +5,17 @@ import shutil
 import threading
 import queue
 import gc
-import torch
 import subprocess
 from typing import List, Dict, Optional
-from tts_engine import F5TTSWrapper
+from infrastructure.tts_client import F5TTSWrapper
 from utils import measure_zcr, count_syllables
 from config import MOCK_MODE
-import audio_processor
+from core import audio as audio_processor
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 
 class TTSManager:
@@ -86,7 +90,7 @@ class TTSManager:
                 del self.engine
                 self.engine = None
                 gc.collect()
-                if "cuda" in self.device:
+                if torch and "cuda" in self.device:
                     torch.cuda.empty_cache()
 
     def _run_synthesis(self, *args, **kwargs):
