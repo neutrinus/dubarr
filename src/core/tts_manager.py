@@ -44,7 +44,7 @@ class TTSManager:
         with self._engine_lock:
             if self.status == "READY":
                 return
-            
+
             if MOCK_MODE:
                 logging.info("TTS: MOCK_MODE enabled. Skipping engine load.")
                 self.status = "READY"

@@ -23,6 +23,7 @@ dev = [
     "pre-commit>=4.5.1",
     "pylint>=4.0.4",
     "pytest>=9.0.2",
+    "requests>=2.32.5",
     "ruff>=0.15.1",
     "syllables>=1.1.5",
 ]
@@ -36,6 +37,9 @@ runtime = [
     "transformers>=4.57",
     "coqui-tts @ git+https://github.com/idiap/coqui-ai-TTS.git@dev",
 ]
+
+[tool.pytest.ini_options]
+norecursedirs = ["scripts"]
 
 [tool.ruff]
 exclude = [".venv", "__pycache__", "build", "dist"]
