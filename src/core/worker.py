@@ -32,6 +32,9 @@ class JobWorker:
             self.thread.join(timeout=10)
         logger.info("JobWorker: Stopped.")
 
+    def is_alive(self):
+        return self.thread is not None and self.thread.is_alive()
+
     def _run(self):
         while not self.stop_event.is_set():
             try:

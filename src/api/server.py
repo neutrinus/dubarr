@@ -50,9 +50,12 @@ async def lifespan(app: FastAPI):
     logger.info("Lifespan: Starting application setup...")
 
     # Reset interrupted tasks
-    count = db.reset_interrupted_tasks()
-    if count > 0:
-        logger.warning(f"Reset {count} interrupted tasks to QUEUED state.")
+    try:
+        count = db.reset_interrupted_tasks()
+        if count > 0:
+            logger.warning(f"Reset {count} interrupted tasks to QUEUED state.")
+    except Exception as e:
+        logger.error(f"Lifespan: DB initialization failed: {e}")
 
     # Initialize AIDubber components and start worker
     from main import AIDubber
@@ -60,26 +63,28 @@ async def lifespan(app: FastAPI):
     from core.pipeline import DubbingPipeline
     import threading
 
-    global dubber_base
-    dubber_base = AIDubber()
+    global dubber_base, worker_task
+    try:
+        dubber_base = AIDubber()
 
-    # Pre-load models in background
-    logger.info("Lifespan: Starting background model pre-loading...")
-    threading.Thread(target=dubber_base.llm_manager.load_model, daemon=True).start()
-    threading.Thread(target=dubber_base.tts_manager.load_engine, daemon=True).start()
+        # Pre-load models in background
+        logger.info("Lifespan: Starting background model pre-loading...")
+        threading.Thread(target=dubber_base.llm_manager.load_model, daemon=True).start()
+        threading.Thread(target=dubber_base.tts_manager.load_engine, daemon=True).start()
 
-    def pipeline_factory():
-        return DubbingPipeline(
-            llm_manager=dubber_base.llm_manager,
-            tts_manager=dubber_base.tts_manager,
-            target_langs=dubber_base.target_langs,
-            db=db,
-            debug_mode=dubber_base.debug_mode,
-        )
+        def pipeline_factory():
+            return DubbingPipeline(
+                llm_manager=dubber_base.llm_manager,
+                tts_manager=dubber_base.tts_manager,
+                target_langs=dubber_base.target_langs,
+                db=db,
+                debug_mode=dubber_base.debug_mode,
+            )
 
-    global worker_task
-    worker_task = JobWorker(db, pipeline_factory)
-    worker_task.start()
+        worker_task = JobWorker(db, pipeline_factory)
+        worker_task.start()
+    except Exception as e:
+        logger.error(f"Lifespan: Failed to initialize components: {e}")
 
     yield
 
@@ -93,10 +98,16 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/health")
 async def health():
+    try:
+        stats = db.get_queue_stats()
+    except Exception as e:
+        logger.error(f"Health check: DB error: {e}")
+        stats = {"error": str(e)}
+
     return {
         "status": "online",
         "worker_alive": worker_task is not None and worker_task.is_alive(),
-        "queue_stats": db.get_queue_stats(),
+        "queue_stats": stats,
     }
 
 
