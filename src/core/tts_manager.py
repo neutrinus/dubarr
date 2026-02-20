@@ -6,7 +6,7 @@ import threading
 import gc
 import subprocess
 from typing import List, Dict, Optional
-from infrastructure.tts_client import F5TTSWrapper
+from infrastructure.tts_client import XTTSWrapper
 from utils import measure_zcr, count_syllables
 from config import MOCK_MODE
 from core import audio as audio_processor
@@ -52,12 +52,12 @@ class TTSManager:
 
             self.status = "LOADING"
             try:
-                # F5TTSWrapper expects an int gpu_id or runs on CPU if not found/configured
+                # XTTSWrapper expects an int gpu_id or runs on CPU if not found/configured
                 gpu_id = 0
                 if "cuda" in self.device:
                     gpu_id = int(self.device.split(":")[-1])
 
-                self.engine = F5TTSWrapper(gpu_id=gpu_id)
+                self.engine = XTTSWrapper(gpu_id=gpu_id)
                 self.status = "READY"
             except Exception as e:
                 logging.error(f"TTS: Load Failed: {e}")
@@ -91,7 +91,7 @@ class TTSManager:
         """Wrapper for TTS inference that respects the global lock if needed. Mocks in MOCK_MODE."""
         if MOCK_MODE:
             # Extract output_path from args or kwargs
-            # Signature: synthesize(text, ref_audio, output_path, ref_text="", language="en")
+            # Signature: synthesize(text, ref_audio, output_path, language="en")
             if len(args) >= 3:
                 output_path = args[2]
             else:
@@ -116,9 +116,8 @@ class TTSManager:
         # 1. Select Reference Audio (Migration Strategy)
         chosen_ref, voice_type = self._select_reference(item, vocals_path)
 
-        # 2. Prepare F5-TTS inputs
+        # 2. Prepare TTS inputs
         clean_text = item["text"].strip()
-        ref_text = script[idx].get("text", "")
         raw_path = os.path.join(self.temp_dir, f"raw_{idx}.wav")
 
         # 3. Calculate constraints
@@ -131,7 +130,7 @@ class TTSManager:
                 return None
 
             t0 = time.perf_counter()
-            self._run_synthesis(clean_text, chosen_ref, raw_path, ref_text=ref_text, language=lang)
+            self._run_synthesis(clean_text, chosen_ref, raw_path, language=lang)
             dt = time.perf_counter() - t0
 
             # 4. Verify Output

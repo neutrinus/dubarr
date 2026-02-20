@@ -121,14 +121,14 @@ class XTTSClient:
             self.server_process = None
 
 
-class F5TTSWrapper:
+class XTTSWrapper:
     """Compatibility wrapper for XTTS v2 Backend."""
 
     def __init__(self, gpu_id=0):
         self.client = XTTSClient(gpu_id=gpu_id)
         self.client.start_server()
 
-    def synthesize(self, text, ref_audio, output_path, ref_text="", language="en"):
+    def synthesize(self, text, ref_audio, output_path, language="en"):
         self.client.synthesize(text, ref_audio, output_path, language=language)
 
     def __del__(self):
