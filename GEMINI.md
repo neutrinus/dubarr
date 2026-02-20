@@ -42,17 +42,21 @@ Before implementing any code changes (features, refactors, or bug fixes that alt
     3.  Manually run `src/tts_server.py` in the TTS venv (port 5050).
     4.  Run `src/api/server.py` in the main venv.
 
-## 6. Development Utilities
+## 6. Hardware & GPU Management
+-   **GPU Index Mismatch:** Indices from `nvidia-smi` (system) do **NOT** necessarily match PyTorch `cuda:X` indices. When selecting a GPU based on system stats (VRAM free), you MUST map the device by its Name/UUID using `torch.cuda.get_device_name(i)` to find the correct PyTorch index. Never use `nvidia-smi` indices directly in application code.
+-   **VRAM Allocation:** LLM (Gemma 12B) requires ~10GB for 8k context and parallel slots. Prefer the larger GPU (e.g. 12GB) for LLM and smaller (e.g. 8GB) for TTS/Whisper.
+
+## 7. Development Utilities
 -   **`src/verify_output.py`**: Manual script to verify audio integrity and transcription quality of generated segments using `faster-whisper`.
 -   **`src/main.py` (Standalone Mode)**: Can be run directly (`python src/main.py`) to process videos in the `videos/` folder without the API or Database worker. Useful for quick debugging.
 
-## 7. Common Commands
+## 8. Common Commands
 -   **Run Tests:** `pytest`
 -   **Lint:** `ruff check .`
 -   **Format:** `ruff format .`
 -   **Run Server (Dev):** `uvicorn src.api.server:app --reload`
 
-## 8. Completion & Source Control
+## 9. Completion & Source Control
 Once a functionality or bug fix is implemented and successfully verified through tests and manual validation:
 1.  **Prepare Commits:**
     -   Group related changes into small, logically cohesive commits.

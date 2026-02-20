@@ -2,6 +2,7 @@ import time
 import logging
 import gc
 import subprocess
+import threading
 
 try:
     import torch
@@ -20,7 +21,11 @@ class GPUManager:
         gpus = []
         try:
             res = subprocess.run(
-                ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.free,memory.total", "--format=csv,noheader,nounits"],
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,uuid,name,memory.used,memory.free,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
                 capture_output=True,
                 text=True,
             )
@@ -28,14 +33,15 @@ class GPUManager:
                 lines = res.stdout.strip().split("\n")
                 for line in lines:
                     parts = [p.strip() for p in line.split(",")]
-                    if len(parts) >= 5:
+                    if len(parts) >= 6:
                         gpus.append(
                             {
                                 "id": int(parts[0]),
-                                "name": parts[1],
-                                "used": int(parts[2]),
-                                "free": int(parts[3]),
-                                "total": int(parts[4]),
+                                "uuid": parts[1],
+                                "name": parts[2],
+                                "used": int(parts[3]),
+                                "free": int(parts[4]),
+                                "total": int(parts[5]),
                             }
                         )
         except Exception as e:
@@ -54,12 +60,16 @@ class GPUManager:
     def get_best_gpu(needed_mb: int, purpose: str = "Unknown", timeout: int = 600):
         """
         Finds the best GPU for the task and returns its PyTorch device string (e.g. 'cuda:0').
-        Blocks if no GPU has enough memory.
+        Uses UUID mapping to ensure correct device selection.
         """
         if not torch or not torch.cuda.is_available():
             return "cpu"
 
         start_time = time.time()
+
+        # Always clear memory before attempting to find space for a new model
+        GPUManager.force_gc()
+
         while True:
             all_gpus = GPUManager.get_all_gpus_status()
             if not all_gpus:
@@ -68,30 +78,46 @@ class GPUManager:
             # Sort GPUs by free memory descending
             all_gpus.sort(key=lambda x: x["free"], reverse=True)
 
-            # Filter GPUs that meet the requirement + safety margin
-            safety_margin = 500
+            # Filter GPUs that meet the requirement
+            safety_margin = 100
             candidates = [g for g in all_gpus if g["free"] >= (needed_mb + safety_margin)]
 
             if candidates:
-                # Choose the one with the most free space
                 best = candidates[0]
-                # IMPORTANT: We need to return the index that TORCH sees.
+
+                # Match nvidia-smi info to PyTorch index by name and total memory signature
+                torch_idx = None
                 for i in range(torch.cuda.device_count()):
-                    if torch.cuda.get_device_name(i) == best["name"]:
-                        if time.time() - start_time > 2:
-                            logger.info(f"GPU Manager: Selected {best['name']} for {purpose} ({best['free']}MB free)")
-                        return f"cuda:{i}"
+                    props = torch.cuda.get_device_properties(i)
+                    if props.name == best["name"]:
+                        # Signature match: Name + Total Memory (within 500MB tolerance)
+                        if abs(props.total_memory / (1024 * 1024) - best["total"]) < 500:
+                            torch_idx = i
+                            break
+
+                if torch_idx is None:
+                    logger.warning(
+                        f"GPU Manager: Signature match failed for '{best['name']}'. Using SMI index {best['id']} as fallback."
+                    )
+                    torch_idx = best["id"]
+
+                status_str = ", ".join([f"GPU{g['id']} ({g['name']}, {g['free']}MB)" for g in all_gpus])
+                logger.info(
+                    f"GPU Manager: {purpose} needs {needed_mb}MB. Status: {status_str}. Selected PyTorch cuda:{torch_idx}"
+                )
+                return f"cuda:{torch_idx}"
 
             # No GPU fits
             elapsed = time.time() - start_time
+            best_free = all_gpus[0] if all_gpus else {"free": 0, "name": "None"}
             if elapsed > timeout:
                 logger.error(f"GPU Manager: Timeout waiting for {needed_mb}MB for {purpose}.")
                 # Return the one with most space anyway, or CPU
-                return "cuda:0" if torch.cuda.device_count() > 0 else "cpu"
+                return f"cuda:0" if torch.cuda.device_count() > 0 else "cpu"
 
             if int(elapsed) % 30 == 0:
                 logger.info(
-                    f"GPU Manager: Waiting for {needed_mb}MB VRAM for {purpose}... (Best free: {best['free']}MB on {best['name']})"
+                    f"GPU Manager: Waiting for {needed_mb}MB VRAM for {purpose}... (Best free: {best_free['free']}MB on {best_free['name']})"
                 )
                 GPUManager.force_gc()
 
