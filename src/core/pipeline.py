@@ -343,10 +343,6 @@ class DubbingPipeline:
         diar, trans, audio_durs = analysis_data[0], analysis_data[1], analysis_data[2]
         self.durations.update(audio_durs)
 
-        if not self.llm_manager.llm:
-            logger.info("Waiting for LLM to load...")
-            self.llm_manager.ready_event.wait()
-
         script = self._create_script(diar, trans)
         if self.debug_mode:
             with open(os.path.join(ddir, "script_initial.json"), "w") as f_dbg:
