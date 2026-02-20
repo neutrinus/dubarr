@@ -49,7 +49,7 @@ The system attempts to pre-load critical models (Whisper, Diarization, LLM, TTS)
 *   **Loop:** For each `target_lang` in request:
     1.  **Draft Translation:** LLM translates the script, respecting speaker style.
     2.  **Sync Loop:** (See Spec 002 for details).
-        -   TTS generates audio.
+        -   **TTS Microservice:** Sends generation requests to the internal TTS server (`localhost:5050`) to handle Coqui-TTS inference in an isolated environment.
         -   If audio duration > video duration, LLM shortens text.
         -   Repeats until synchronized.
     3.  **Mastering:** Applies EQ, compression, and panning based on speaker position (if detected).

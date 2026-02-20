@@ -33,8 +33,27 @@ Before implementing any code changes (features, refactors, or bug fixes that alt
 -   **AI/ML:** Whisper (ASR), Pyannote (Diarization), XTTS (TTS), Llama.cpp/OpenAI (LLM).
 -   **Deployment:** Docker Compose.
 
-## 5. Common Commands
+## 5. Local Development Caveats
+**Critical:** This project uses a **Dual-Environment Architecture** to support Coqui-TTS (which requires Python 3.10) alongside the main application (Python 3.12).
+-   **Docker:** Handles this automatically.
+-   **Local Run:** You CANNOT simply run `pip install .` and start the server. You must:
+    1.  Create a Python 3.12 venv for the main app.
+    2.  Create a separate Python 3.10 venv for TTS.
+    3.  Manually run `src/tts_server.py` in the TTS venv (port 5050).
+    4.  Run `src/api/server.py` in the main venv.
+
+## 6. Development Utilities
+-   **`src/verify_output.py`**: Manual script to verify audio integrity and transcription quality of generated segments using `faster-whisper`.
+-   **`src/main.py` (Standalone Mode)**: Can be run directly (`python src/main.py`) to process videos in the `videos/` folder without the API or Database worker. Useful for quick debugging.
+
+## 7. Common Commands
 -   **Run Tests:** `pytest`
 -   **Lint:** `ruff check .`
 -   **Format:** `ruff format .`
 -   **Run Server (Dev):** `uvicorn src.api.server:app --reload`
+
+## 8. Completion & Source Control
+Once a functionality or bug fix is implemented and successfully verified through tests and manual validation:
+1.  **Prepare Commits:** Group related changes into logical, concise commits. Follow the existing commit message style (e.g., `feat:`, `fix:`, `docs:`, `ux:`).
+2.  **Push Changes:** Push the committed changes to the remote repository (`main` or the current feature branch) to ensure the codebase remains up to date.
+3.  **Final Status:** Confirm that the push was successful and that the CI/CD pipeline (if applicable) is triggered.

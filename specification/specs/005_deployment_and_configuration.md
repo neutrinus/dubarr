@@ -4,8 +4,10 @@
 Dubarr is designed to run as a containerized application, primarily orchestrated via **Docker Compose**. This aligns with the "Arr" stack philosophy (Radarr, Sonarr, etc.) for easy deployment in home server environments.
 
 ### 1.1 Containerization
--   **Image:** The application is packaged as a Docker image containing all dependencies (Python, FFmpeg, system libraries).
--   **Base Image:** Uses a slim Python base image (e.g., `python:3.10-slim`) optimized for size and security.
+-   **Base Image:** Uses a slim Ubuntu-based NVIDIA CUDA image (`nvidia/cuda:13.1.1-devel-ubuntu24.04`) for hardware acceleration.
+-   **Dual-Environment Strategy:** The container hosts two distinct Python virtual environments to resolve dependency conflicts:
+    1.  `/app/.venv_app` (Python 3.12): Runs the main API, Whisper, Pyannote, and FFmpeg logic.
+    2.  `/app/.venv_tts` (Python 3.10): Runs the Coqui-TTS engine (XTTS v2) as an internal microservice on port 5050.
 -   **Volumes:**
     -   `/app/videos`: Mapped to the host's video storage (Input/Output).
     -   `/app/models`: Mapped to persist large ML models (Whisper, TTS) across restarts.
@@ -22,6 +24,8 @@ services:
     environment:
       - OPENAI_API_KEY=sk-...
       - HF_TOKEN=hf_...
+      # Optional: Set a specific GPU for TTS if needed
+      - GPU_TTS=0
     volumes:
       - /path/to/media:/app/videos
       - /path/to/models:/app/models
@@ -51,6 +55,7 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `WHISPER_MODEL` | Whisper model size (`tiny`, `base`, `small`, `medium`, `large-v3`). | `medium` |
 | `DEVICE` | Computation device (`cuda`, `cpu`, `mps`). Auto-detected if unset. | `cuda` |
 | `MOCK_MODE` | If `true`, bypasses ML models and returns dummy data. For testing/dev. | `false` |
+| `GPU_TTS` | Specific GPU ID (integer) for the TTS microservice. | `0` |
 
 ### 2.3 GPU Resource Management
 The system includes a **Dynamic GPU Manager** that orchestrates VRAM usage to prevent Out-Of-Memory (OOM) errors, especially on consumer hardware.
@@ -65,3 +70,8 @@ The system includes a **Dynamic GPU Manager** that orchestrates VRAM usage to pr
 -   **GPU:** Strongly recommended (NVIDIA CUDA) for reasonable processing times (Whisper + TTS).
 -   **CPU-only:** Supported but significantly slower (not recommended for production).
 -   **RAM:** Minimum 8GB (16GB recommended for larger Whisper models).
+
+## 4. Local Development Notes
+Running Dubarr locally (outside Docker) requires creating two separate virtual environments:
+1.  **Main Env (Py3.12):** `uv sync` from `pyproject.toml`.
+2.  **TTS Env (Py3.10):** Must be created manually to install `coqui-tts`. Run `src/tts_server.py` inside this environment on port 5050 before starting the main app.

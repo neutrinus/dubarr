@@ -31,28 +31,38 @@ The system is designed as a **Modular Monolith** with a clear separation between
 - **Key Components:**
     - `database.py`: SQLite adapter for task management and step caching.
     - `ffmpeg.py`: Wrapper for FFmpeg operations (media processing).
-    - `monitor.py`: Resource usage monitoring.
-
-## 3. Data Flow
-
-1.  **Ingestion:** User uploads a video or sends a webhook. A `Task` is created in the SQLite database with status `QUEUED`.
-2.  **Processing:** The `JobWorker` picks up the task and initializes `DubbingPipeline`.
-3.  **Pipeline Stages:**
-    -   **Stage 1: Separation:** Vocals are isolated from background music/noise.
-    -   **Stage 2: Analysis:** Whisper transcribes audio; Diarization identifies speakers.
-    -   **Stage 3: Context:** LLM analyzes the script for context and speaker traits.
-    -   **Stage 4: Refinement:** Voice references are extracted and validated (ZCR check).
-    -   **Stage 5: Production:**
-        -   Text is translated draft-style.
-        -   **Sync Loop:** Audio is generated. If duration mismatches, LLM rewrites text to fit constraints.
-    -   **Stage 6: Mixing:** New vocals are mixed with original background audio.
-    -   **Stage 7: Muxing:** Final audio is merged into the video container.
-4.  **Completion:** The task status is updated to `DONE`.
-
-## 4. Key Technical Decisions
-
--   **Step Caching:** The pipeline checks `job_steps` in the DB before running a stage. If a result exists, it's skipped. This allows resuming failed jobs without re-processing expensive steps.
--   **FFmpeg Direct Usage:** We use `subprocess` to call FFmpeg directly for complex filter chains (e.g., side-chain ducking, speed adjustment).
+        -   `monitor.py`: Resource usage monitoring.
+    
+    ### 2.4. Internal Microservices
+    -   **TTS Server (`src/tts_server.py`):**
+        -   **Responsibility:** Hosts the Coqui-TTS (XTTS v2) engine.
+        -   **Architecture:** Runs as a separate Flask process on `localhost:5050` within a dedicated Python 3.10 virtual environment (`.venv_tts`).
+        -   **Reason:** Isolation of conflicting dependencies (Python 3.10 vs 3.12, CUDA versions) required by Coqui-TTS.
+        -   **Lifecycle:** The main application (`src/infrastructure/tts_client.py`) manages the startup and shutdown of this subprocess.
+    
+    ## 3. Data Flow
+    
+    1.  **Ingestion:** User uploads a video or sends a webhook. A `Task` is created in the SQLite database with status `QUEUED`.
+    2.  **Processing:** The `JobWorker` picks up the task and initializes `DubbingPipeline`.
+    3.  **Pipeline Stages:**
+        -   **Stage 1: Separation:** Vocals are isolated from background music/noise.
+        -   **Stage 2: Analysis:** Whisper transcribes audio; Diarization identifies speakers.
+        -   **Stage 3: Context:** LLM analyzes the script for context and speaker traits.
+        -   **Stage 4: Refinement:** Voice references are extracted and validated (ZCR check).
+        -   **Stage 5: Production:**
+            -   Text is translated draft-style.
+            -   **Sync Loop:** Audio is generated via HTTP calls to the internal TTS Server. If duration mismatches, LLM rewrites text to fit constraints.
+        -   **Stage 6: Mixing:** New vocals are mixed with original background audio.
+        -   **Stage 7: Muxing:** Final audio is merged into the video container.
+    4.  **Completion:** The task status is updated to `DONE`.
+    
+    ## 4. Key Technical Decisions
+    
+    -   **Dual-Python Environments:** The Docker container utilizes two distinct virtual environments:
+        -   `.venv_app` (Python 3.12): Main application, API, Whisper, Pyannote.
+        -   `.venv_tts` (Python 3.10): Dedicated environment for Coqui-TTS to resolve dependency conflicts.
+    -   **Step Caching:** The pipeline checks `job_steps` in the DB before running a stage. If a result exists, it's skipped. This allows resuming failed jobs without re-processing expensive steps.
+    -   **FFmpeg Direct Usage:** We use `subprocess` to call FFmpeg directly for complex filter chains (e.g., side-chain ducking, speed adjustment).
 -   **Synchronous & Asynchronous Mix:** The web server is async (FastAPI), but the pipeline runs in a separate thread/process (Worker) due to heavy CPU/GPU blocking operations.
 -   **Local Database:** SQLite is used for simplicity and portability. It stores both task metadata and JSON blobs of intermediate results.
 
