@@ -15,14 +15,14 @@ class SegmentSynchronizer:
         self.debug_mode = debug_mode
 
     def process_segment(
-        self, segment: Dict, lang: str, vocals_path: str, full_script: List[Dict], global_context: Dict, attempt_limit: int = 3
+        self, segment: Dict, lang: str, vocals_path: str, full_script: List[Dict], global_context: Dict, attempt_limit: int = 5
     ) -> Optional[Dict]:
         """
         Orchestrates the feedback loop for a single segment.
         Returns the final accepted audio path and text.
+        New Strategy: Strictly <= target duration, 5 attempts.
         """
         original_text = segment.get("text_en", "")
-        # If 'text' exists (from draft), use it. Otherwise use original.
         current_text = segment.get("text", original_text)
         target_dur = segment["end"] - segment["start"]
         speaker = segment["speaker"]
@@ -33,7 +33,6 @@ class SegmentSynchronizer:
         for attempt in range(1, attempt_limit + 1):
             logger.info(f"[ID: {idx}] Refinement Attempt {attempt}/{attempt_limit} (Target: {target_dur:.2f}s)")
 
-            # 1. Synthesize
             tts_item = {
                 "index": idx,
                 "text": current_text,
@@ -42,10 +41,6 @@ class SegmentSynchronizer:
                 "end": segment["end"],
             }
 
-            # Use unique path for each attempt to avoid overwriting race conditions or locks
-            # The TTS Manager handles temp paths internally, but returns the path.
-            # We might want to copy it to a safe place if we iterate.
-
             result = self.tts.synthesize_sync(tts_item, lang, vocals_path, full_script)
             if not result:
                 logger.warning(f"[ID: {idx}] Synthesis failed on attempt {attempt}.")
@@ -53,26 +48,18 @@ class SegmentSynchronizer:
 
             raw_audio_path = result["audio_path"]
 
-            # Verify duration physically
             try:
                 actual_dur = FFmpegWrapper.get_duration(raw_audio_path)
             except Exception:
-                actual_dur = result["duration"]  # Fallback to TTS reported duration
+                actual_dur = result["duration"]
 
-            # 2. Measure & Decide
             delta = actual_dur - target_dur
-            abs_delta = abs(delta)
+            
+            # Acceptance Criteria: Strictly not longer than original
+            # We allow a very tiny margin (0.05s) for technical jitter
+            is_acceptable = actual_dur <= (target_dur + 0.05)
 
-            # Acceptance Criteria:
-            # - Perfect: < 0.5s diff (human reaction time)
-            # - Good enough: < 15% diff (stretchable)
-            # - Short segments (<2s): Strict 0.3s
-            if target_dur < 2.0:
-                is_acceptable = abs_delta < 0.4
-            else:
-                is_acceptable = abs_delta < 0.6 or (abs_delta / target_dur < 0.15)
-
-            # Save attempt (move file to safe attempt path)
+            # Save attempt
             attempt_path = os.path.join(self.temp_dir, f"attempt_{idx}_{attempt}.wav")
             shutil.copy(raw_audio_path, attempt_path)
 
@@ -82,13 +69,11 @@ class SegmentSynchronizer:
                     "text": current_text,
                     "duration": actual_dur,
                     "delta": delta,
-                    "score": abs_delta,  # Lower is better
                 }
             )
 
             if is_acceptable:
-                logger.info(f"[ID: {idx}] ACCEPTED (Delta: {delta:+.2f}s)")
-                # Clean up other attempts immediately
+                logger.info(f"[ID: {idx}] ACCEPTED (Duration: {actual_dur:.2f}s, Target: {target_dur:.2f}s)")
                 if not self.debug_mode:
                     for a in attempts:
                         if a["audio_path"] != attempt_path and os.path.exists(a["audio_path"]):
@@ -97,7 +82,7 @@ class SegmentSynchronizer:
 
             # 3. Refine (if not last attempt)
             if attempt < attempt_limit:
-                logger.info(f"[ID: {idx}] REJECTED (Delta: {delta:+.2f}s). Refining text...")
+                logger.info(f"[ID: {idx}] REJECTED (Too long: {actual_dur:.2f}s > {target_dur:.2f}s). Refining text...")
                 new_text = self.llm.refine_translation_by_duration(
                     original_text=original_text,
                     current_text=current_text,
@@ -112,14 +97,25 @@ class SegmentSynchronizer:
 
                 current_text = new_text
 
-        # 4. Fallback: Pick best attempt
+        # 4. Final Selection: Closest to target BUT NOT LONGER
         if not attempts:
             logger.error(f"[ID: {idx}] All synthesis attempts failed.")
             return None
 
-        best_attempt = min(attempts, key=lambda x: x["score"])
+        # Filter attempts that are within time limit
+        valid_attempts = [a for a in attempts if a["duration"] <= (target_dur + 0.1)]
+        
+        if valid_attempts:
+            # Pick the longest one that fits (closest to original duration)
+            best_attempt = max(valid_attempts, key=lambda x: x["duration"])
+            status = "VALID_FALLBACK"
+        else:
+            # If all failed to fit, pick the shortest one available
+            best_attempt = min(attempts, key=lambda x: x["duration"])
+            status = "FORCED_SHORT_FALLBACK"
+
         logger.warning(
-            f"[ID: {idx}] FALLBACK to best attempt {attempts.index(best_attempt) + 1} (Delta: {best_attempt['delta']:+.2f}s)"
+            f"[ID: {idx}] {status}: Selection duration {best_attempt['duration']:.2f}s vs Target {target_dur:.2f}s"
         )
 
         # Clean up other attempts
@@ -132,5 +128,6 @@ class SegmentSynchronizer:
             "audio_path": best_attempt["audio_path"],
             "final_text": best_attempt["text"],
             "duration": best_attempt["duration"],
-            "status": "FALLBACK",
+            "status": status,
         }
+

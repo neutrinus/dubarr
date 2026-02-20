@@ -134,7 +134,32 @@ class TTSManager:
                 return None
 
             t0 = time.perf_counter()
-            self._run_synthesis(clean_text, chosen_ref, raw_path, language=lang)
+            try:
+                self._run_synthesis(clean_text, chosen_ref, raw_path, language=lang)
+            except ValueError as ve:
+                if "XTTS Tensor Error" in str(ve):
+                    logging.warning(f"TTS: [ID: {idx}] Tensor Error with ref {chosen_ref}. Trying global fallback...")
+                    # Try with first available golden ref that is NOT the current one (if possible)
+                    fallback_ref = None
+                    for p in self.speaker_refs.values():
+                        if os.path.exists(p) and p != chosen_ref:
+                            fallback_ref = p
+                            break
+                    
+                    if not fallback_ref:
+                        for p in self.last_good_samples.values():
+                            if os.path.exists(p) and p != chosen_ref:
+                                fallback_ref = p
+                                break
+                    
+                    if fallback_ref:
+                        self._run_synthesis(clean_text, fallback_ref, raw_path, language=lang)
+                        voice_type = "TENSOR_FALLBACK"
+                    else:
+                        raise ve # Re-raise if no other fallback
+                else:
+                    raise ve
+
             dt = time.perf_counter() - t0
 
             # 4. Verify Output
@@ -193,6 +218,20 @@ class TTSManager:
                 os.remove(dyn_path)
             return golden_ref, "GOLDEN"
 
+        # Fallback 3: Global Fallback (Any Golden or Last Good)
+        # If we reach here, we have no specific reference for this speaker.
+        # We pick the first available one from Golden refs, then Last Good.
+        all_goldens = [p for p in self.speaker_refs.values() if os.path.exists(p)]
+        if all_goldens:
+            logging.info(f"TTS: [ID: {idx}] Using Global Golden fallback for speaker {spk}")
+            return all_goldens[0], "FALLBACK_GOLDEN"
+        
+        all_last_goods = [p for p in self.last_good_samples.values() if os.path.exists(p)]
+        if all_last_goods:
+            logging.info(f"TTS: [ID: {idx}] Using Global LastGood fallback for speaker {spk}")
+            return all_last_goods[0], "FALLBACK_LASTGOOD"
+
         if os.path.exists(dyn_path):
             os.remove(dyn_path)
         return None, "UNKNOWN"
+

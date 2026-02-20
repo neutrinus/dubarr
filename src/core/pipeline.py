@@ -396,8 +396,8 @@ class DubbingPipeline:
             res = []
             t_start_sync = time.perf_counter()
 
-            # Use max_workers=3 to balance GPU usage (TTS) and CPU usage (FFmpeg/LLM)
-            with ThreadPoolExecutor(max_workers=3) as executor:
+            # Use max_workers=1 for TTS to prevent CUDA race conditions and seryalize requests
+            with ThreadPoolExecutor(max_workers=1) as executor:
                 futures = {
                     executor.submit(self.synchronizer.process_segment, seg, lang, vocals, script, self.global_context): seg[
                         "index"
