@@ -70,7 +70,7 @@ services:
     image: ghcr.io/neutrinus/dubarr:main
     container_name: dubarr
     ports:
-      - 8080:8080
+      - 8000:8000
     environment:
       - PUID=1000
       - PGID=1000
@@ -97,7 +97,7 @@ services:
 
 **Manual Trigger (cURL):**
 ```bash
-curl -u dubarr:dubarr -X POST http://localhost:8080/webhook \
+curl -u dubarr:dubarr -X POST http://localhost:8000/webhook \
   -H "Content-Type: application/json" \
   -d '{"path": "/movies/Diuna/Dune.mkv"}'
 ```
@@ -123,7 +123,7 @@ The system processes each video through 7 major stages:
 ---
 
 ## 📊 Monitoring & Debugging
-*   **Web Dashboard**: Access the management interface at `http://localhost:8080/` to view the task queue, monitor video metadata (size, duration, languages), and track live processing progress with real-time timers.
+*   **Web Dashboard**: Access the management interface at `http://localhost:8000/` to view the task queue, monitor video metadata (size, duration, languages), and track live processing progress with real-time timers.
 *   **Live Logs**: Integrated WebSocket-based log viewer in the dashboard.
 *   **Artifacts**: With `DEBUG=1`, individual audio segments and LLM translations are saved alongside the video for quality auditing.
 
