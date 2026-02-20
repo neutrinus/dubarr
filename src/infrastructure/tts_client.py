@@ -63,7 +63,7 @@ class XTTSClient:
         self.server_process = subprocess.Popen([python_path, server_path], env=env, preexec_fn=os.setsid)
 
         # Wait for server to be ready
-        max_retries = 120
+        max_retries = 300
         for i in range(max_retries):
             try:
                 res = requests.get(f"{self.server_url}/health", timeout=1)

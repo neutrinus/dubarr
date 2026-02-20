@@ -29,13 +29,21 @@ class FFmpegWrapper:
     def extract_audio(input_path: str, output_path: str, channels: int = 2):
         """Extracts audio from video to a WAV file."""
         cmd = ["ffmpeg", "-i", input_path, "-vn", "-ac", str(channels), "-y", output_path]
-        subprocess.run(cmd, capture_output=True, check=True)
+        try:
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg extract_audio failed: {e.stderr}")
+            raise e
 
     @staticmethod
     def convert_audio(input_path: str, output_path: str, ac: int = 1, ar: int = 24000):
         """Converts audio format (e.g., for TTS or Diarization)."""
         cmd = ["ffmpeg", "-i", input_path, "-ac", str(ac), "-ar", str(ar), output_path, "-y"]
-        subprocess.run(cmd, capture_output=True, check=True)
+        try:
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg convert_audio failed: {e.stderr}")
+            raise e
 
     @staticmethod
     def get_duration(path: str) -> float:

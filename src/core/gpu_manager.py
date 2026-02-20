@@ -66,15 +66,18 @@ class GPUManager:
             # Sort GPUs by free memory descending
             all_gpus.sort(key=lambda x: x["free"], reverse=True)
             
-            best = all_gpus[0]
-            if best["free"] >= needed_mb:
+            # Filter GPUs that meet the requirement + safety margin
+            safety_margin = 500
+            candidates = [g for g in all_gpus if g["free"] >= (needed_mb + safety_margin)]
+            
+            if candidates:
+                # Choose the one with the most free space
+                best = candidates[0]
                 # IMPORTANT: We need to return the index that TORCH sees.
-                # Usually it matches nvidia-smi, but let's be safe.
-                # We will find the torch index by matching the name.
                 for i in range(torch.cuda.device_count()):
                     if torch.cuda.get_device_name(i) == best["name"]:
                         if time.time() - start_time > 2:
-                            logger.info(f"GPU Manager: Found suitable GPU for {purpose}: {best['name']} (Free: {best['free']}MB)")
+                            logger.info(f"GPU Manager: Selected {best['name']} for {purpose} ({best['free']}MB free)")
                         return f"cuda:{i}"
 
             # No GPU fits

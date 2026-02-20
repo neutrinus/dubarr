@@ -21,7 +21,7 @@ DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 VIDEO_FOLDER = os.path.join(BASE_DIR, "videos")
 OUTPUT_FOLDER = os.path.join(DATA_DIR, "logs")
 DB_PATH = os.path.join(DATA_DIR, "queue.db")
-TEMP_DIR = "/tmp/dubber"
+TEMP_DIR = os.path.join(DATA_DIR, "temp")
 MODEL_PATH = os.path.join(DATA_DIR, "models", "google_gemma-3-12b-it-Q4_K_M.gguf")
 
 print(f"DEBUG: config.BASE_DIR={BASE_DIR}", flush=True)
