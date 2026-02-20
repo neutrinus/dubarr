@@ -70,10 +70,12 @@ class Database:
     def add_task(self, path: str, meta: Dict):
         with self._get_connection() as conn:
             c = conn.cursor()
-            c.execute("SELECT status FROM tasks WHERE path = ?", (path,))
+            c.execute("SELECT id, status FROM tasks WHERE path = ?", (path,))
             row = c.fetchone()
             if row:
                 if row["status"] not in ["QUEUED", "PROCESSING"]:
+                    # Clear cache for this task to ensure clean re-run
+                    c.execute("DELETE FROM job_steps WHERE task_id = ?", (row["id"],))
                     c.execute(
                         """
                         UPDATE tasks SET
