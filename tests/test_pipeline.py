@@ -7,8 +7,15 @@ class TestDubbingPipeline(unittest.TestCase):
     def setUp(self):
         self.mock_llm = MagicMock()
         self.mock_tts = MagicMock()
+        self.mock_diar = MagicMock()
+        self.mock_whisper = MagicMock()
         self.pipeline = DubbingPipeline(
-            llm_manager=self.mock_llm, tts_manager=self.mock_tts, target_langs=["pl"], debug_mode=False
+            llm_manager=self.mock_llm,
+            tts_manager=self.mock_tts,
+            diar_manager=self.mock_diar,
+            whisper_manager=self.mock_whisper,
+            target_langs=["pl"],
+            debug_mode=False,
         )
 
     @patch("core.pipeline.prep_audio")

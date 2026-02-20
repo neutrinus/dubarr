@@ -14,6 +14,8 @@ from config import (
 )
 from core.llm_engine import LLMManager
 from core.tts_manager import TTSManager
+from core.whisper_engine import WhisperManager
+from core.diarization_engine import DiarizationManager
 from core.pipeline import DubbingPipeline
 
 setup_logging()
@@ -43,6 +45,16 @@ class AIDubber:
             abort_event=self.abort_event,
         )
 
+        self.whisper_manager = WhisperManager(
+            device=DEVICE_AUDIO,
+            inference_lock=self.inference_lock,
+        )
+
+        self.diar_manager = DiarizationManager(
+            device=DEVICE_AUDIO,
+            inference_lock=self.inference_lock,
+        )
+
         # Golden speaker refs shared across languages
         self.speaker_refs = {}
         self.tts_manager = TTSManager(
@@ -61,6 +73,8 @@ class AIDubber:
         pipeline = DubbingPipeline(
             llm_manager=self.llm_manager,
             tts_manager=self.tts_manager,
+            diar_manager=self.diar_manager,
+            whisper_manager=self.whisper_manager,
             target_langs=self.target_langs,
             db=Database(DB_PATH),
             debug_mode=self.debug_mode,

@@ -24,6 +24,8 @@ class DubbingPipeline:
         self,
         llm_manager,
         tts_manager,
+        diar_manager,
+        whisper_manager,
         target_langs: List[str],
         db=None,
         output_folder: str = VIDEO_FOLDER,
@@ -32,6 +34,8 @@ class DubbingPipeline:
     ):
         self.llm_manager = llm_manager
         self.tts_manager = tts_manager
+        self.diar_manager = diar_manager
+        self.whisper_manager = whisper_manager
         self.target_langs = target_langs
         self.db = db
         self.output_folder = output_folder
@@ -316,7 +320,7 @@ class DubbingPipeline:
             return res
 
         a_stereo, vocals = run_step("Stage 1: Audio Separation", prep_audio, vpath)
-        analysis_data = run_step("Stage 2: Audio Analysis", analyze_audio, vocals)
+        analysis_data = run_step("Stage 2: Audio Analysis", analyze_audio, vocals, self.diar_manager, self.whisper_manager)
         diar, trans, audio_durs = analysis_data[0], analysis_data[1], analysis_data[2]
         self.durations.update(audio_durs)
 

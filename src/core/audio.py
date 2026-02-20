@@ -1,11 +1,10 @@
 import os
 import glob
 import logging
-import gc
 import shutil
 import time
 from typing import List, Dict, Tuple
-from config import DEVICE_AUDIO, TEMP_DIR, WHISPER_MODEL, MOCK_MODE
+from config import DEVICE_AUDIO, TEMP_DIR, MOCK_MODE
 from infrastructure.ffmpeg import FFmpegWrapper
 
 logger = logging.getLogger(__name__)
@@ -50,77 +49,20 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
     return a_stereo, found[0]
 
 
-def run_diarization(mpath: str) -> List[Dict]:
-    if MOCK_MODE:
-        return [{"start": 0.0, "end": 5.0, "speaker": "SPEAKER_00"}]
-
-    if not torch:
-        raise ImportError("Torch is required for diarization but not installed.")
-
-    from pyannote.audio import Pipeline
-
-    p = Pipeline.from_pretrained("pyannote/speaker-diarization-community-1", token=os.environ.get("HF_TOKEN"))
-    p.to(torch.device(DEVICE_AUDIO))
-    res = p(mpath)
-    annotation = getattr(res, "speaker_diarization", getattr(res, "diarization", getattr(res, "annotation", res)))
-    diar_result = [
-        {"start": s.start, "end": s.end, "speaker": label} for s, _, label in annotation.itertracks(yield_label=True)
-    ]
-    del p
-    gc.collect()
-    if "cuda" in DEVICE_AUDIO:
-        torch.cuda.empty_cache()
-    return diar_result
-
-
-def run_transcription(mpath: str) -> List[Dict]:
-    if MOCK_MODE:
-        return [{"start": 0.0, "end": 5.0, "text": "Mock transcription", "avg_logprob": -0.1, "no_speech_prob": 0.01}]
-
-    if not torch:
-        # Faster-whisper might work without torch on CPU if using int8, but usually it needs ctranslate2/torch
-        pass
-
-    from faster_whisper import WhisperModel
-
-    device = "cuda" if "cuda" in DEVICE_AUDIO else "cpu"
-    device_index = int(DEVICE_AUDIO.split(":")[-1]) if "cuda" in DEVICE_AUDIO else 0
-    m = WhisperModel(
-        WHISPER_MODEL, device=device, device_index=device_index, compute_type="float16" if device == "cuda" else "int8"
-    )
-    ts, _ = m.transcribe(mpath)
-    res = [
-        {
-            "start": x.start,
-            "end": x.end,
-            "text": x.text.strip(),
-            "avg_logprob": x.avg_logprob,
-            "no_speech_prob": x.no_speech_prob,
-        }
-        for x in ts
-        if x.avg_logprob >= -1.0
-    ]
-    del m
-    gc.collect()
-    if torch and "cuda" in DEVICE_AUDIO:
-        torch.cuda.empty_cache()
-    return res
-
-
-def analyze_audio(vocals_path: str) -> Tuple[List, List, Dict]:
-    """Orchestrates diarization and transcription."""
+def analyze_audio(vocals_path: str, diar_manager, whisper_manager) -> Tuple[List, List, Dict]:
+    """Orchestrates diarization and transcription using provided managers."""
     mpath = os.path.join(TEMP_DIR, "mono.wav")
     FFmpegWrapper.convert_audio(vocals_path, mpath, ac=1, ar=24000)
 
     durations = {}
-    logger.info(f"Starting Sequential Audio Analysis on {DEVICE_AUDIO}...")
+    logger.info("Starting Audio Analysis...")
 
     t0 = time.perf_counter()
-    diar_result = run_diarization(mpath)
+    diar_result = diar_manager.diarize(mpath)
     durations["2a. Diarization"] = time.perf_counter() - t0
 
     t0 = time.perf_counter()
-    trans_result = run_transcription(mpath)
+    trans_result = whisper_manager.transcribe(mpath)
     durations["2b. Transcription"] = time.perf_counter() - t0
 
     return diar_result, trans_result, durations

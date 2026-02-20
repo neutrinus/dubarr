@@ -71,11 +71,15 @@ async def lifespan(app: FastAPI):
         logger.info("Lifespan: Starting background model pre-loading...")
         threading.Thread(target=dubber_base.llm_manager.load_model, daemon=True).start()
         threading.Thread(target=dubber_base.tts_manager.load_engine, daemon=True).start()
+        threading.Thread(target=dubber_base.whisper_manager.load_model, daemon=True).start()
+        threading.Thread(target=dubber_base.diar_manager.load_model, daemon=True).start()
 
         def pipeline_factory():
             return DubbingPipeline(
                 llm_manager=dubber_base.llm_manager,
                 tts_manager=dubber_base.tts_manager,
+                diar_manager=dubber_base.diar_manager,
+                whisper_manager=dubber_base.whisper_manager,
                 target_langs=dubber_base.target_langs,
                 db=db,
                 debug_mode=dubber_base.debug_mode,
@@ -104,10 +108,17 @@ async def health():
         logger.error(f"Health check: DB error: {e}")
         stats = {"error": str(e)}
 
+    # Aggregated status
     return {
         "status": "online",
         "worker_alive": worker_task is not None and worker_task.is_alive(),
         "queue_stats": stats,
+        "engine_statuses": {
+            "llm": dubber_base.llm_manager.status if dubber_base else "N/A",
+            "tts": dubber_base.tts_manager.status if dubber_base else "N/A",
+            "whisper": dubber_base.whisper_manager.status if dubber_base else "N/A",
+            "diarization": dubber_base.diar_manager.status if dubber_base else "N/A",
+        },
     }
 
 
@@ -120,13 +131,17 @@ async def dashboard(request: Request):
     # Determine global system status
     sys_status = "Online"
     if dubber_base:
-        ls = dubber_base.llm_manager.status
-        ts = dubber_base.tts_manager.status
-        if ls == "DOWNLOADING" or ts == "DOWNLOADING":
+        st = [
+            dubber_base.llm_manager.status,
+            dubber_base.tts_manager.status,
+            dubber_base.whisper_manager.status,
+            dubber_base.diar_manager.status,
+        ]
+        if "DOWNLOADING" in st:
             sys_status = "Downloading Models"
-        elif ls == "LOADING" or ts == "LOADING":
+        elif "LOADING" in st:
             sys_status = "Loading Engines"
-        elif ls == "ERROR" or ts == "ERROR":
+        elif "ERROR" in st:
             sys_status = "Engine Error"
 
     return templates.TemplateResponse(
