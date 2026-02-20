@@ -31,7 +31,7 @@ def run_smoke_test():
 
     # 2. Wait for server to be ready
     print("Waiting for server to be ready...")
-    for i in range(30):
+    for i in range(60):
         try:
             res = requests.get(f"{base_url}/health", timeout=2)
             if res.status_code == 200:

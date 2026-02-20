@@ -118,10 +118,22 @@ jobs:
             -e PGID=$(id -g) \
             -v /tmp:/tmp \
             -p 8080:8080 \
+            --health-cmd "curl -f http://localhost:8080/health || exit 1" \
+            --health-interval 5s \
+            --health-timeout 2s \
+            --health-retries 20 \
             dubarr:test
       - name: Wait for Container and Debug Info
         run: |
-          sleep 5
+          # Wait for healthy status
+          for i in {1..20}; do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' dubarr-test)
+            echo "Container status: $STATUS"
+            if [ "$STATUS" == "healthy" ]; then
+              break
+            fi
+            sleep 5
+          done
           docker ps -a
           docker logs dubarr-test
       - name: Install dependencies
