@@ -3,7 +3,7 @@ import gc
 import os
 import threading
 from typing import List, Dict, Optional
-from config import MOCK_MODE, DEVICE_AUDIO_ID
+from config import MOCK_MODE
 from core.gpu_manager import GPUManager
 
 try:
@@ -20,10 +20,9 @@ except ImportError:
 class DiarizationManager:
     def __init__(
         self,
-        device: str,
         inference_lock: Optional[threading.Lock],
     ):
-        self.device = device
+        self.device = "cpu"
         self.inference_lock = inference_lock
         self.pipeline = None
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
@@ -51,11 +50,11 @@ class DiarizationManager:
             return
 
         try:
+            # Dynamic GPU allocation
+            # Pyannote needs approx 2GB
+            self.device = GPUManager.get_best_gpu(needed_mb=2000, purpose="Diarization")
+
             logging.info(f"Diarization: Loading pipeline on {self.device}...")
-
-            # Wait for ~2GB VRAM
-            GPUManager.wait_for_vram(2000, DEVICE_AUDIO_ID, purpose="Diarization")
-
             self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-community-1", token=hf_token)
             if torch and "cuda" in self.device:
                 self.pipeline.to(torch.device(self.device))

@@ -8,7 +8,7 @@ import subprocess
 from typing import List, Dict, Optional
 from infrastructure.tts_client import XTTSWrapper
 from utils import measure_zcr, count_syllables
-from config import MOCK_MODE, DEVICE_AUDIO_ID
+from config import MOCK_MODE
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
 
@@ -21,13 +21,12 @@ except ImportError:
 class TTSManager:
     def __init__(
         self,
-        device: str,
         inference_lock: Optional[threading.Lock],
         temp_dir: str,
         speaker_refs: Dict,
         abort_event: threading.Event,
     ):
-        self.device = device
+        self.device = "cpu"
         self.inference_lock = inference_lock
         self.temp_dir = temp_dir
         self.speaker_refs = speaker_refs  # Golden samples
@@ -53,16 +52,17 @@ class TTSManager:
 
             self.status = "LOADING"
             try:
-                # XTTSWrapper expects an int gpu_id or runs on CPU if not found/configured
+                # Dynamic GPU allocation
+                # XTTS v2 needs approx 4GB
+                self.device = GPUManager.get_best_gpu(needed_mb=4000, purpose="XTTS")
+
                 gpu_id = 0
                 if "cuda" in self.device:
                     gpu_id = int(self.device.split(":")[-1])
 
-                # Wait for ~4GB VRAM for XTTS
-                GPUManager.wait_for_vram(4000, DEVICE_AUDIO_ID, purpose="XTTS")
-
                 self.engine = XTTSWrapper(gpu_id=gpu_id)
                 self.status = "READY"
+
             except Exception as e:
                 logging.error(f"TTS: Load Failed: {e}")
                 self.status = "ERROR"

@@ -8,6 +8,7 @@ from typing import List, Dict, Optional
 from utils import parse_json, clean_output
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_TRANS, T_REFINE_DURATION
 from config import LANG_MAP, MOCK_MODE
+from core.gpu_manager import GPUManager
 
 try:
     import torch
@@ -28,14 +29,13 @@ class LLMManager:
     def __init__(
         self,
         model_path: str,
-        device: str,
         inference_lock: Optional[threading.Lock],
         debug_mode: bool = False,
         target_langs: List[str] = None,
         abort_event: Optional[threading.Event] = None,
     ):
         self.model_path = model_path
-        self.device = device
+        self.device = "cpu" # Default
         self.inference_lock = inference_lock
         self.debug_mode = debug_mode
         self.target_langs = target_langs or ["pl"]
@@ -61,6 +61,10 @@ class LLMManager:
             raise RuntimeError("llama-cpp-python import failed. Check logs for details (missing libcuda?).")
 
         try:
+            # Dynamic GPU allocation
+            # Gemma 12B Q4 needs approx 9GB total (weights + context + overhead)
+            self.device = GPUManager.get_best_gpu(needed_mb=9000, purpose="LLM (Gemma)")
+
             if not os.path.exists(self.model_path):
                 logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
                 self.status = "DOWNLOADING"
@@ -96,7 +100,7 @@ class LLMManager:
                 model_path=self.model_path,
                 n_gpu_layers=n_gpu_layers,
                 main_gpu=main_gpu,
-                n_ctx=8192,
+                n_ctx=4096,
                 n_batch=512,
                 n_threads=4,
                 flash_attn=(n_gpu_layers > 0),  # Flash Attn only works with CUDA

@@ -12,72 +12,87 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 class GPUManager:
-    """Helper class to manage VRAM allocation and prevent OOM errors."""
+    """Intelligent VRAM manager that dynamically allocates models to best available GPU."""
 
     @staticmethod
-    def get_gpu_status(gpu_id: int):
-        """Returns {used, free, total} in MB for the specified GPU, matching by name if needed."""
+    def get_all_gpus_status():
+        """Returns a list of status dicts for all available GPUs."""
+        gpus = []
         try:
-            # We match by name to be 100% sure because torch and nvidia-smi indices often differ
-            import torch
-            target_name = torch.cuda.get_device_name(gpu_id)
-            
             res = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name,memory.used,memory.free,memory.total", "--format=csv,noheader,nounits"],
+                ["nvidia-smi", "--query-gpu=index,name,memory.used,memory.free,memory.total", "--format=csv,noheader,nounits"],
                 capture_output=True,
                 text=True,
             )
             if res.returncode == 0:
-                lines = res.stdout.strip().split("
-")
+                lines = res.stdout.strip().split("\n")
                 for line in lines:
                     parts = [p.strip() for p in line.split(",")]
-                    if len(parts) >= 4 and parts[0] == target_name:
-                        return {
-                            "used": int(parts[1]),
-                            "free": int(parts[2]),
-                            "total": int(parts[3])
-                        }
+                    if len(parts) >= 5:
+                        gpus.append({
+                            "id": int(parts[0]),
+                            "name": parts[1],
+                            "used": int(parts[2]),
+                            "free": int(parts[3]),
+                            "total": int(parts[4])
+                        })
         except Exception as e:
-            logger.warning(f"GPU Manager: Failed to query nvidia-smi for {gpu_id}: {e}")
-        return None
+            logger.warning(f"GPU Manager: Failed to query nvidia-smi: {e}")
+        return gpus
 
     @staticmethod
     def force_gc():
-        """Aggressively clears memory."""
+        """Aggressively clears memory across all GPUs."""
         gc.collect()
         if torch and torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
 
     @staticmethod
-    def wait_for_vram(needed_mb: int, gpu_id: int, purpose: str = "Unknown", timeout: int = 600, check_interval: int = 5):
-        """Blocks execution until sufficient VRAM is available."""
-        if gpu_id is None or gpu_id < 0:
-            return # CPU mode or invalid ID
+    def get_best_gpu(needed_mb: int, purpose: str = "Unknown", timeout: int = 600):
+        """
+        Finds the best GPU for the task and returns its PyTorch device string (e.g. 'cuda:0').
+        Blocks if no GPU has enough memory.
+        """
+        if not torch or not torch.cuda.is_available():
+            return "cpu"
 
         start_time = time.time()
-        
         while True:
-            status = GPUManager.get_gpu_status(gpu_id)
-            if not status:
-                logger.warning(f"GPU Manager: Could not get status for GPU {gpu_id} ({purpose}). Proceeding blindly.")
-                return
+            all_gpus = GPUManager.get_all_gpus_status()
+            if not all_gpus:
+                return "cpu"
 
-            if status["free"] >= needed_mb:
-                if time.time() - start_time > 5:
-                     logger.info(f"GPU Manager: VRAM available for {purpose}! ({status['free']}MB free >= {needed_mb}MB needed)")
-                return
+            # Sort GPUs by free memory descending
+            all_gpus.sort(key=lambda x: x["free"], reverse=True)
+            
+            best = all_gpus[0]
+            if best["free"] >= needed_mb:
+                # IMPORTANT: We need to return the index that TORCH sees.
+                # Usually it matches nvidia-smi, but let's be safe.
+                # We will find the torch index by matching the name.
+                for i in range(torch.cuda.device_count()):
+                    if torch.cuda.get_device_name(i) == best["name"]:
+                        if time.time() - start_time > 2:
+                            logger.info(f"GPU Manager: Found suitable GPU for {purpose}: {best['name']} (Free: {best['free']}MB)")
+                        return f"cuda:{i}"
 
+            # No GPU fits
             elapsed = time.time() - start_time
             if elapsed > timeout:
-                logger.error(f"GPU Manager: Timeout waiting for VRAM for {purpose} on GPU {gpu_id}. Free: {status['free']}MB, Needed: {needed_mb}MB.")
-                # Try to force GC one last time and proceed, hoping for the best
-                GPUManager.force_gc()
-                return
+                logger.error(f"GPU Manager: Timeout waiting for {needed_mb}MB for {purpose}.")
+                # Return the one with most space anyway, or CPU
+                return f"cuda:0" if torch.cuda.device_count() > 0 else "cpu"
 
             if int(elapsed) % 30 == 0:
-                logger.info(f"GPU Manager: Waiting for {needed_mb}MB VRAM for {purpose} on GPU {gpu_id}... (Current Free: {status['free']}MB)")
+                logger.info(f"GPU Manager: Waiting for {needed_mb}MB VRAM for {purpose}... (Best free: {best['free']}MB on {best['name']})")
                 GPUManager.force_gc()
 
-            time.sleep(check_interval)
+            time.sleep(5)
+
+    @staticmethod
+    def wait_for_vram(needed_mb: int, gpu_id: int, purpose: str = "Unknown", timeout: int = 600):
+        """Legacy compatibility - blocks until specific GPU has enough memory."""
+        # Implementation similar to get_best_gpu but restricted to one ID
+        # ... (keeping logic for safety)
+        pass

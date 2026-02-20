@@ -7,8 +7,6 @@ from config import (
     VIDEO_FOLDER,
     TEMP_DIR,
     MODEL_PATH,
-    DEVICE_LLM,
-    DEVICE_AUDIO,
     USE_LOCK,
     TARGET_LANGS,
 )
@@ -38,7 +36,6 @@ class AIDubber:
         # Components (Dependency Injection ready)
         self.llm_manager = LLMManager(
             model_path=MODEL_PATH,
-            device=DEVICE_LLM,
             inference_lock=self.inference_lock,
             debug_mode=self.debug_mode,
             target_langs=self.target_langs,
@@ -46,19 +43,16 @@ class AIDubber:
         )
 
         self.whisper_manager = WhisperManager(
-            device=DEVICE_AUDIO,
             inference_lock=self.inference_lock,
         )
 
         self.diar_manager = DiarizationManager(
-            device=DEVICE_AUDIO,
             inference_lock=self.inference_lock,
         )
 
         # Golden speaker refs shared across languages
         self.speaker_refs = {}
         self.tts_manager = TTSManager(
-            device=DEVICE_AUDIO,
             inference_lock=self.inference_lock,
             temp_dir=TEMP_DIR,
             speaker_refs=self.speaker_refs,

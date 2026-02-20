@@ -4,7 +4,7 @@ import logging
 import shutil
 import time
 from typing import List, Dict, Tuple
-from config import DEVICE_AUDIO, DEVICE_AUDIO_ID, TEMP_DIR, MOCK_MODE
+from config import TEMP_DIR, MOCK_MODE
 from infrastructure.ffmpeg import FFmpegWrapper
 from core.gpu_manager import GPUManager
 
@@ -27,6 +27,10 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
         shutil.copy(a_stereo, vocals_path)
         return a_stereo, vocals_path
 
+    # Dynamic GPU allocation
+    # Demucs needs approx 3GB
+    target_device = GPUManager.get_best_gpu(needed_mb=3000, purpose="Demucs")
+
     demucs_cmd = [
         "demucs",
         "--mp3",
@@ -37,13 +41,11 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
         "-n",
         "htdemucs_ft",
         "--device",
-        DEVICE_AUDIO,
+        target_device,
         a_stereo,
     ]
     import subprocess
 
-    # Wait for ~3GB VRAM for Demucs
-    GPUManager.wait_for_vram(3000, DEVICE_AUDIO_ID, purpose="Demucs")
     subprocess.run(demucs_cmd, check=True)
     GPUManager.force_gc()
 
@@ -64,10 +66,12 @@ def analyze_audio(vocals_path: str, diar_manager, whisper_manager) -> Tuple[List
     t0 = time.perf_counter()
     diar_result = diar_manager.diarize(mpath)
     durations["2a. Diarization"] = time.perf_counter() - t0
+    diar_manager.shutdown() # Free VRAM on 3070
 
     t0 = time.perf_counter()
     trans_result = whisper_manager.transcribe(mpath)
     durations["2b. Transcription"] = time.perf_counter() - t0
+    whisper_manager.shutdown() # Free VRAM on 3070
 
     return diar_result, trans_result, durations
 

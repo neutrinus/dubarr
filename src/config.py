@@ -78,91 +78,15 @@ if not HF_TOKEN and not MOCK_MODE:
 API_USER = os.environ.get("API_USER", "dubarr")
 API_PASS = os.environ.get("API_PASS", "dubarr")
 
-# --- DYNAMIC HARDWARE ALLOCATION ---
+# --- HARDWARE DETECTION ---
 
-
-def get_compute_device():
-    """Detects available hardware and assigns roles."""
-    strategy = "sequential"  # Default safe strategy
-
+def get_compute_device_type():
     if torch and torch.cuda.is_available():
-        gpu_count = torch.cuda.device_count()
+        return "cuda"
+    return "cpu"
 
-        # Calculate Total VRAM across all GPUs being used
-        total_vram_gb = 0
-        for i in range(gpu_count):
-            props = torch.cuda.get_device_properties(i)
-            total_vram_gb += props.total_memory / (1024**3)
-
-        logging.info(f"Hardware: Detected {gpu_count} GPU(s) with Total VRAM: {total_vram_gb:.2f} GB")
-
-        # Threshold for parallel execution (LLM ~10GB + TTS ~4GB + Whisper ~3GB + Overhead)
-        # We set it conservatively at 18GB
-        if total_vram_gb > 18.0:
-            strategy = "parallel"
-            logging.info("Strategy: PARALLEL (Sufficient VRAM detected)")
-        else:
-            logging.info("Strategy: SEQUENTIAL (Limited VRAM, enabling safety locks)")
-
-        if gpu_count >= 2:
-            # Optimal: Dual GPU Split
-            llm_idx = int(os.environ.get("GPU_LLM_ID", "0"))
-            audio_idx = int(os.environ.get("GPU_AUDIO_ID", "1"))
-
-            # Ensure indices exist
-            if llm_idx >= gpu_count:
-                llm_idx = 0
-            if audio_idx >= gpu_count:
-                audio_idx = 0
-
-            return {
-                "llm": f"cuda:{llm_idx}",
-                "audio": f"cuda:{audio_idx}",
-                "use_lock": False,
-                "type": "cuda",
-                "strategy": strategy,
-            }
-        else:
-            # Single GPU Shared
-            return {
-                "llm": "cuda:0",
-                "audio": "cuda:0",
-                "use_lock": True,  # Critical to prevent compute clash
-                "type": "cuda",
-                "strategy": strategy,
-            }
-    else:
-        # CPU Fallback
-        logging.warning("Hardware: No GPU detected. Running in CPU mode (Slow!).")
-        logging.info("Strategy: SEQUENTIAL (CPU Mode)")
-        return {
-            "llm": "cpu",
-            "audio": "cpu",
-            "use_lock": True,
-            "type": "cpu",
-            "strategy": "sequential",  # CPU must be sequential
-        }
-
-
-# Initialize hardware config
-HW_CONFIG = get_compute_device()
-DEVICE_LLM = HW_CONFIG["llm"]
-DEVICE_AUDIO = HW_CONFIG["audio"]
-USE_LOCK = HW_CONFIG["use_lock"]
-DEVICE_TYPE = HW_CONFIG["type"]
-STRATEGY = HW_CONFIG["strategy"]
-
-# Extract numeric IDs for monitoring
-try:
-    if "cuda" in DEVICE_LLM:
-        DEVICE_LLM_ID = int(DEVICE_LLM.split(":")[-1])
-    else:
-        DEVICE_LLM_ID = None
-    
-    if "cuda" in DEVICE_AUDIO:
-        DEVICE_AUDIO_ID = int(DEVICE_AUDIO.split(":")[-1])
-    else:
-        DEVICE_AUDIO_ID = None
-except (ValueError, IndexError):
-    DEVICE_LLM_ID = None
-    DEVICE_AUDIO_ID = None
+DEVICE_TYPE = get_compute_device_type()
+# If we have 1 GPU or CPU, we must use a lock to prevent concurrent inference on the same device.
+# For multi-GPU, GPUManager will handle isolation if needed, but we still use lock for safety within a single process.
+USE_LOCK = (DEVICE_TYPE == "cpu" or (torch and torch.cuda.device_count() == 1))
+STRATEGY = "dynamic" # Handled by GPUManager

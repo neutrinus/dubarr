@@ -2,7 +2,7 @@ import logging
 import threading
 import gc
 from typing import List, Dict, Optional
-from config import WHISPER_MODEL, MOCK_MODE, DEVICE_AUDIO_ID
+from config import WHISPER_MODEL, MOCK_MODE
 from core.gpu_manager import GPUManager
 
 try:
@@ -19,10 +19,9 @@ except ImportError:
 class WhisperManager:
     def __init__(
         self,
-        device: str,
         inference_lock: Optional[threading.Lock],
     ):
-        self.device = device
+        self.device = "cpu"
         self.inference_lock = inference_lock
         self.model = None
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
@@ -44,10 +43,11 @@ class WhisperManager:
             return
 
         try:
-            logging.info(f"Whisper: Loading model '{WHISPER_MODEL}' on {self.device}...")
+            # Dynamic GPU allocation
+            # Whisper Large-v3 needs approx 4GB
+            self.device = GPUManager.get_best_gpu(needed_mb=4000, purpose="Whisper")
 
-            # Wait for ~4GB VRAM
-            GPUManager.wait_for_vram(4000, DEVICE_AUDIO_ID, purpose="Whisper")
+            logging.info(f"Whisper: Loading model '{WHISPER_MODEL}' on {self.device}...")
 
             device_type = "cuda" if "cuda" in self.device else "cpu"
             device_index = int(self.device.split(":")[-1]) if "cuda" in self.device else 0

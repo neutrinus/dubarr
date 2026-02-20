@@ -58,6 +58,7 @@ export XDG_CACHE_HOME=/app/data/xdg_cache
 # Ensure directories exist
 echo "Creating directories..."
 mkdir -p /app/output /app/videos /app/data /app/src/templates /tmp/dubber /data/cache
+chmod 777 /tmp/dubber
 
 # Fix permissions for the volumes and cache
 echo "Fixing permissions for $USER_NAME:$GROUP_NAME..."
