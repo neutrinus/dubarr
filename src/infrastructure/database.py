@@ -205,10 +205,10 @@ class Database:
             return None
 
     def get_task_progress(self, task_id: int) -> int:
-        """Returns number of completed major stages (0-7)."""
+        """Returns number of completed or active major stages (0-7)."""
         with self._get_connection() as conn:
             c = conn.cursor()
-            # We count distinct stage prefixes to handle per-language sub-steps if any
+            # We count distinct stage prefixes that are either DONE or PENDING (active)
             c.execute(
                 """
                 SELECT COUNT(DISTINCT CASE
@@ -219,14 +219,21 @@ class Database:
                     WHEN step_name LIKE 'Stage 5:%' THEN 5
                     WHEN step_name LIKE 'Stage 6:%' THEN 6
                     WHEN step_name LIKE 'Stage 7:%' THEN 7
-                END) as completed
+                END) as stages
                 FROM job_steps
-                WHERE task_id = ? AND status = 'DONE'
+                WHERE task_id = ? AND (status = 'DONE' OR status = 'PENDING')
             """,
                 (task_id,),
             )
             row = c.fetchone()
-            return row["completed"] if row else 0
+            count = row["stages"] if row else 0
+            # If we have no job_steps yet, but it's processing, it's effectively at least at Stage 1
+            if count == 0:
+                c.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
+                t = c.fetchone()
+                if t and t["status"] == "PROCESSING":
+                    return 1
+            return count
 
     def get_queue_stats(self) -> Dict:
         with self._get_connection() as conn:

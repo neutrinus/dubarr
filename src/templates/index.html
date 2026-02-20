@@ -237,7 +237,7 @@
                                         </div>
                                         {% if task.status == 'PROCESSING' %}
                                             <div class="progress mt-2" style="height: 10px; background-color: #444;">
-                                                {% set pct = (task.progress / 7 * 100)|round(0)|int %}
+                                                {% set pct = (task.progress / 8 * 100)|round(0)|int %}
                                                 <div class="progress-bar bg-info progress-bar-striped progress-bar-animated" 
                                                      role="progressbar" style="width: {{ pct }}%;" 
                                                      aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"></div>
