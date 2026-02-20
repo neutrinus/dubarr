@@ -224,3 +224,9 @@ class Database:
             )
             row = c.fetchone()
             return row["completed"] if row else 0
+
+    def get_queue_stats(self) -> Dict:
+        with self._get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT status, COUNT(*) as count FROM tasks GROUP BY status")
+            return {row["status"]: row["count"] for row in c.fetchall()}

@@ -91,6 +91,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+@app.get("/health")
+async def health():
+    return {
+        "status": "online",
+        "worker_alive": worker_task is not None and worker_task.is_alive(),
+        "queue_stats": db.get_queue_stats(),
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     tasks = db.get_all_tasks()
