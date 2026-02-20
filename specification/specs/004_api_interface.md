@@ -66,7 +66,19 @@ Deletes a task from the database. Does *not* delete the file on disk.
 -   **Method:** POST
 -   **Response:** `303 See Other`.
 
-### 4.2 Monitoring
+### 4.2 Debug & Artifacts
+
+#### `GET /debug/{task_id}/{artifact_name}`
+Retrieves intermediate processing results (JSON artifacts).
+-   **Method:** GET
+-   **Artifact Names:**
+    -   `transcription`: Raw transcription with timestamps.
+    -   `context`: Global story context and glossary.
+    -   `speakers`: Identified speaker profiles.
+    -   `production`: Final translated segments per language.
+-   **Response:** `200 OK` (JSON).
+
+### 4.3 Monitoring
 
 #### `GET /health`
 Returns system health status and queue statistics.
