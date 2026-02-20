@@ -23,7 +23,11 @@ class ResourceMonitor(threading.Thread):
                 gpus = []
                 try:
                     res = subprocess.run(
-                        ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.free,memory.total", "--format=csv,noheader,nounits"],
+                        [
+                            "nvidia-smi",
+                            "--query-gpu=utilization.gpu,memory.used,memory.free,memory.total",
+                            "--format=csv,noheader,nounits",
+                        ],
                         capture_output=True,
                         text=True,
                     )
@@ -32,12 +36,14 @@ class ResourceMonitor(threading.Thread):
                         for line in lines:
                             parts = line.split(",")
                             if len(parts) >= 4:
-                                gpus.append({
-                                    "util": parts[0].strip(),
-                                    "used": parts[1].strip(),
-                                    "free": parts[2].strip(),
-                                    "total": parts[3].strip()
-                                })
+                                gpus.append(
+                                    {
+                                        "util": parts[0].strip(),
+                                        "used": parts[1].strip(),
+                                        "free": parts[2].strip(),
+                                        "total": parts[3].strip(),
+                                    }
+                                )
                 except Exception:
                     pass
 

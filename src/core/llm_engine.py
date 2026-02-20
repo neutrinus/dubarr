@@ -35,7 +35,7 @@ class LLMManager:
         abort_event: Optional[threading.Event] = None,
     ):
         self.model_path = model_path
-        self.device = "cpu" # Default
+        self.device = "cpu"  # Default
         self.inference_lock = inference_lock
         self.debug_mode = debug_mode
         self.target_langs = target_langs or ["pl"]

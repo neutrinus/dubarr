@@ -80,13 +80,15 @@ API_PASS = os.environ.get("API_PASS", "dubarr")
 
 # --- HARDWARE DETECTION ---
 
+
 def get_compute_device_type():
     if torch and torch.cuda.is_available():
         return "cuda"
     return "cpu"
 
+
 DEVICE_TYPE = get_compute_device_type()
 # If we have 1 GPU or CPU, we must use a lock to prevent concurrent inference on the same device.
 # For multi-GPU, GPUManager will handle isolation if needed, but we still use lock for safety within a single process.
-USE_LOCK = (DEVICE_TYPE == "cpu" or (torch and torch.cuda.device_count() == 1))
-STRATEGY = "dynamic" # Handled by GPUManager
+USE_LOCK = DEVICE_TYPE == "cpu" or (torch and torch.cuda.device_count() == 1)
+STRATEGY = "dynamic"  # Handled by GPUManager
