@@ -8,8 +8,9 @@ import subprocess
 from typing import List, Dict, Optional
 from infrastructure.tts_client import XTTSWrapper
 from utils import measure_zcr, count_syllables
-from config import MOCK_MODE
+from config import MOCK_MODE, DEVICE_AUDIO_ID
 from core import audio as audio_processor
+from core.gpu_manager import GPUManager
 
 try:
     import torch
@@ -56,6 +57,9 @@ class TTSManager:
                 gpu_id = 0
                 if "cuda" in self.device:
                     gpu_id = int(self.device.split(":")[-1])
+
+                # Wait for ~4GB VRAM for XTTS
+                GPUManager.wait_for_vram(4000, DEVICE_AUDIO_ID, purpose="XTTS")
 
                 self.engine = XTTSWrapper(gpu_id=gpu_id)
                 self.status = "READY"

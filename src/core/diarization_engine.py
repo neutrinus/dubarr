@@ -3,7 +3,8 @@ import gc
 import os
 import threading
 from typing import List, Dict, Optional
-from config import MOCK_MODE
+from config import MOCK_MODE, DEVICE_AUDIO_ID
+from core.gpu_manager import GPUManager
 
 try:
     import torch
@@ -51,6 +52,10 @@ class DiarizationManager:
 
         try:
             logging.info(f"Diarization: Loading pipeline on {self.device}...")
+
+            # Wait for ~2GB VRAM
+            GPUManager.wait_for_vram(2000, DEVICE_AUDIO_ID, purpose="Diarization")
+
             self.pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-community-1", token=hf_token)
             if torch and "cuda" in self.device:
                 self.pipeline.to(torch.device(self.device))

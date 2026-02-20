@@ -306,8 +306,23 @@ class DubbingPipeline:
             if self.db and task_id:
                 cached = self.db.get_step_result(task_id, name)
                 if cached is not None:
-                    logger.info(f"STEP {name}: Using cached result.")
-                    return cached
+                    # Validate that files mentioned in cached result actually exist
+                    def validate_files(obj):
+                        if isinstance(obj, str) and (obj.startswith("/") or "/" in obj) and "." in obj:
+                            if os.path.exists(obj): return True
+                            # If it looks like a path but doesn't exist, fail validation
+                            return False
+                        if isinstance(obj, (list, tuple)):
+                            return all(validate_files(x) for x in obj)
+                        if isinstance(obj, dict):
+                            return all(validate_files(v) for v in obj.values())
+                        return True
+
+                    if validate_files(cached):
+                        logger.info(f"STEP {name}: Using cached result.")
+                        return cached
+                    else:
+                        logger.warning(f"STEP {name}: Cache exists but referenced files are missing. Re-running step.")
 
             logger.info(f"STARTING STEP: {name}")
             t = time.perf_counter()

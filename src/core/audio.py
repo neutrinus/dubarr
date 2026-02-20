@@ -4,8 +4,9 @@ import logging
 import shutil
 import time
 from typing import List, Dict, Tuple
-from config import DEVICE_AUDIO, TEMP_DIR, MOCK_MODE
+from config import DEVICE_AUDIO, DEVICE_AUDIO_ID, TEMP_DIR, MOCK_MODE
 from infrastructure.ffmpeg import FFmpegWrapper
+from core.gpu_manager import GPUManager
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,10 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
     ]
     import subprocess
 
+    # Wait for ~3GB VRAM for Demucs
+    GPUManager.wait_for_vram(3000, DEVICE_AUDIO_ID, purpose="Demucs")
     subprocess.run(demucs_cmd, check=True)
+    GPUManager.force_gc()
 
     found = glob.glob(os.path.join(TEMP_DIR, "**", "vocals.mp3"), recursive=True)
     if not found:

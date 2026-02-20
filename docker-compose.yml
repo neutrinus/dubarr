@@ -31,6 +31,7 @@ services:
       - VERBOSE=${VERBOSE:-0}
       - API_USER=${API_USER:-dubarr}
       - API_PASS=${API_PASS:-dubarr}
+      - DATA_DIR=/data/cache
       - GPU_LLM_ID=${GPU_LLM_ID:-0}
       - GPU_AUDIO_ID=${GPU_AUDIO_ID:-1}
       - PYTORCH_ALLOC_CONF=${PYTORCH_ALLOC_CONF:-expandable_segments:True}

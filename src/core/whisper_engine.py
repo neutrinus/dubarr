@@ -2,7 +2,8 @@ import logging
 import threading
 import gc
 from typing import List, Dict, Optional
-from config import WHISPER_MODEL, MOCK_MODE
+from config import WHISPER_MODEL, MOCK_MODE, DEVICE_AUDIO_ID
+from core.gpu_manager import GPUManager
 
 try:
     import torch
@@ -44,6 +45,9 @@ class WhisperManager:
 
         try:
             logging.info(f"Whisper: Loading model '{WHISPER_MODEL}' on {self.device}...")
+
+            # Wait for ~4GB VRAM
+            GPUManager.wait_for_vram(4000, DEVICE_AUDIO_ID, purpose="Whisper")
 
             device_type = "cuda" if "cuda" in self.device else "cpu"
             device_index = int(self.device.split(":")[-1]) if "cuda" in self.device else 0

@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
         # Pre-load models in background
         logger.info("Lifespan: Starting background model pre-loading...")
         threading.Thread(target=dubber_base.llm_manager.load_model, daemon=True).start()
-        threading.Thread(target=dubber_base.tts_manager.load_engine, daemon=True).start()
+        # threading.Thread(target=dubber_base.tts_manager.load_engine, daemon=True).start()
         threading.Thread(target=dubber_base.whisper_manager.load_model, daemon=True).start()
         threading.Thread(target=dubber_base.diar_manager.load_model, daemon=True).start()
 

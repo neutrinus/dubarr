@@ -151,3 +151,18 @@ DEVICE_AUDIO = HW_CONFIG["audio"]
 USE_LOCK = HW_CONFIG["use_lock"]
 DEVICE_TYPE = HW_CONFIG["type"]
 STRATEGY = HW_CONFIG["strategy"]
+
+# Extract numeric IDs for monitoring
+try:
+    if "cuda" in DEVICE_LLM:
+        DEVICE_LLM_ID = int(DEVICE_LLM.split(":")[-1])
+    else:
+        DEVICE_LLM_ID = None
+    
+    if "cuda" in DEVICE_AUDIO:
+        DEVICE_AUDIO_ID = int(DEVICE_AUDIO.split(":")[-1])
+    else:
+        DEVICE_AUDIO_ID = None
+except (ValueError, IndexError):
+    DEVICE_LLM_ID = None
+    DEVICE_AUDIO_ID = None

@@ -23,7 +23,7 @@ class ResourceMonitor(threading.Thread):
                 gpus = []
                 try:
                     res = subprocess.run(
-                        ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used", "--format=csv,noheader,nounits"],
+                        ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.free,memory.total", "--format=csv,noheader,nounits"],
                         capture_output=True,
                         text=True,
                     )
@@ -31,19 +31,24 @@ class ResourceMonitor(threading.Thread):
                         lines = res.stdout.strip().split("\n")
                         for line in lines:
                             parts = line.split(",")
-                            if len(parts) >= 2:
-                                gpus.append((parts[0].strip(), parts[1].strip()))
+                            if len(parts) >= 4:
+                                gpus.append({
+                                    "util": parts[0].strip(),
+                                    "used": parts[1].strip(),
+                                    "free": parts[2].strip(),
+                                    "total": parts[3].strip()
+                                })
                 except Exception:
                     pass
 
                 # Fill missing GPUs with 0
                 while len(gpus) < 2:
-                    gpus.append(("0", "0"))
+                    gpus.append({"util": "0", "used": "0", "free": "0", "total": "0"})
 
                 logging.info(
                     f"[Monitor] CPU:{cpu}% RAM:{ram}% | "
-                    f"GPU0:{gpus[0][0]}% Mem:{gpus[0][1]}MB | "
-                    f"GPU1:{gpus[1][0]}% Mem:{gpus[1][1]}MB"
+                    f"GPU0:{gpus[0]['util']}% Mem:{gpus[0]['used']}/{gpus[0]['total']}MB (Free:{gpus[0]['free']}MB) | "
+                    f"GPU1:{gpus[1]['util']}% Mem:{gpus[1]['used']}/{gpus[1]['total']}MB (Free:{gpus[1]['free']}MB)"
                 )
 
             except Exception as e:
