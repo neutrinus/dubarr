@@ -187,6 +187,36 @@ async def download_task(task_id: int, username: str = Depends(authenticate)):
     return FileResponse(path=file_path, filename=os.path.basename(file_path), media_type="application/octet-stream")
 
 
+@app.get("/debug/{task_id}/{artifact}")
+async def get_debug_artifact(task_id: int, artifact: str, username: str = Depends(authenticate)):
+    artifact_map = {
+        "transcription": "Stage 2: Audio Analysis",
+        "context": "Stage 3: Global Analysis",
+        "speakers": "Stage 3: Global Analysis",
+        "production": "Stage 5: Production",
+    }
+
+    step_name = artifact_map.get(artifact)
+    if not step_name:
+        raise HTTPException(status_code=400, detail=f"Unknown artifact: {artifact}")
+
+    result = db.get_step_result(task_id, step_name)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact}' not found for task {task_id}")
+
+    # Special handling for context/speakers split
+    if artifact == "context":
+        return {k: v for k, v in result.items() if k != "speakers"}
+    if artifact == "speakers":
+        return result.get("speakers", {})
+    if artifact == "transcription":
+        # Analysis data is [diar, trans, durs]
+        if isinstance(result, list) and len(result) >= 2:
+            return result[1]
+
+    return result
+
+
 @app.post("/upload")
 async def upload_video(file: UploadFile = File(...), username: str = Depends(authenticate)):
     if not file.filename:
