@@ -117,8 +117,8 @@ jobs:
             -e PUID=$(id -u) \
             -e PGID=$(id -g) \
             -v /tmp:/tmp \
-            -p 8080:8080 \
-            --health-cmd "curl -f http://localhost:8080/health || exit 1" \
+            -p 8000:8000 \
+            --health-cmd "curl -f http://localhost:8000/health || exit 1" \
             --health-interval 5s \
             --health-timeout 2s \
             --health-retries 20 \

@@ -5,7 +5,7 @@ import sys
 
 
 def run_smoke_test():
-    base_url = "http://localhost:8080"
+    base_url = "http://localhost:8000"
     test_video = "/tmp/test_video.mkv"
 
     # 1. Create a dummy video file
