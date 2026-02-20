@@ -5,7 +5,7 @@ import shutil
 import threading
 import gc
 import subprocess
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from infrastructure.tts_client import XTTSWrapper
 from utils import measure_zcr, count_syllables
 from config import MOCK_MODE
@@ -25,12 +25,14 @@ class TTSManager:
         temp_dir: str,
         speaker_refs: Dict,
         abort_event: threading.Event,
+        service: Optional[Any] = None, # TTSService
     ):
         self.device = "cpu"
         self.inference_lock = inference_lock
         self.temp_dir = temp_dir
         self.speaker_refs = speaker_refs  # Golden samples
         self.abort_event = abort_event
+        self.service = service
         self.last_good_samples = {}
         self.engine = None
         self._engine_lock = threading.Lock()
@@ -92,7 +94,7 @@ class TTSManager:
                     torch.cuda.empty_cache()
 
     def _run_synthesis(self, *args, **kwargs):
-        """Wrapper for TTS inference that respects the global lock if needed. Mocks in MOCK_MODE."""
+        """Wrapper for TTS inference that respects the global lock or uses the RPC service."""
         if MOCK_MODE:
             # Extract output_path from args or kwargs
             # Signature: synthesize(text, ref_audio, output_path, language="en")
@@ -105,6 +107,17 @@ class TTSManager:
             cmd = ["ffmpeg", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", "1", "-y", output_path]
             subprocess.run(cmd, capture_output=True, check=True)
             return
+
+        # RPC Service Path
+        if self.service:
+            # We must use a direct call helper to avoid recursion if the worker 
+            # thread happens to call this method (which it won't, but it's safe)
+            def _direct_call(*a, **kw):
+                return self.engine.synthesize(*a, **kw)
+            
+            # Synthesis tasks are Priority 1 (High)
+            future = self.service.submit(_direct_call, *args, priority=1, **kwargs)
+            return future.result()
 
         if self.inference_lock:
             with self.inference_lock:

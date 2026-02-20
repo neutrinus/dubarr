@@ -4,7 +4,7 @@ import logging
 import time
 import threading
 import gc
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from utils import parse_json, clean_output
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_TRANS, T_REFINE_DURATION
 from config import LANG_MAP, MOCK_MODE
@@ -33,6 +33,7 @@ class LLMManager:
         debug_mode: bool = False,
         target_langs: List[str] = None,
         abort_event: Optional[threading.Event] = None,
+        service: Optional[Any] = None,
     ):
         self.model_path = model_path
         self.device = "cpu"  # Default
@@ -40,6 +41,7 @@ class LLMManager:
         self.debug_mode = debug_mode
         self.target_langs = target_langs or ["pl"]
         self.llm = None
+        self.service = service
         self.llm_stats = {"tokens": 0, "time": 0}
         self.ready_event = threading.Event()
         self.abort_event = abort_event or threading.Event()
@@ -115,8 +117,8 @@ class LLMManager:
         finally:
             self.ready_event.set()
 
-    def _run_inference(self, prompt, **kwargs):
-        """Wrapper for LLM inference that respects the global lock if needed."""
+    def _run_inference(self, prompt, priority=10, **kwargs):
+        """Wrapper for LLM inference that respects the global lock or uses the RPC service."""
         if MOCK_MODE:
             # Mock responses based on prompt type
             if "Analyze the movie script" in prompt:
@@ -147,6 +149,14 @@ class LLMManager:
                 }
             return {"choices": [{"text": "{}"}]}
 
+        # RPC Service Path
+        if self.service:
+            def _direct_call(p, **kw):
+                return self.llm(p, **kw)
+            
+            future = self.service.submit(_direct_call, prompt, priority=priority, **kwargs)
+            return future.result()
+
         if not self.llm:
             raise RuntimeError("LLM model not loaded!")
 
@@ -173,8 +183,10 @@ class LLMManager:
         logging.info("LLM: Starting Full Analysis (Context + Profiling)")
 
         t0 = time.perf_counter()
+        # Global Analysis is Priority 2
         res = self._run_inference(
             T_ANALYSIS.format(overview=ov, langs=", ".join(lang_names), subtitles=subtitles),
+            priority=2,
             max_tokens=2000,
             stop=["<|im_end|>"],
         )
@@ -194,6 +206,7 @@ class LLMManager:
             t0 = time.perf_counter()
             res = self._run_inference(
                 T_ED.format(glossary=glossary_str, subtitles=subtitles, txt=txt),
+                priority=2,
                 max_tokens=2000,
                 temperature=0.0,
                 stop=["<|im_end|>"],
@@ -262,7 +275,8 @@ class LLMManager:
 
             t0 = time.perf_counter()
             try:
-                res = self._run_inference(trans_prompt, max_tokens=2000, temperature=0.1, stop=["<|im_end|>"])
+                # Draft generation is Priority 2
+                res = self._run_inference(trans_prompt, priority=2, max_tokens=2000, temperature=0.1, stop=["<|im_end|>"])
                 self._update_stats(res, time.perf_counter() - t0)
 
                 parsed_trans = parse_json(res["choices"][0]["text"])
@@ -331,7 +345,8 @@ class LLMManager:
         )
 
         t0 = time.perf_counter()
-        res = self._run_inference(prompt, max_tokens=200, temperature=0.7, stop=["<|im_end|>"])  # Higher temp for creativity
+        # Refinement is Priority 1 (High)
+        res = self._run_inference(prompt, priority=1, max_tokens=200, temperature=0.7, stop=["<|im_end|>"])  # Higher temp for creativity
         self._update_stats(res, time.perf_counter() - t0)
 
         try:

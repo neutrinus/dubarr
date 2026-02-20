@@ -14,6 +14,7 @@ from core.audio import prep_audio, analyze_audio, mix_audio
 from utils import clean_srt, measure_zcr, run_cmd
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
+from core.gpu_services import LLMService, TTSService
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
@@ -169,7 +170,7 @@ class DubbingPipeline:
                     clarity_score -= 20
 
                 cr = s.get("compression_ratio", 1.2)
-                if cr > 1.8:
+                if i > 1.8:
                     clarity_score = 0
                 if cr < 0.6:
                     clarity_score -= 10
@@ -362,6 +363,17 @@ class DubbingPipeline:
 
         self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
 
+        # Initialize GPU RPC Services
+        # 4 workers for LLM to handle parallel slots on 12GB GPU
+        llm_service = LLMService(num_workers=4)
+        tts_service = TTSService()
+        llm_service.start()
+        tts_service.start()
+
+        # Connect managers to services
+        self.llm_manager.service = llm_service
+        self.tts_manager.service = tts_service
+
         existing_langs = audio_processor.get_audio_languages(vpath)
         if existing_langs:
             logger.info(f"Existing audio languages: {', '.join(existing_langs)}")
@@ -379,15 +391,14 @@ class DubbingPipeline:
             "ko": "kor",
         }
 
-        all_audio_tracks = []
-        for lang in self.target_langs:
+        def produce_language(lang):
             if lang.lower() in existing_langs or iso_map.get(lang.lower()) in existing_langs:
                 logger.info(f"--- SKIPPING {lang}: Language already exists in source video ---")
-                continue
+                return None
 
             logger.info(f"--- STARTING PRODUCTION FOR LANGUAGE: {lang} ---")
 
-            # 1. Draft Translation (Batch)
+            # 1. Draft Translation (Batch) - Priority 2
             t_start_draft = time.perf_counter()
             draft_segments = self.llm_manager.generate_drafts(script, lang, self.speaker_info, self.global_context)
             self.durations[f"Stage 5a: Draft Translation ({lang})"] = time.perf_counter() - t_start_draft
@@ -396,12 +407,14 @@ class DubbingPipeline:
             res = []
             t_start_sync = time.perf_counter()
 
-            # Use max_workers=1 for TTS to prevent CUDA race conditions and seryalize requests
-            with ThreadPoolExecutor(max_workers=1) as executor:
+            # We can now use multiple workers for the language orchestrator because
+            # the actual GPU serialization happens inside the TTSService priority queue.
+            # 3 workers per language is a good balance.
+            with ThreadPoolExecutor(max_workers=3) as executor:
                 futures = {
-                    executor.submit(self.synchronizer.process_segment, seg, lang, vocals, script, self.global_context): seg[
-                        "index"
-                    ]
+                    executor.submit(
+                        self.synchronizer.process_segment, seg, lang, vocals, script, self.global_context
+                    ): seg["index"]
                     for seg in draft_segments
                 }
 
@@ -424,10 +437,10 @@ class DubbingPipeline:
                             seg_result["index"] = idx
                             res.append(seg_result)
                             completed_count += 1
-                            if completed_count % 5 == 0:
-                                logger.info(f"  [Progress] {completed_count}/{total_segments} segments done.")
+                            if completed_count % 10 == 0:
+                                logger.info(f"  [Progress {lang}] {completed_count}/{total_segments} segments done.")
                     except Exception as e:
-                        logger.error(f"Segment {idx} failed completely: {e}")
+                        logger.error(f"Segment {idx} ({lang}) failed completely: {e}")
 
             self.durations[f"Stage 5b: Sync Production ({lang})"] = time.perf_counter() - t_start_sync
 
@@ -474,8 +487,27 @@ class DubbingPipeline:
                 last_end_time = start + (actual_dur / speed_factor)
 
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
-            self._run_step(f"Stage 6: Final Mix ({lang})", mix_audio, task_id, a_stereo, final_audio_segments, final_a)
-            all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
+            # mixing is CPU bound, so it's fine to run here
+            mix_audio(a_stereo, final_audio_segments, final_a)
+            self.durations[f"Stage 6: Final Mix ({lang})"] = 0.1  # Placeholder for profile compatibility
+            return (final_a, lang, LANG_MAP.get(lang, lang))
+
+        # Run all languages in parallel!
+        # The LLMService and TTSService will handle the GPU bottle-necking.
+        all_audio_tracks = []
+        with ThreadPoolExecutor(max_workers=len(self.target_langs)) as lang_executor:
+            lang_futures = [lang_executor.submit(produce_language, l) for l in self.target_langs]
+            for lf in as_completed(lang_futures):
+                track_res = lf.result()
+                if track_res:
+                    all_audio_tracks.append(track_res)
+
+        # Stop services and unload LLM from VRAM
+        llm_service.stop()
+        tts_service.stop()
+        self.llm_manager.shutdown()
+        self.llm_manager.service = None
+        self.tts_manager.service = None
 
         if self.db and task_id:
             self.db.save_step_result(task_id, "Stage 5: Production", "DONE", result_data={"langs": self.target_langs})
