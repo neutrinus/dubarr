@@ -67,9 +67,9 @@ async def lifespan(app: FastAPI):
     try:
         dubber_base = AIDubber()
 
-        # Pre-load models in background
-        logger.info("Lifespan: Starting background model pre-loading...")
-        threading.Thread(target=dubber_base.llm_manager.load_model, daemon=True).start()
+        # Download/Verify models in background at startup, but don't load into VRAM yet
+        logger.info("Lifespan: Ensuring models are downloaded...")
+        threading.Thread(target=dubber_base.llm_manager.ensure_model_downloaded, daemon=True).start()
         # threading.Thread(target=dubber_base.tts_manager.load_engine, daemon=True).start()
         # threading.Thread(target=dubber_base.whisper_manager.load_model, daemon=True).start()
         # threading.Thread(target=dubber_base.diar_manager.load_model, daemon=True).start()

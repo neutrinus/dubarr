@@ -47,8 +47,30 @@ class LLMManager:
         self.abort_event = abort_event or threading.Event()
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
 
+    def ensure_model_downloaded(self):
+        """Ensures the model file exists locally. Downloads if missing. Does NOT load to VRAM."""
+        if MOCK_MODE:
+            return
+        
+        if not os.path.exists(self.model_path):
+            logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
+            from huggingface_hub import hf_hub_download
+            repo_id = "bartowski/google_gemma-3-12b-it-GGUF"
+            filename = os.path.basename(self.model_path)
+            os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+            hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                local_dir=os.path.dirname(self.model_path),
+                local_dir_use_symlinks=False,
+            )
+            logging.info("LLM: Download completed successfully.")
+
     def load_model(self):
-        """Loads the LLM into VRAM or RAM. Downloads if missing. Skips in MOCK_MODE."""
+        """Loads the LLM into VRAM or RAM. Skips in MOCK_MODE."""
+        if self.status == "READY":
+            return
+
         self.status = "LOADING"
         if MOCK_MODE:
             logging.info("LLM: MOCK_MODE enabled. Skipping model load.")
@@ -63,28 +85,10 @@ class LLMManager:
             raise RuntimeError("llama-cpp-python import failed. Check logs for details (missing libcuda?).")
 
         try:
+            self.ensure_model_downloaded()
+
             # Gemma 12B Q4 + 16k context needs approx 10GB total
             self.device = GPUManager.get_best_gpu(needed_mb=10000, purpose="LLM (Gemma Turbo)")
-
-            if not os.path.exists(self.model_path):
-                logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
-                self.status = "DOWNLOADING"
-                from huggingface_hub import hf_hub_download
-
-                repo_id = "bartowski/google_gemma-3-12b-it-GGUF"
-                filename = os.path.basename(self.model_path)
-
-                # Ensure models directory exists
-                os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-
-                hf_hub_download(
-                    repo_id=repo_id,
-                    filename=filename,
-                    local_dir=os.path.dirname(self.model_path),
-                    local_dir_use_symlinks=False,
-                )
-                logging.info("LLM: Download completed successfully.")
-                self.status = "LOADING"
 
             logging.info(f"LLM: Loading on {self.device}...")
             logging.info(f"LLM: GPU Offload Supported: {llama_supports_gpu_offload()}")
@@ -116,6 +120,18 @@ class LLMManager:
             self.abort_event.set()
         finally:
             self.ready_event.set()
+
+    def shutdown(self):
+        """Explicitly releases the LLM from VRAM."""
+        if self.llm:
+            logging.info("LLM: Unloading model...")
+            del self.llm
+            self.llm = None
+            self.status = "IDLE"
+            gc.collect()
+            if torch and "cuda" in self.device:
+                torch.cuda.empty_cache()
+            logging.info("LLM: Unloaded.")
 
     def _run_inference(self, prompt, priority=10, **kwargs):
         """Wrapper for LLM inference that respects the global lock or uses the RPC service."""
@@ -168,6 +184,7 @@ class LLMManager:
 
     def analyze_script(self, script: List[Dict], ddir: str, subtitles: str = "") -> Dict:
         """Phase 1: Global Analysis & Phase 2: Speaker Profiling & Phase 3: ASR Correction."""
+        self.load_model()
 
         # 1. Overview for analysis
         max_overview_lines = 400
