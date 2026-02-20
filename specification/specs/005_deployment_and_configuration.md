@@ -58,18 +58,21 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `GPU_TTS` | Specific GPU ID (integer) for the TTS microservice. | `0` |
 
 ### 2.3 GPU Resource Management
-The system includes a **Dynamic GPU Manager** that orchestrates VRAM usage to prevent Out-Of-Memory (OOM) errors, especially on consumer hardware.
+The system includes an **Intelligent GPU Manager** that orchestrates VRAM usage using a **Lazy Loading** and **Memory Rotation** strategy.
 
--   **Strategy:** "Dynamic" (Default).
+-   **Device Mapping:** The system uses hardware signatures (Name + VRAM size) to correctly map `nvidia-smi` system indices to PyTorch `cuda:X` indices, preventing misallocation on multi-GPU systems.
 -   **Behavior:**
-    -   Models (LLM, TTS, Whisper) are loaded/unloaded on demand if VRAM is constrained.
-    -   The system attempts to pre-load models during startup if resources permit.
-    -   A global lock prevents concurrent inference on single-GPU setups.
+    -   Models (LLM, TTS, Whisper, Diarization) are loaded into memory only when their specific stage is active.
+    -   Whisper and Diarization models are explicitly unloaded immediately after use to free space for synthesis.
+    -   **Parallel Slots:** LLM (Gemma 3 12B) is configured with multiple parallel inference slots (e.g., 4) when sufficient VRAM is available.
+    -   **RPC Serialization:** Access to GPU resources is serialized via an Internal RPC layer with priority-based queuing.
 
 ## 3. Hardware Requirements
--   **GPU:** Strongly recommended (NVIDIA CUDA) for reasonable processing times (Whisper + TTS).
--   **CPU-only:** Supported but significantly slower (not recommended for production).
--   **RAM:** Minimum 8GB (16GB recommended for larger Whisper models).
+-   **GPU:** Strongly recommended (NVIDIA CUDA). 
+-   **Multi-GPU Recommendation:**
+    -   **Primary (12GB+):** LLM (Gemma 12B) requires ~10GB for 8k context and parallel slots.
+    -   **Secondary (8GB+):** TTS (XTTS) and Analysis (Whisper/Diarization) work optimally here.
+-   **RAM:** Minimum 16GB.
 
 ## 4. Local Development Notes
 Running Dubarr locally (outside Docker) requires creating two separate virtual environments:

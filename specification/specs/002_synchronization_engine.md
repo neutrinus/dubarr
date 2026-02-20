@@ -11,30 +11,28 @@ The process iterates for each dialogue segment until an acceptable duration is a
 -   **Target Duration:** The time available for the segment in the original video.
 -   **Current Text:** The translated text (starts with the draft).
 -   **Speaker Profile:** Reference audio and style settings.
--   **Attempt Limit:** Default is 3 attempts.
+-   **Attempt Limit:** Default is 5 attempts.
 
 ### 2.2 Execution Steps
 
 1.  **Synthesize (TTS):**
-    -   Generate audio using the TTS engine for the `current_text`.
+    -   Generate audio using the `TTSService` for the `current_text`.
     -   Measure the actual duration of the generated audio (`actual_dur`).
 
 2.  **Measure Deviation (Delta):**
     -   Calculate `delta = actual_dur - target_dur`.
-    -   Calculate `abs_delta` (absolute difference).
 
 3.  **Acceptance Check:**
-    -   **Strict (Short Segments < 2s):** `abs_delta < 0.4s`.
-    -   **Standard:** `abs_delta < 0.6s` OR `(abs_delta / target_dur) < 0.15` (15% tolerance).
+    -   **Strict Criteria:** `actual_dur <= (target_dur + 0.05s)`.
     -   **If Accepted:** Proceed to Step 5.
     -   **If Rejected:** Proceed to Step 4.
 
 4.  **Refinement (LLM):**
     -   **Prompt:** Ask the LLM to rewrite `current_text` to match the target duration.
         -   If `actual_dur > target_dur`: Request a shorter, more concise version.
-        -   If `actual_dur < target_dur`: Request a slightly expanded version (if significantly short).
+    -   **Priority:** Refinement tasks are sent to `LLMService` with **Priority 1** (High).
     -   **Update:** Set `current_text` to the new version.
-    -   **Repeat:** Go back to Step 1.
+    -   **Repeat:** Go back to Step 1 (up to 5 times).
 
 ### 2.3 Voice Reference Strategy
 To ensure consistent voice cloning, the engine uses a hierarchical strategy to select the reference audio for each segment:
@@ -43,8 +41,8 @@ To ensure consistent voice cloning, the engine uses a hierarchical strategy to s
 3.  **Golden Reference:** If (1) and (2) fail, falls back to the best global sample found in Stage 4.
 
 5.  **Finalization:**
-    -   **Success:** Return the accepted audio file path and text.
-    -   **Failure (Max Attempts Reached):** Return the *best* attempt (closest duration) with a warning status (`FALLBACK`).
+    -   **Success:** Return the accepted audio file path.
+    -   **Fallback (Max Attempts Reached):** Return the *longest* attempt that satisfies the strict duration criteria. If none fit, return the shortest available attempt with a warning.
 
 ### 2.3 Post-Processing (Speed Adjustment)
 Even after the loop, minor discrepancies may exist. The engine applies a final FFmpeg `atempo` filter:

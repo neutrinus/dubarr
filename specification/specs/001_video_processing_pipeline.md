@@ -7,7 +7,7 @@ The **Video Dubbing Pipeline** is the core business process of Dubarr. It transf
 The pipeline executes sequentially in 8 stages (plus initialization). Each stage is checkpointed in the database to allow resumption.
 
 ### 2.0 Initialization (Startup)
-The system attempts to pre-load critical models (Whisper, Diarization, LLM, TTS) into VRAM on application startup to reduce latency. If VRAM is constrained, the `GPUManager` handles dynamic loading/unloading.
+The system verifies model presence and downloads missing files. To maximize available VRAM, models follow a **Lazy Loading** strategy: they are loaded into memory only when needed and unloaded immediately after their stage completes.
 
 ### Stage 1: Audio Separation
 *   **Input:** Original video file path.
@@ -21,8 +21,8 @@ The system attempts to pre-load critical models (Whisper, Diarization, LLM, TTS)
 ### 2.2 Stage 2: Audio Analysis
 *   **Input:** `vocals.wav`.
 *   **Action:**
-    1.  **Transcription:** Whisper converts speech to text with timestamps.
-    2.  **Diarization:** Pyannote (or similar) identifies speaker segments (Speaker A, Speaker B).
+    1.  **Diarization:** Pyannote identifies speaker segments. Model is unloaded immediately after.
+    2.  **Transcription:** Whisper converts speech to text. Model is loaded on-demand and unloaded immediately after.
 *   **Output:**
     *   `diarization.json` (Time ranges mapped to speakers).
     *   `transcription.json` (Text segments with timestamps).
@@ -45,14 +45,16 @@ The system attempts to pre-load critical models (Whisper, Diarization, LLM, TTS)
 *   **Output:**
     *   `refs/{speaker_id}.wav` (Reference audio for TTS).
 
-### 2.5 Stage 5: Production (Per Language)
-*   **Loop:** For each `target_lang` in request:
-    1.  **Draft Translation:** LLM translates the script, respecting speaker style.
+### 2.5 Stage 5: Production (Parallel)
+*   **Action:** All `target_langs` are processed concurrently in a Thread Pool.
+*   **Workflow per language:**
+    1.  **Draft Translation:** LLM translates the script.
     2.  **Sync Loop:** (See Spec 002 for details).
-        -   **TTS Microservice:** Sends generation requests to the internal TTS server (`localhost:5050`) to handle Coqui-TTS inference in an isolated environment.
-        -   If audio duration > video duration, LLM shortens text.
-        -   Repeats until synchronized.
-    3.  **Mastering:** Applies EQ, compression, and panning based on speaker position (if detected).
+        -   TTS generates audio via `TTSService`.
+        -   Strict duration enforcement (audio <= video).
+        -   Up to 5 refinement attempts.
+    3.  **Mastering:** Applies EQ, compression, and panning.
+*   **Resource Management:** GPU-heavy tasks (LLM, TTS) are queued in an Internal RPC layer to prevent resource conflicts.
 *   **Output:**
     *   `final_{lang}_{index}.wav` (Individual segments).
 

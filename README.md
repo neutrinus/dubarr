@@ -114,8 +114,9 @@ The system processes each video through 7 major stages:
     *   **Transcription**: Converts speech to text using Whisper Large-v3.
 3.  **Stage 3: Global Analysis (LLM Stage 1 & 2)**: Gemma 3 12B analyzes the full script to create plot summaries and phonetic glossaries for characters.
 4.  **Stage 4: Transcription Correction (Editor)**: Fixes ASR errors while maintaining standard orthography. Uses **reference subtitles** (if found) as ground truth for proper nouns.
-5.  **Stage 5: Production**:
-    *   **Duration-Aware Translation**: Adapts text for dubbing while strictly respecting the available time window (syllable-count constraints).
+5.  **Stage 5: Production (Parallel)**:
+    *   **Duration-Aware Translation**: Adapts text for dubbing using a strict duration-matching algorithm (audio <= original window) with up to 5 refinement attempts.
+    *   **Resource Management (RPC)**: Uses an internal RPC layer to parallelize production across multiple target languages while serializing GPU access via priority queues.
     *   **Synthesis (XTTS v2)**: Generates the new audio track with cloned voices and real-time artifact guards (ZCR checking).
 6.  **Stage 6: Final Mix**: Aggressive sidechain ducking (12:1 ratio) and Ambient Ghosting (low-pass original audio) for a rich, cinematic audio field.
 7.  **Stage 7: Muxing**: Assembles the final video with all new tracks named "AI - [Language]".
