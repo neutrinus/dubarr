@@ -4,7 +4,10 @@
 The **Video Dubbing Pipeline** is the core business process of Dubarr. It transforms a source video into a dubbed version with synchronized audio in one or more target languages.
 
 ## 2. Process Flow
-The pipeline executes sequentially in 7 stages. Each stage is checkpointed in the database to allow resumption.
+The pipeline executes sequentially in 8 stages (plus initialization). Each stage is checkpointed in the database to allow resumption.
+
+### 2.0 Initialization (Startup)
+The system attempts to pre-load critical models (Whisper, Diarization, LLM, TTS) into VRAM on application startup to reduce latency. If VRAM is constrained, the `GPUManager` handles dynamic loading/unloading.
 
 ### Stage 1: Audio Separation
 *   **Input:** Original video file path.

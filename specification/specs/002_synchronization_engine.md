@@ -36,6 +36,12 @@ The process iterates for each dialogue segment until an acceptable duration is a
     -   **Update:** Set `current_text` to the new version.
     -   **Repeat:** Go back to Step 1.
 
+### 2.3 Voice Reference Strategy
+To ensure consistent voice cloning, the engine uses a hierarchical strategy to select the reference audio for each segment:
+1.  **Dynamic Extraction:** Attempts to extract a clean sample from the *current* original audio segment (if long/clean enough). This preserves local emotion/prosody.
+2.  **Last Good Sample:** If (1) fails, uses the last successfully synthesized segment's reference for this speaker.
+3.  **Golden Reference:** If (1) and (2) fail, falls back to the best global sample found in Stage 4.
+
 5.  **Finalization:**
     -   **Success:** Return the accepted audio file path and text.
     -   **Failure (Max Attempts Reached):** Return the *best* attempt (closest duration) with a warning status (`FALLBACK`).

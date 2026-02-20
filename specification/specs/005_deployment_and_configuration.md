@@ -50,6 +50,16 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `TTS_MODEL` | Selects the TTS engine (e.g., `xtts`, `openai`, `elevenlabs`). | `xtts` |
 | `WHISPER_MODEL` | Whisper model size (`tiny`, `base`, `small`, `medium`, `large-v3`). | `medium` |
 | `DEVICE` | Computation device (`cuda`, `cpu`, `mps`). Auto-detected if unset. | `cuda` |
+| `MOCK_MODE` | If `true`, bypasses ML models and returns dummy data. For testing/dev. | `false` |
+
+### 2.3 GPU Resource Management
+The system includes a **Dynamic GPU Manager** that orchestrates VRAM usage to prevent Out-Of-Memory (OOM) errors, especially on consumer hardware.
+
+-   **Strategy:** "Dynamic" (Default).
+-   **Behavior:**
+    -   Models (LLM, TTS, Whisper) are loaded/unloaded on demand if VRAM is constrained.
+    -   The system attempts to pre-load models during startup if resources permit.
+    -   A global lock prevents concurrent inference on single-GPU setups.
 
 ## 3. Hardware Requirements
 -   **GPU:** Strongly recommended (NVIDIA CUDA) for reasonable processing times (Whisper + TTS).
