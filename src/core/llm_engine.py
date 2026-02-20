@@ -63,9 +63,8 @@ class LLMManager:
             raise RuntimeError("llama-cpp-python import failed. Check logs for details (missing libcuda?).")
 
         try:
-            # Dynamic GPU allocation
-            # Gemma 12B Q4 needs approx 9GB total (weights + context + overhead)
-            self.device = GPUManager.get_best_gpu(needed_mb=9000, purpose="LLM (Gemma)")
+            # Gemma 12B Q4 + 16k context needs approx 10GB total
+            self.device = GPUManager.get_best_gpu(needed_mb=10000, purpose="LLM (Gemma Turbo)")
 
             if not os.path.exists(self.model_path):
                 logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
@@ -102,9 +101,10 @@ class LLMManager:
                 model_path=self.model_path,
                 n_gpu_layers=n_gpu_layers,
                 main_gpu=main_gpu,
-                n_ctx=4096,
-                n_batch=512,
-                n_threads=4,
+                n_ctx=8192,
+                n_batch=1024,
+                n_ubatch=512,
+                n_threads=8,
                 flash_attn=(n_gpu_layers > 0),  # Flash Attn only works with CUDA
                 verbose=False,
             )

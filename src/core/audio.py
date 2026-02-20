@@ -29,7 +29,7 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
 
     # Dynamic GPU allocation
     # Demucs needs approx 3GB
-    target_device = GPUManager.get_best_gpu(needed_mb=3000, purpose="Demucs")
+    target_device = GPUManager.get_best_gpu(needed_mb=2000, purpose="Demucs")
 
     demucs_cmd = [
         "demucs",
