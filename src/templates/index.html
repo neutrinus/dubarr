@@ -353,10 +353,16 @@
                 const entry = document.createElement('div');
                 entry.className = 'log-entry';
                 entry.textContent = event.data;
+                
+                // Check if user is at the bottom (with 50px buffer)
+                const isAtBottom = logContainer.scrollHeight - logContainer.clientHeight <= logContainer.scrollTop + 50;
+                
                 logContainer.appendChild(entry);
                 
-                // Auto-scroll to bottom
-                logContainer.scrollTop = logContainer.scrollHeight;
+                // Auto-scroll only if we were already at the bottom
+                if (isAtBottom) {
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                }
                 
                 // Limit buffer to 500 lines to prevent browser lag
                 if (logContainer.childNodes.length > 500) {
