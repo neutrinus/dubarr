@@ -66,10 +66,18 @@ The pipeline executes sequentially in 7 stages. Each stage is checkpointed in th
 *   **Input:** Original video, `final_{lang}.ac3`.
 *   **Action:**
     1.  FFmpeg replaces the original audio stream with the new dubbed track(s).
-    2.  Preserves video stream (copy codec) to avoid re-encoding quality loss.
-*   **Output:**
-    *   `final_muxed.mkv` (Final video file).
-
-## 3. Data Persistence
+        2. Preserves video stream (copy codec) to avoid re-encoding quality loss.
+    *   **Output:**
+        *   `final_muxed.mkv` (Final video file).
+    
+    ### 2.8 Stage 8: Reporting & Cleanup
+    *   **Action:**
+        1.  Calculates total processing time and individual stage durations.
+        2.  Calculates LLM performance metrics (tokens per second).
+        3.  Logs a detailed performance report to the system logs.
+        4.  Cleans up temporary files (unless `debug_mode` is enabled).
+        5.  Updates task status to `DONE`.
+    
+    ## 3. Data Persistence
 -   **Task Table:** Tracks overall progress (`QUEUED`, `PROCESSING`, `DONE`, `ERROR`).
 -   **Job Steps Table:** Stores the result of each stage (`result_data` JSON) to enable skipping completed steps on retry.
