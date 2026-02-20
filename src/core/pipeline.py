@@ -283,6 +283,40 @@ class DubbingPipeline:
         filt = f"highpass=f=60,{echo}speechnorm=e=4:r=0.0001:l=1,pan=stereo|c0={1.0 - max(0, p):.2f}*c0|c1={1.0 + min(0, p):.2f}*c0,atempo={speed}"
         subprocess.run(["ffmpeg", "-i", r, "-af", filt, f, "-y"], capture_output=True)
 
+    def _run_step(self, name, func, task_id, *args):
+        # Check for checkpoint if db and task_id provided
+        if self.db and task_id:
+            cached = self.db.get_step_result(task_id, name)
+            if cached is not None:
+                # Validate that files mentioned in cached result actually exist
+                def validate_files(obj):
+                    if isinstance(obj, str) and (obj.startswith("/") or "/" in obj) and "." in obj:
+                        if os.path.exists(obj):
+                            return True
+                        # If it looks like a path but doesn't exist, fail validation
+                        return False
+                    if isinstance(obj, (list, tuple)):
+                        return all(validate_files(x) for x in obj)
+                    if isinstance(obj, dict):
+                        return all(validate_files(v) for v in obj.values())
+                    return True
+
+                if validate_files(cached):
+                    logger.info(f"STEP {name}: Using cached result.")
+                    return cached
+                else:
+                    logger.warning(f"STEP {name}: Cache exists but referenced files are missing. Re-running step.")
+
+        logger.info(f"STARTING STEP: {name}")
+        t = time.perf_counter()
+        res = func(*args)
+        self.durations[name] = time.perf_counter() - t
+        logger.info(f"COMPLETED STEP: {name} in {humanfriendly.format_timespan(self.durations[name])}")
+
+        if self.db and task_id:
+            self.db.save_step_result(task_id, name, "DONE", result_data=res)
+        return res
+
     def process_video(self, vpath: str, task_id: Optional[int] = None):
         if not os.path.isabs(vpath):
             vpath = os.path.join(VIDEO_FOLDER, vpath)
@@ -301,41 +335,10 @@ class DubbingPipeline:
         self.monitor.daemon = True
         self.monitor.start()
 
-        def run_step(name, func, *args):
-            # Check for checkpoint if db and task_id provided
-            if self.db and task_id:
-                cached = self.db.get_step_result(task_id, name)
-                if cached is not None:
-                    # Validate that files mentioned in cached result actually exist
-                    def validate_files(obj):
-                        if isinstance(obj, str) and (obj.startswith("/") or "/" in obj) and "." in obj:
-                            if os.path.exists(obj): return True
-                            # If it looks like a path but doesn't exist, fail validation
-                            return False
-                        if isinstance(obj, (list, tuple)):
-                            return all(validate_files(x) for x in obj)
-                        if isinstance(obj, dict):
-                            return all(validate_files(v) for v in obj.values())
-                        return True
-
-                    if validate_files(cached):
-                        logger.info(f"STEP {name}: Using cached result.")
-                        return cached
-                    else:
-                        logger.warning(f"STEP {name}: Cache exists but referenced files are missing. Re-running step.")
-
-            logger.info(f"STARTING STEP: {name}")
-            t = time.perf_counter()
-            res = func(*args)
-            self.durations[name] = time.perf_counter() - t
-            logger.info(f"COMPLETED STEP: {name} in {humanfriendly.format_timespan(self.durations[name])}")
-
-            if self.db and task_id:
-                self.db.save_step_result(task_id, name, "DONE", result_data=res)
-            return res
-
-        a_stereo, vocals = run_step("Stage 1: Audio Separation", prep_audio, vpath)
-        analysis_data = run_step("Stage 2: Audio Analysis", analyze_audio, vocals, self.diar_manager, self.whisper_manager)
+        a_stereo, vocals = self._run_step("Stage 1: Audio Separation", prep_audio, task_id, vpath)
+        analysis_data = self._run_step(
+            "Stage 2: Audio Analysis", analyze_audio, task_id, vocals, self.diar_manager, self.whisper_manager
+        )
         diar, trans, audio_durs = analysis_data[0], analysis_data[1], analysis_data[2]
         self.durations.update(audio_durs)
 
@@ -351,11 +354,13 @@ class DubbingPipeline:
             return
         ref_subs = self._extract_subtitles(vpath)
 
-        analysis_results = run_step("Stage 3: Global Analysis", self.llm_manager.analyze_script, script, ddir, ref_subs)
+        analysis_results = self._run_step(
+            "Stage 3: Global Analysis", self.llm_manager.analyze_script, task_id, script, ddir, ref_subs
+        )
         self.global_context = analysis_results["context"]
         self.speaker_info = analysis_results["speakers"]
 
-        run_step("Stage 4: Transcription Correction", self._extract_refs, script, vocals, ddir)
+        self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
 
         existing_langs = audio_processor.get_audio_languages(vpath)
         if existing_langs:
@@ -469,7 +474,7 @@ class DubbingPipeline:
                 last_end_time = start + (actual_dur / speed_factor)
 
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
-            run_step(f"Stage 6: Final Mix ({lang})", mix_audio, a_stereo, final_audio_segments, final_a)
+            self._run_step(f"Stage 6: Final Mix ({lang})", mix_audio, task_id, a_stereo, final_audio_segments, final_a)
             all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
 
         if self.db and task_id:
@@ -478,7 +483,7 @@ class DubbingPipeline:
         if all_audio_tracks:
             ext = os.path.splitext(vpath)[1] or ".mkv"
             final_video = os.path.join(self.temp_dir, f"final_muxed{ext}")
-            run_step("Stage 7: Muxing", FFmpegWrapper.mux_video, vpath, all_audio_tracks, final_video)
+            self._run_step("Stage 7: Muxing", FFmpegWrapper.mux_video, task_id, vpath, all_audio_tracks, final_video)
             logger.info(f"Replacing original file: {vpath}")
             shutil.move(final_video, vpath)
 

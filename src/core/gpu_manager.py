@@ -2,7 +2,6 @@ import time
 import logging
 import gc
 import subprocess
-import threading
 
 try:
     import torch
@@ -10,6 +9,7 @@ except ImportError:
     torch = None
 
 logger = logging.getLogger(__name__)
+
 
 class GPUManager:
     """Intelligent VRAM manager that dynamically allocates models to best available GPU."""
@@ -29,13 +29,15 @@ class GPUManager:
                 for line in lines:
                     parts = [p.strip() for p in line.split(",")]
                     if len(parts) >= 5:
-                        gpus.append({
-                            "id": int(parts[0]),
-                            "name": parts[1],
-                            "used": int(parts[2]),
-                            "free": int(parts[3]),
-                            "total": int(parts[4])
-                        })
+                        gpus.append(
+                            {
+                                "id": int(parts[0]),
+                                "name": parts[1],
+                                "used": int(parts[2]),
+                                "free": int(parts[3]),
+                                "total": int(parts[4]),
+                            }
+                        )
         except Exception as e:
             logger.warning(f"GPU Manager: Failed to query nvidia-smi: {e}")
         return gpus
@@ -65,11 +67,11 @@ class GPUManager:
 
             # Sort GPUs by free memory descending
             all_gpus.sort(key=lambda x: x["free"], reverse=True)
-            
+
             # Filter GPUs that meet the requirement + safety margin
             safety_margin = 500
             candidates = [g for g in all_gpus if g["free"] >= (needed_mb + safety_margin)]
-            
+
             if candidates:
                 # Choose the one with the most free space
                 best = candidates[0]
@@ -85,10 +87,12 @@ class GPUManager:
             if elapsed > timeout:
                 logger.error(f"GPU Manager: Timeout waiting for {needed_mb}MB for {purpose}.")
                 # Return the one with most space anyway, or CPU
-                return f"cuda:0" if torch.cuda.device_count() > 0 else "cpu"
+                return "cuda:0" if torch.cuda.device_count() > 0 else "cpu"
 
             if int(elapsed) % 30 == 0:
-                logger.info(f"GPU Manager: Waiting for {needed_mb}MB VRAM for {purpose}... (Best free: {best['free']}MB on {best['name']})")
+                logger.info(
+                    f"GPU Manager: Waiting for {needed_mb}MB VRAM for {purpose}... (Best free: {best['free']}MB on {best['name']})"
+                )
                 GPUManager.force_gc()
 
             time.sleep(5)
