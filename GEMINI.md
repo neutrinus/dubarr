@@ -54,6 +54,9 @@ Before implementing any code changes (features, refactors, or bug fixes that alt
 
 ## 8. Completion & Source Control
 Once a functionality or bug fix is implemented and successfully verified through tests and manual validation:
-1.  **Prepare Commits:** Group related changes into logical, concise commits. Follow the existing commit message style (e.g., `feat:`, `fix:`, `docs:`, `ux:`).
+1.  **Prepare Commits:**
+    -   Group related changes into small, logically cohesive commits.
+    -   **Avoid large monolithic commits** that combine unrelated features, bug fixes, or documentation updates.
+    -   Follow the existing commit message style (e.g., `feat:`, `fix:`, `docs:`, `ux:`, `style:`).
 2.  **Push Changes:** Push the committed changes to the remote repository (`main` or the current feature branch) to ensure the codebase remains up to date.
 3.  **Final Status:** Confirm that the push was successful and that the CI/CD pipeline (if applicable) is triggered.
