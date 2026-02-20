@@ -116,6 +116,11 @@
         .btn-purge:hover { border-color: var(--arr-blue); color: var(--arr-blue); }
         .btn-delete:hover { border-color: var(--arr-red); color: var(--arr-red); }
 
+        /* Hide dropdown arrow for our icon buttons */
+        .dropdown-toggle::after {
+            display: none;
+        }
+
         .path-text {
             font-family: monospace;
             color: #ccc;
@@ -266,30 +271,53 @@
                                         </div>
                                     </td>
                                     <td class="text-end">
-                                        {% if task.status == 'DONE' %}
-                                        <a href="/download/{{ task.id }}" class="btn-icon mx-1" title="Download Result">
-                                            📥
-                                        </a>
-                                        {% endif %}
-                                        {% if task.status != 'PROCESSING' %}
-                                        <form action="/purge/{{ task.id }}" method="post" class="d-inline">
-                                            <button type="submit" class="btn-icon btn-purge mx-1" title="Purge Cache (Start from Stage 1)">
-                                                🧹
-                                            </button>
-                                        </form>
-                                        <form action="/retry/{{ task.id }}" method="post" class="d-inline">
-                                            <button type="submit" class="btn-icon btn-retry mx-1" title="Retry">
-                                                ⟳
-                                            </button>
-                                        </form>
-                                        <form action="/delete/{{ task.id }}" method="post" class="d-inline">
-                                            <button type="submit" class="btn-icon btn-delete" title="Remove">
-                                                ✕
-                                            </button>
-                                        </form>
-                                        {% else %}
-                                        <span class="text-secondary small fst-italic me-2">Active...</span>
-                                        {% endif %}
+                                        <div class="d-flex justify-content-end gap-1">
+                                            {% if task.status == 'DONE' or task.progress >= 2 %}
+                                            <div class="dropdown">
+                                                <button class="btn-icon dropdown-toggle" type="button" data-bs-toggle="dropdown" title="Debug Artifacts">
+                                                    🛠️
+                                                </button>
+                                                <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end">
+                                                    <li><h6 class="dropdown-header">Intermediate Results</h6></li>
+                                                    {% if task.progress >= 2 %}
+                                                    <li><a class="dropdown-item small" href="/debug/{{ task.id }}/transcription" target="_blank">Transcription</a></li>
+                                                    {% endif %}
+                                                    {% if task.progress >= 3 %}
+                                                    <li><a class="dropdown-item small" href="/debug/{{ task.id }}/context" target="_blank">Story Context</a></li>
+                                                    <li><a class="dropdown-item small" href="/debug/{{ task.id }}/speakers" target="_blank">Speaker Profiles</a></li>
+                                                    {% endif %}
+                                                    {% if task.progress >= 5 %}
+                                                    <li><a class="dropdown-item small" href="/debug/{{ task.id }}/production" target="_blank">Translations</a></li>
+                                                    {% endif %}
+                                                </ul>
+                                            </div>
+                                            {% endif %}
+
+                                            {% if task.status == 'DONE' %}
+                                            <a href="/download/{{ task.id }}" class="btn-icon" title="Download Result">
+                                                📥
+                                            </a>
+                                            {% endif %}
+                                            {% if task.status != 'PROCESSING' %}
+                                            <form action="/purge/{{ task.id }}" method="post" class="d-inline">
+                                                <button type="submit" class="btn-icon btn-purge" title="Purge Cache (Start from Stage 1)">
+                                                    🧹
+                                                </button>
+                                            </form>
+                                            <form action="/retry/{{ task.id }}" method="post" class="d-inline">
+                                                <button type="submit" class="btn-icon btn-retry" title="Retry">
+                                                    ⟳
+                                                </button>
+                                            </form>
+                                            <form action="/delete/{{ task.id }}" method="post" class="d-inline">
+                                                <button type="submit" class="btn-icon btn-delete" title="Remove">
+                                                    ✕
+                                                </button>
+                                            </form>
+                                            {% else %}
+                                            <span class="text-secondary small fst-italic me-2">Active...</span>
+                                            {% endif %}
+                                        </div>
                                     </td>
                                 </tr>
                                 {% else %}
