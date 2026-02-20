@@ -106,8 +106,8 @@ def get_compute_device():
 
         if gpu_count >= 2:
             # Optimal: Dual GPU Split
-            llm_idx = int(os.environ.get("GPU_LLM_ID", "1"))
-            audio_idx = int(os.environ.get("GPU_AUDIO_ID", "0"))
+            llm_idx = int(os.environ.get("GPU_LLM_ID", "0"))
+            audio_idx = int(os.environ.get("GPU_AUDIO_ID", "1"))
 
             # Ensure indices exist
             if llm_idx >= gpu_count:
