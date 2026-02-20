@@ -170,7 +170,7 @@ class DubbingPipeline:
                     clarity_score -= 20
 
                 cr = s.get("compression_ratio", 1.2)
-                if i > 1.8:
+                if cr > 1.8:
                     clarity_score = 0
                 if cr < 0.6:
                     clarity_score -= 10
