@@ -36,6 +36,9 @@ WHISPER_MODEL = "large-v3"
 # Safe logging setup
 def setup_logging():
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    os.makedirs(VIDEO_FOLDER, exist_ok=True)
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
     logging.basicConfig(
         level=LOG_LEVEL,
         format="%(asctime)s - %(levelname)s - %(message)s",
