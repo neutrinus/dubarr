@@ -30,7 +30,7 @@ print(f"DEBUG: config.VIDEO_FOLDER={VIDEO_FOLDER}", flush=True)
 print(f"DEBUG: config.OUTPUT_FOLDER={OUTPUT_FOLDER}", flush=True)
 print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
-WHISPER_MODEL = "large-v3"
+WHISPER_MODEL = "large-v3-turbo"
 
 
 # Safe logging setup

@@ -56,22 +56,30 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
 
 
 def analyze_audio(vocals_path: str, diar_manager, whisper_manager) -> Tuple[List, List, Dict]:
-    """Orchestrates diarization and transcription using provided managers."""
+    """Orchestrates diarization and transcription using provided managers with eager VRAM cleanup."""
     mpath = os.path.join(TEMP_DIR, "mono.wav")
     FFmpegWrapper.convert_audio(vocals_path, mpath, ac=1, ar=24000)
 
     durations = {}
-    logger.info("Starting Audio Analysis...")
+    logger.info("Starting Audio Analysis (Stage 2)...")
 
+    # 1. Diarization: Load, Process, Unload immediately
     t0 = time.perf_counter()
+    logger.info("Stage 2a: Speaker Diarization...")
     diar_result = diar_manager.diarize(mpath)
     durations["2a. Diarization"] = time.perf_counter() - t0
-    diar_manager.shutdown()  # Free VRAM on 3070
+    diar_manager.shutdown()
+    GPUManager.force_gc()  # Aggressive cleanup
 
+    # 2. Transcription: Load, Process, Unload immediately
     t0 = time.perf_counter()
+    logger.info("Stage 2b: Transcription...")
+    # WhisperManager.transcribe will auto-load if needed, but we can be explicit
+    whisper_manager.load_model()
     trans_result = whisper_manager.transcribe(mpath)
     durations["2b. Transcription"] = time.perf_counter() - t0
-    whisper_manager.shutdown()  # Free VRAM on 3070
+    whisper_manager.shutdown()
+    GPUManager.force_gc()  # Aggressive cleanup
 
     return diar_result, trans_result, durations
 

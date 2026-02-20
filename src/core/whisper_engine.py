@@ -15,6 +15,8 @@ try:
 except ImportError:
     WhisperModel = None
 
+logger = logging.getLogger(__name__)
+
 
 class WhisperManager:
     def __init__(
@@ -78,18 +80,25 @@ class WhisperManager:
             return self._run_transcribe(audio_path)
 
     def _run_transcribe(self, audio_path: str) -> List[Dict]:
-        ts, _ = self.model.transcribe(audio_path)
-        res = [
-            {
-                "start": x.start,
-                "end": x.end,
-                "text": x.text.strip(),
-                "avg_logprob": x.avg_logprob,
-                "no_speech_prob": x.no_speech_prob,
-            }
-            for x in ts
-            if x.avg_logprob >= -1.0
-        ]
+        ts, info = self.model.transcribe(audio_path)
+        logger.info(f"Whisper: Starting transcription of {info.duration:.2f}s audio (Language: {info.language})")
+        
+        res = []
+        for x in ts:
+            if x.avg_logprob >= -1.0:
+                segment = {
+                    "start": x.start,
+                    "end": x.end,
+                    "text": x.text.strip(),
+                    "avg_logprob": x.avg_logprob,
+                    "no_speech_prob": x.no_speech_prob,
+                }
+                res.append(segment)
+                # Log progress every few segments or every 30 seconds of audio
+                if len(res) % 20 == 0:
+                    logger.info(f"Whisper Progress: {x.end:.2f}s / {info.duration:.2f}s transcribed...")
+        
+        logger.info(f"Whisper: Completed transcription. Found {len(res)} segments.")
         return res
 
     def shutdown(self):
