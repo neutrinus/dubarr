@@ -201,7 +201,6 @@ class XTTSClient:
                 # Detect Tensor Size Mismatch (XTTS v2 specific internal error)
                 if "size of tensor" in error_text and "must match" in error_text:
                     raise ValueError(f"XTTS Tensor Error: {error_text}")
-                    raise ValueError(f"XTTS Tensor Error: {error_text}")
 
                 raise RuntimeError(f"XTTS Server Error: {error_text}")
         except Exception as e:

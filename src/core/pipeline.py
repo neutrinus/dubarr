@@ -389,6 +389,7 @@ class DubbingPipeline:
 
         self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
 
+        # 5. Production (Per Language / Global Task Pool)
         # Initialize GPU RPC Services
         # 1 worker for LLM to ensure absolute stability with llama-cpp-python CUDA
         llm_service = LLMService(num_workers=1)
@@ -396,17 +397,60 @@ class DubbingPipeline:
         llm_service.start()
         tts_service.start()
 
-        # Connect services to monitor for queue size logging
+        try:
+            # Connect services to monitor for queue size logging
+            if self.monitor:
+                self.monitor.llm_service = llm_service
+                self.monitor.tts_service = tts_service
+
+            # Connect managers to services
+            self.llm_manager.service = llm_service
+            self.tts_manager.service = tts_service
+
+            all_audio_tracks = self._execute_production_pool(script, vocals, ddir, a_stereo, task_id)
+
+        finally:
+            # Stop services and unload LLM from VRAM
+            llm_service.stop()
+            tts_service.stop()
+            self.llm_manager.shutdown()
+            self.llm_manager.service = None
+            self.tts_manager.service = None
+
+        if all_audio_tracks:
+            ext = os.path.splitext(vpath)[1] or ".mkv"
+            final_video = os.path.join(self.temp_dir, f"final_muxed{ext}")
+            self._run_step("Stage 7: Muxing", FFmpegWrapper.mux_video, task_id, vpath, all_audio_tracks, final_video)
+            logger.info(f"Replacing original file: {vpath}")
+            shutil.move(final_video, vpath)
+
+        self.tts_manager.shutdown()
         if self.monitor:
-            self.monitor.llm_service = llm_service
-            self.monitor.tts_service = tts_service
+            self.monitor.stop()
+        avg_tps = (
+            self.llm_manager.llm_stats["tokens"] / self.llm_manager.llm_stats["time"]
+            if self.llm_manager.llm_stats["time"] > 0
+            else 0
+        )
+        self._print_report(vpath, time.perf_counter() - start_all, avg_tps)
 
-        # Connect managers to services
-        self.llm_manager.service = llm_service
-        self.tts_manager.service = tts_service
+    def _print_report(self, f, t, avg_tps):
+        rep = ["\n" + "=" * 50, f" PROFILING REPORT: {f}", "=" * 50]
+        for k, v in sorted(self.durations.items()):
+            rep.append(f" - {k:35} : {humanfriendly.format_timespan(v)}")
+        rep.extend(
+            [
+                "-" * 50,
+                f" - LLM PERFORMANCE                  : {avg_tps:.2f} tokens/s",
+                "-" * 50,
+                f" TOTAL PROCESSING TIME: {humanfriendly.format_timespan(t)}",
+                "=" * 50 + "\n",
+            ]
+        )
+        logger.info("\n".join(rep))
 
-        # --- NEW FLATTENED TASK POOL ARCHITECTURE ---
-
+    def _execute_production_pool(self, script, vocals, ddir, a_stereo, task_id):
+        """Unified concurrent production for all languages."""
         # 1. Draft Translation for ALL languages (sequential prep)
         all_drafts_by_lang = {}
         for lang in self.target_langs:
@@ -431,7 +475,6 @@ class DubbingPipeline:
             self.monitor.orchestrator_queue_size = len(all_sync_tasks)
 
         # 3. Global Concurrent Execution (Flattened)
-        # We use a larger pool since these are mostly waiting for RPC services
         with ThreadPoolExecutor(max_workers=4) as executor:
             future_to_task = {
                 executor.submit(self.synchronizer.process_segment, task[0], task[1], vocals, script, self.global_context): task
@@ -508,44 +551,7 @@ class DubbingPipeline:
             self.durations[f"Stage 6: Final Mix ({lang})"] = 0.1
             all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
 
-        # Stop services and unload LLM from VRAM
-        llm_service.stop()
-        tts_service.stop()
-        self.llm_manager.shutdown()
-        self.llm_manager.service = None
-        self.tts_manager.service = None
-
         if self.db and task_id:
             self.db.save_step_result(task_id, "Stage 5: Production", "DONE", result_data={"langs": self.target_langs})
 
-        if all_audio_tracks:
-            ext = os.path.splitext(vpath)[1] or ".mkv"
-            final_video = os.path.join(self.temp_dir, f"final_muxed{ext}")
-            self._run_step("Stage 7: Muxing", FFmpegWrapper.mux_video, task_id, vpath, all_audio_tracks, final_video)
-            logger.info(f"Replacing original file: {vpath}")
-            shutil.move(final_video, vpath)
-
-        self.tts_manager.shutdown()
-        if self.monitor:
-            self.monitor.stop()
-        avg_tps = (
-            self.llm_manager.llm_stats["tokens"] / self.llm_manager.llm_stats["time"]
-            if self.llm_manager.llm_stats["time"] > 0
-            else 0
-        )
-        self._print_report(vpath, time.perf_counter() - start_all, avg_tps)
-
-    def _print_report(self, f, t, avg_tps):
-        rep = ["\n" + "=" * 50, f" PROFILING REPORT: {f}", "=" * 50]
-        for k, v in sorted(self.durations.items()):
-            rep.append(f" - {k:35} : {humanfriendly.format_timespan(v)}")
-        rep.extend(
-            [
-                "-" * 50,
-                f" - LLM PERFORMANCE                  : {avg_tps:.2f} tokens/s",
-                "-" * 50,
-                f" TOTAL PROCESSING TIME: {humanfriendly.format_timespan(t)}",
-                "=" * 50 + "\n",
-            ]
-        )
-        logger.info("\n".join(rep))
+        return all_audio_tracks
