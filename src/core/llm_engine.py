@@ -386,9 +386,7 @@ class LLMManager:
         t0 = time.perf_counter()
         # Refinement is Priority 1 (High)
         # Using temperature 0.3 for more stable/grammatical results
-        res = self._run_inference(
-            prompt, priority=1, max_tokens=200, temperature=0.3, stop=["<|im_end|>"]
-        )
+        res = self._run_inference(prompt, priority=1, max_tokens=200, temperature=0.3, stop=["<|im_end|>"])
         self._update_stats(res, time.perf_counter() - t0)
 
         try:
