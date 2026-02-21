@@ -180,7 +180,9 @@ class XTTSClient:
         }
 
         try:
+            logging.info(f"XTTSClient: Sending request for text: {text[:20]}...")
             res = requests.post(f"{self.server_url}/synthesize", json=payload, timeout=60)
+            logging.info(f"XTTSClient: Received response {res.status_code}")
             if res.status_code != 200:
                 error_text = res.text
                 logging.error(f"XTTS Server returned {res.status_code}: {error_text}")
