@@ -147,11 +147,11 @@ class XTTSClient:
         }
         for old, new in replacements.items():
             text = text.replace(old, new)
-        
+
         # Ensure it's not just whitespace
         if not text.strip():
             return "..."
-            
+
         return text.strip()
 
     def synthesize(self, text, ref_audio, output_path, language="en", retry_on_cuda=True):

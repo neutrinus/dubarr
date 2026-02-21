@@ -83,14 +83,14 @@ class SegmentSynchronizer:
             # 3. Refine (if not last attempt)
             if attempt < attempt_limit:
                 logger.info(f"[ID: {idx}] REJECTED (Too long: {actual_dur:.2f}s > {target_dur:.2f}s). Refining text...")
-                
+
                 # Get context from script
                 context_before = ""
                 context_after = ""
                 if idx > 0:
-                    context_before = full_script[idx-1].get("text_en", "")
+                    context_before = full_script[idx - 1].get("text_en", "")
                 if idx < len(full_script) - 1:
-                    context_after = full_script[idx+1].get("text_en", "")
+                    context_after = full_script[idx + 1].get("text_en", "")
 
                 new_text = self.llm.refine_translation_by_duration(
                     original_text=original_text,
@@ -99,7 +99,7 @@ class SegmentSynchronizer:
                     target_dur=target_dur,
                     glossary=global_context.get("glossary", {}),
                     context_before=context_before,
-                    context_after=context_after
+                    context_after=context_after,
                 )
 
                 if new_text == current_text:
@@ -112,7 +112,7 @@ class SegmentSynchronizer:
         if not attempts:
             logger.error(f"[ID: {idx}] All synthesis attempts failed. Using silent fallback.")
             return {
-                "audio_path": vocals_path, # Better than nothing, will be silent in mix if empty
+                "audio_path": vocals_path,  # Better than nothing, will be silent in mix if empty
                 "final_text": segment.get("text_en", "..."),
                 "duration": target_dur,
                 "status": "FAILED_FALLBACK",
