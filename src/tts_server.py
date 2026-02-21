@@ -46,12 +46,12 @@ def synthesize():
     except Exception as e:
         err_msg = str(e)
         logging.error(f"XTTS Synthesis Failed: {err_msg}")
-        
+
         # Free GPU memory even on failure
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            
-        # Specific handling for the 'sens' library bug to avoid 500 if possible, 
+
+        # Specific handling for the 'sens' library bug to avoid 500 if possible,
         # but here we must report it so the client can restart if needed.
         return jsonify({"status": "error", "message": err_msg}), 500
 
