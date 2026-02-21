@@ -494,37 +494,53 @@ class DubbingPipeline:
                 for task in all_sync_tasks
             }
 
-            completed_count = 0
-            total_tasks = len(all_sync_tasks)
-
-            for future in as_completed(future_to_task):
-                if self.abort_event.is_set():
-                    executor.shutdown(wait=False)
-                    raise RuntimeError("Processing aborted via event")
-
-                seg, lang = future_to_task[future]
-                idx = seg["index"]
-
-                try:
-                    seg_result = future.result()
-                    if seg_result:
-                        # Restore metadata for mixing
-                        seg_result["start"] = script[idx]["start"]
-                        seg_result["end"] = script[idx]["end"]
-                        seg_result["speaker"] = script[idx]["speaker"]
-                        seg_result["index"] = idx
-                        sync_results_by_lang[lang].append(seg_result)
-                except Exception as e:
-                    logger.error(f"Segment {idx} ({lang}) failed completely: {e}")
-
-                completed_count += 1
-                if self.monitor:
-                    self.monitor.orchestrator_queue_size = total_tasks - completed_count
-
-                if completed_count % 10 == 0:
-                    logger.info(f"  [Global Progress] {completed_count}/{total_tasks} segments processed.")
-
-        # 4. Mastering & Mixing (Per Language)
+                        completed_count = 0
+                        total_tasks = len(all_sync_tasks)
+                        pending_ids = {seg["index"] for seg, _ in all_sync_tasks}
+            
+                        # Use a simpler loop to avoid as_completed deadlock if a future hangs indefinitely
+                        # We iterate over completed futures as they come in, but with a timeout safety net?
+                        # actually as_completed is fine IF the tasks don't hang.
+                        # But adding a timeout to the generator is tricky.
+                        
+                        # Better approach: Iterate manually with timeout
+                        try:
+                            for future in as_completed(future_to_task):
+                                if self.abort_event.is_set():
+                                    executor.shutdown(wait=False)
+                                    raise RuntimeError("Processing aborted via event")
+            
+                                seg, lang = future_to_task[future]
+                                idx = seg["index"]
+                                
+                                try:
+                                    # 120s timeout per segment is generous but ensures we don't hang forever
+                                    seg_result = future.result(timeout=120)
+                                    if seg_result:
+                                        # Restore metadata for mixing
+                                        seg_result["start"] = script[idx]["start"]
+                                        seg_result["end"] = script[idx]["end"]
+                                        seg_result["speaker"] = script[idx]["speaker"]
+                                        seg_result["index"] = idx
+                                        sync_results_by_lang[lang].append(seg_result)
+                                except TimeoutError:
+                                    logger.error(f"Segment {idx} ({lang}) TIMED OUT in orchestrator. Skipping.")
+                                except Exception as e:
+                                    logger.error(f"Segment {idx} ({lang}) failed completely: {e}")
+                                
+                                completed_count += 1
+                                if idx in pending_ids:
+                                    pending_ids.remove(idx)
+            
+                                if self.monitor:
+                                    self.monitor.orchestrator_queue_size = total_tasks - completed_count
+                                
+                                if completed_count % 5 == 0:
+                                    logger.info(f"  [Global Progress] {completed_count}/{total_tasks} segments processed. Pending IDs sample: {list(pending_ids)[:5]}...")
+                        except Exception as e:
+                            logger.error(f"Orchestrator loop error: {e}")
+                            raise
+                    # 4. Mastering & Mixing (Per Language)
         all_audio_tracks = []
         for lang in self.target_langs:
             logger.info(f"--- FINALIZING LANGUAGE: {lang} ---")
