@@ -203,7 +203,8 @@
                             <thead>
                                 <tr>
                                     <th style="width: 5%">ID</th>
-                                    <th style="width: 35%">Source File / Info</th>
+                                    <th style="width: 10%">Added</th>
+                                    <th style="width: 30%">Source File / Info</th>
                                     <th style="width: 15%">Status / Time</th>
                                     <th style="width: 25%">Languages & Subs</th>
                                     <th style="width: 20%" class="text-end">Actions</th>
@@ -213,6 +214,10 @@
                                 {% for task in tasks %}
                                 <tr>
                                     <td class="text-secondary">{{ task.id }}</td>
+                                    <td class="text-secondary small">
+                                        {{ task.created_at.split(' ')[0] }}<br>
+                                        {{ task.created_at.split(' ')[1][:5] }}
+                                    </td>
                                     <td>
                                         <div class="path-text text-break mb-1" title="{{ task.path }}">
                                             {{ task.path.split('/')[-1] }}

@@ -44,6 +44,7 @@ def test_dashboard(mock_db):
             "status": "DONE",
             "progress": 7,
             "started_at": None,
+            "created_at": "2026-02-20 12:00:00",
             "file_size": 100,
             "video_duration": 60,
             "source_lang": "en",
