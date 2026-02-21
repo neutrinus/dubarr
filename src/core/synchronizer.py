@@ -15,12 +15,12 @@ class SegmentSynchronizer:
         self.debug_mode = debug_mode
 
     def process_segment(
-        self, segment: Dict, lang: str, vocals_path: str, full_script: List[Dict], global_context: Dict, attempt_limit: int = 5
+        self, segment: Dict, lang: str, vocals_path: str, full_script: List[Dict], global_context: Dict, attempt_limit: int = 3
     ) -> Optional[Dict]:
         """
         Orchestrates the feedback loop for a single segment.
         Returns the final accepted audio path and text.
-        New Strategy: Strictly <= target duration, 5 attempts.
+        New Strategy: Strictly <= target duration, 3 attempts default.
         """
         original_text = segment.get("text_en", "")
         current_text = segment.get("text", original_text)
@@ -49,7 +49,9 @@ class SegmentSynchronizer:
             raw_audio_path = result["audio_path"]
 
             try:
+                logger.debug(f"[ID: {idx}] Checking duration of {raw_audio_path}")
                 actual_dur = FFmpegWrapper.get_duration(raw_audio_path)
+                logger.debug(f"[ID: {idx}] Duration: {actual_dur}")
             except Exception:
                 actual_dur = result["duration"]
 

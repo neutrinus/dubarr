@@ -490,7 +490,9 @@ class DubbingPipeline:
         # 3. Global Concurrent Execution (Flattened)
         with ThreadPoolExecutor(max_workers=4) as executor:
             future_to_task = {
-                executor.submit(self.synchronizer.process_segment, task[0], task[1], vocals, script, self.global_context): task
+                executor.submit(
+                    self.synchronizer.process_segment, task[0], task[1], vocals, script, self.global_context
+                ): task
                 for task in all_sync_tasks
             }
 
