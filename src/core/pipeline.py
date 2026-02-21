@@ -323,6 +323,36 @@ class DubbingPipeline:
             vpath = os.path.join(VIDEO_FOLDER, vpath)
 
         logger.info(f"=== PROCESSING FILE: {vpath} (Task: {task_id}) ===")
+
+        # 0. Early check for existing languages
+        existing_langs = audio_processor.get_audio_languages(vpath)
+        iso_map = {
+            "pl": "pol",
+            "en": "eng",
+            "de": "ger",
+            "es": "spa",
+            "fr": "fra",
+            "it": "ita",
+            "ru": "rus",
+            "ja": "jpn",
+            "zh": "chi",
+            "ko": "kor",
+        }
+
+        active_langs = []
+        for lang in self.target_langs:
+            if lang.lower() in existing_langs or iso_map.get(lang.lower()) in existing_langs:
+                logger.info(f"--- SKIPPING {lang}: Language already exists in source video ---")
+            else:
+                active_langs.append(lang)
+
+        if not active_langs:
+            logger.info("All target languages already exist. Nothing to do.")
+            return
+
+        self.target_langs = active_langs
+        logger.info(f"Languages to produce: {', '.join(self.target_langs)}")
+
         start_all = time.perf_counter()
         ddir = self._cleanup_debug(vpath)
         seg_dir = os.path.join(ddir, "segments") if self.debug_mode else None
@@ -370,28 +400,7 @@ class DubbingPipeline:
         self.llm_manager.service = llm_service
         self.tts_manager.service = tts_service
 
-        existing_langs = audio_processor.get_audio_languages(vpath)
-        if existing_langs:
-            logger.info(f"Existing audio languages: {', '.join(existing_langs)}")
-
-        iso_map = {
-            "pl": "pol",
-            "en": "eng",
-            "de": "ger",
-            "es": "spa",
-            "fr": "fra",
-            "it": "ita",
-            "ru": "rus",
-            "ja": "jpn",
-            "zh": "chi",
-            "ko": "kor",
-        }
-
         def produce_language(lang):
-            if lang.lower() in existing_langs or iso_map.get(lang.lower()) in existing_langs:
-                logger.info(f"--- SKIPPING {lang}: Language already exists in source video ---")
-                return None
-
             logger.info(f"--- STARTING PRODUCTION FOR LANGUAGE: {lang} ---")
 
             # 1. Draft Translation (Batch) - Priority 2
