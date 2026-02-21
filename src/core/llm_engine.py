@@ -88,8 +88,8 @@ class LLMManager:
         try:
             self.ensure_model_downloaded()
 
-            # Gemma 12B Q4 + 16k context needs approx 10GB total
-            self.device = GPUManager.get_best_gpu(needed_mb=10000, purpose="LLM (Gemma Turbo)")
+            # Gemma 12B Q4 + 8k context needs approx 10GB total
+            self.device = GPUManager.get_best_gpu(needed_mb=10000, purpose="LLM (Gemma 3 12B)")
 
             logging.info(f"LLM: Loading on {self.device}...")
             logging.info(f"LLM: GPU Offload Supported: {llama_supports_gpu_offload()}")
