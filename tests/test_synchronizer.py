@@ -12,7 +12,7 @@ class TestSynchronizer(unittest.TestCase):
 
     def test_perfect_match(self):
         # Scenario: Duration target = 5.0, TTS produces 5.0 (perfect)
-        segment = {"index": 1, "text_en": "Hello", "start": 0, "end": 5, "speaker": "A"}
+        segment = {"index": 0, "text_en": "Hello", "start": 0, "end": 5, "speaker": "A"}
 
         self.mock_tts.synthesize_sync.return_value = {"audio_path": "fake.wav", "duration": 5.0, "voice_type": "MOCK"}
 
@@ -26,7 +26,7 @@ class TestSynchronizer(unittest.TestCase):
 
     def test_valid_fallback(self):
         # Scenario: Duration target = 5.0, TTS produces 5.08 (within 0.1s but not 0.05s)
-        segment = {"index": 1, "text_en": "Hello", "start": 0, "end": 5, "speaker": "A"}
+        segment = {"index": 0, "text_en": "Hello", "start": 0, "end": 5, "speaker": "A"}
 
         self.mock_tts.synthesize_sync.return_value = {"audio_path": "fake.wav", "duration": 5.08, "voice_type": "MOCK"}
         # Ensure LLM returns the same text so the loop finishes
@@ -40,7 +40,7 @@ class TestSynchronizer(unittest.TestCase):
 
     def test_too_long_refinement(self):
         # Scenario: Target=5.0. Attempt 1=7.0 (Too long). LLM shortens. Attempt 2=5.0 (OK).
-        segment = {"index": 1, "text_en": "Hello long", "start": 0, "end": 5, "speaker": "A"}
+        segment = {"index": 0, "text_en": "Hello long", "start": 0, "end": 5, "speaker": "A"}
 
         # TTS returns first long, then ok
         self.mock_tts.synthesize_sync.side_effect = [
@@ -60,7 +60,7 @@ class TestSynchronizer(unittest.TestCase):
 
     def test_fallback(self):
         # Scenario: Target=5.0. All attempts fail (too long). Should return best (shortest duration).
-        segment = {"index": 1, "text_en": "Hello fail", "start": 0, "end": 5, "speaker": "A"}
+        segment = {"index": 0, "text_en": "Hello fail", "start": 0, "end": 5, "speaker": "A"}
 
         # Attempt 1: 8.0s
         # Attempt 2: 7.0s -> LLM refined

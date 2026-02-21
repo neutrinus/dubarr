@@ -1,5 +1,10 @@
 import json
-from utils import parse_json, clean_srt, count_syllables, clean_output
+import os
+import wave
+import struct
+import pytest
+import subprocess
+from utils import parse_json, clean_srt, count_syllables, clean_output, run_cmd, measure_zcr
 
 
 def test_parse_json_valid():
@@ -55,3 +60,57 @@ def test_clean_output():
 
     # Test empty input
     assert clean_output("", target_langs) == ""
+
+
+def test_run_cmd_success():
+    out = run_cmd(["echo", "hello"], "test echo")
+    assert out.strip() == "hello"
+
+
+def test_run_cmd_failure():
+    with pytest.raises(subprocess.CalledProcessError):
+        run_cmd(["false"], "test failure")
+
+
+def test_measure_zcr():
+    # Create a dummy WAV file
+    path = "test_zcr.wav"
+    with wave.open(path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(44100)
+        # Sine wave-like pattern to have some zero crossings
+        # [1, -1, 1, -1, ...]
+        data = struct.pack("4h", 1000, -1000, 1000, -1000)
+        wf.writeframes(data)
+
+    try:
+        zcr = measure_zcr(path)
+        # 4 samples, 3 transitions:
+        # (1000 > 0 and -1000 <= 0) -> TRUE
+        # (-1000 <= 0 and 1000 > 0) -> TRUE
+        # (1000 > 0 and -1000 <= 0) -> TRUE
+        # Total transitions = 3. Samples = 4. ZCR = 3/4 = 0.75
+        assert zcr == 0.75
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_measure_zcr_empty():
+    path = "test_empty.wav"
+    with wave.open(path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(44100)
+        wf.writeframes(b"")
+
+    try:
+        assert measure_zcr(path) == 0.0
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_measure_zcr_invalid_file():
+    assert measure_zcr("non_existent.wav") == 0.0

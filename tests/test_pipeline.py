@@ -18,34 +18,35 @@ class TestDubbingPipeline(unittest.TestCase):
             debug_mode=False,
         )
 
-    @patch("core.pipeline.prep_audio")
-    @patch("core.pipeline.analyze_audio")
-    @patch("core.pipeline.mix_audio")
-    @patch("core.pipeline.FFmpegWrapper.mux_video")
-    @patch("core.pipeline.audio_processor.get_audio_languages")
-    @patch("shutil.move")
-    @patch("os.path.exists")
-    @patch("os.makedirs")
-    def test_process_video_basic_flow(
-        self, mock_mkdir, mock_exists, mock_move, mock_get_langs, mock_mux, mock_mix, mock_analyze, mock_prep
-    ):
-        # Setup mocks
-        mock_exists.return_value = True
-        mock_prep.return_value = ("stereo.wav", "vocals.mp3")
-        mock_analyze.return_value = ([], [], {"step": 1.0})
-        mock_get_langs.return_value = ["eng"]
-        self.mock_llm.llm = True
-        self.mock_llm.analyze_script.return_value = {"context": {}, "speakers": {}}
+    def test_create_script(self):
+        # Scenario: Two segments from same speaker close to each other should be merged
+        diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 2.0}, {"speaker": "SPEAKER_01", "start": 2.5, "end": 4.0}]
+        trans = [{"start": 0.5, "end": 1.5, "text": "Hello"}, {"start": 2.0, "end": 3.5, "text": "World"}]
 
-        # We need to mock the threaded parts or make them synchronous for the test
-        with (
-            patch.object(DubbingPipeline, "_extract_subtitles", return_value=""),
-            patch.object(DubbingPipeline, "_extract_refs"),
-            patch.object(DubbingPipeline, "_cleanup_debug", return_value="/tmp/debug"),
-        ):
-            # For now, let's just verify the initialization and basic setup
-            self.assertEqual(self.pipeline.target_langs, ["pl"])
-            self.assertFalse(self.pipeline.debug_mode)
+        script = self.pipeline._create_script(diar, trans)
+
+        # Merged result: gap is 2.0 - 1.5 = 0.5 < 1.0
+        self.assertEqual(len(script), 1)
+        self.assertEqual(script[0]["text_en"], "Hello World")
+        self.assertEqual(script[0]["speaker"], "SPEAKER_01")
+        self.assertEqual(script[0]["start"], 0.5)
+        self.assertEqual(script[0]["end"], 3.5)
+
+    def test_create_script_different_speakers(self):
+        diar = [{"speaker": "A", "start": 0.0, "end": 2.0}, {"speaker": "B", "start": 2.0, "end": 4.0}]
+        trans = [{"start": 0.5, "end": 1.5, "text": "Hello"}, {"start": 2.5, "end": 3.5, "text": "World"}]
+        script = self.pipeline._create_script(diar, trans)
+        self.assertEqual(len(script), 2)
+        self.assertEqual(script[0]["speaker"], "A")
+        self.assertEqual(script[1]["speaker"], "B")
+
+    def test_cleanup_debug(self):
+        with patch("shutil.rmtree") as mock_rm, patch("os.path.exists", return_value=True), patch("os.makedirs") as mock_mk:
+            res = self.pipeline._cleanup_debug("test.mp4")
+            mock_rm.assert_called_once()
+            # Since debug_mode is False, it shouldn't call makedirs
+            mock_mk.assert_not_called()
+            self.assertTrue("debug_test" in res)
 
 
 if __name__ == "__main__":
