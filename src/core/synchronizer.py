@@ -110,8 +110,13 @@ class SegmentSynchronizer:
 
         # 4. Final Selection: Closest to target BUT NOT LONGER
         if not attempts:
-            logger.error(f"[ID: {idx}] All synthesis attempts failed.")
-            return None
+            logger.error(f"[ID: {idx}] All synthesis attempts failed. Using silent fallback.")
+            return {
+                "audio_path": vocals_path, # Better than nothing, will be silent in mix if empty
+                "final_text": segment.get("text_en", "..."),
+                "duration": target_dur,
+                "status": "FAILED_FALLBACK",
+            }
 
         # Filter attempts that are within time limit
         valid_attempts = [a for a in attempts if a["duration"] <= (target_dur + 0.1)]

@@ -131,11 +131,32 @@ class XTTSClient:
 
             raise RuntimeError("XTTS Server failed to start.")
 
+    def sanitize_text(self, text: str) -> str:
+        """Removes or replaces characters known to crash XTTS v2."""
+        if not text:
+            return "..."
+        # Replace ellipsis and other special chars
+        replacements = {
+            "…": "...",
+            "—": "-",
+            "–": "-",
+            "„": '"',
+            "”": '"',
+            "«": '"',
+            "»": '"',
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        
+        # Ensure it's not just whitespace
+        if not text.strip():
+            return "..."
+            
+        return text.strip()
+
     def synthesize(self, text, ref_audio, output_path, language="en", retry_on_cuda=True):
         """Sends a synthesis request to the legacy server."""
-        # XTTS v2 safety: split text if it's too long (> 250 chars)
-        # However, tts_server.py already does sentence splitting if it uses tts.tts_to_file
-        # but the CUDA error might still happen on long sequences.
+        text = self.sanitize_text(text)
 
         # Map language to XTTS supported
         if language == "pl":
