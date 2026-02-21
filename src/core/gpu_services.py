@@ -40,6 +40,10 @@ class GPUService(threading.Thread):
             self._worker_threads.append(t)
         super().start()
 
+    def get_queue_size(self) -> int:
+        """Returns the number of tasks currently in the queue."""
+        return self.queue.qsize()
+
     def stop(self):
         self._stop_event.set()
         for _ in range(self.num_workers + 1):

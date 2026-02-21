@@ -396,65 +396,85 @@ class DubbingPipeline:
         llm_service.start()
         tts_service.start()
 
+        # Connect services to monitor for queue size logging
+        if self.monitor:
+            self.monitor.llm_service = llm_service
+            self.monitor.tts_service = tts_service
+
         # Connect managers to services
         self.llm_manager.service = llm_service
         self.tts_manager.service = tts_service
 
-        def produce_language(lang):
-            logger.info(f"--- STARTING PRODUCTION FOR LANGUAGE: {lang} ---")
+        # --- NEW FLATTENED TASK POOL ARCHITECTURE ---
 
-            # 1. Draft Translation (Batch) - Priority 2
+        # 1. Draft Translation for ALL languages (sequential prep)
+        all_drafts_by_lang = {}
+        for lang in self.target_langs:
+            logger.info(f"--- PREPARING DRAFTS FOR LANGUAGE: {lang} ---")
             t_start_draft = time.perf_counter()
             draft_segments = self.llm_manager.generate_drafts(script, lang, self.speaker_info, self.global_context)
             self.durations[f"Stage 5a: Draft Translation ({lang})"] = time.perf_counter() - t_start_draft
+            all_drafts_by_lang[lang] = draft_segments
 
-            # 2. Parallel Refinement (Sync TTS Loop)
-            res = []
-            t_start_sync = time.perf_counter()
+        # 2. Flatten all segments into a single task pool
+        all_sync_tasks = []
+        for lang, drafts in all_drafts_by_lang.items():
+            for seg in drafts:
+                all_sync_tasks.append((seg, lang))
 
-            # We can now use multiple workers for the language orchestrator because
-            # the actual GPU serialization happens inside the TTSService priority queue.
-            # 3 workers per language is a good balance.
-            with ThreadPoolExecutor(max_workers=3) as executor:
-                futures = {
-                    executor.submit(self.synchronizer.process_segment, seg, lang, vocals, script, self.global_context): seg[
-                        "index"
-                    ]
-                    for seg in draft_segments
-                }
+        logger.info(f"--- STARTING GLOBAL PRODUCTION POOL ({len(all_sync_tasks)} tasks) ---")
+        t_start_sync_all = time.perf_counter()
+        
+        sync_results_by_lang = {lang: [] for lang in self.target_langs}
+        
+        if self.monitor:
+            self.monitor.orchestrator_queue_size = len(all_sync_tasks)
 
-                completed_count = 0
-                total_segments = len(draft_segments)
+        # 3. Global Concurrent Execution (Flattened)
+        # We use a larger pool since these are mostly waiting for RPC services
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            future_to_task = {
+                executor.submit(
+                    self.synchronizer.process_segment, task[0], task[1], vocals, script, self.global_context
+                ): task
+                for task in all_sync_tasks
+            }
 
-                for future in as_completed(futures):
-                    if self.abort_event.is_set():
-                        executor.shutdown(wait=False)
-                        raise RuntimeError("Processing aborted via event")
+            completed_count = 0
+            total_tasks = len(all_sync_tasks)
 
-                    idx = futures[future]
-                    try:
-                        seg_result = future.result()
-                        if seg_result:
-                            # Add back metadata needed for mixing
-                            seg_result["start"] = script[idx]["start"]
-                            seg_result["end"] = script[idx]["end"]
-                            seg_result["speaker"] = script[idx]["speaker"]
-                            seg_result["index"] = idx
-                            res.append(seg_result)
-                            completed_count += 1
-                            if completed_count % 10 == 0:
-                                logger.info(f"  [Progress {lang}] {completed_count}/{total_segments} segments done.")
-                    except Exception as e:
-                        logger.error(f"Segment {idx} ({lang}) failed completely: {e}")
+            for future in as_completed(future_to_task):
+                if self.abort_event.is_set():
+                    executor.shutdown(wait=False)
+                    raise RuntimeError("Processing aborted via event")
 
-            self.durations[f"Stage 5b: Sync Production ({lang})"] = time.perf_counter() - t_start_sync
+                seg, lang = future_to_task[future]
+                idx = seg["index"]
+                
+                try:
+                    seg_result = future.result()
+                    if seg_result:
+                        # Restore metadata for mixing
+                        seg_result["start"] = script[idx]["start"]
+                        seg_result["end"] = script[idx]["end"]
+                        seg_result["speaker"] = script[idx]["speaker"]
+                        seg_result["index"] = idx
+                        sync_results_by_lang[lang].append(seg_result)
+                except Exception as e:
+                    logger.error(f"Segment {idx} ({lang}) failed completely: {e}")
+                
+                completed_count += 1
+                if self.monitor:
+                    self.monitor.orchestrator_queue_size = total_tasks - completed_count
+                
+                if completed_count % 10 == 0:
+                    logger.info(f"  [Global Progress] {completed_count}/{total_tasks} segments processed.")
 
-            if self.debug_mode:
-                # Debug dump for sync results
-                with open(os.path.join(ddir, f"sync_results_{lang}.json"), "w") as f_dbg:
-                    json.dump(res, f_dbg, indent=2, default=str)
-
-            # 3. Mastering & Mixing preparation
+        # 4. Mastering & Mixing (Per Language)
+        all_audio_tracks = []
+        for lang in self.target_langs:
+            logger.info(f"--- FINALIZING LANGUAGE: {lang} ---")
+            res = sync_results_by_lang[lang]
             res.sort(key=lambda x: x["index"])
 
             final_audio_segments = []
@@ -462,50 +482,31 @@ class DubbingPipeline:
 
             for item in res:
                 start = item["start"]
-                # Use the refined duration from synchronizer
                 dur = item["duration"]
                 path = item["audio_path"]
 
                 if start < last_end_time:
                     shift = last_end_time - start
-                    # Only shift if overlap is significant, otherwise mix/crossfade handles it
                     if shift > 0.05:
                         start = last_end_time
 
                 final_path = os.path.join(self.temp_dir, f"final_{lang}_{item['index']}.wav")
-
-                # Trim silence at ends to be clean
                 audio_processor.trim_and_pad_silence(path, dur)
 
-                # Calculate final speed factor if needed (Synchronizer should have handled it mostly)
                 target_dur = item["end"] - item["start"]
-                actual_dur = dur
-
                 speed_factor = 1.0
-                # Gentle speedup if still too long (safety net)
-                if actual_dur > target_dur + 0.2:
-                    speed_factor = min(actual_dur / target_dur, 1.20)
+                if dur > target_dur + 0.2:
+                    speed_factor = min(dur / target_dur, 1.20)
 
                 self._apply_mastering_and_speed(path, final_path, item["speaker"], speed_factor)
-
-                final_audio_segments.append((final_path, start, actual_dur / speed_factor))
-                last_end_time = start + (actual_dur / speed_factor)
+                final_audio_segments.append((final_path, start, dur / speed_factor))
+                last_end_time = start + (dur / speed_factor)
 
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
-            # mixing is CPU bound, so it's fine to run here
             mix_audio(a_stereo, final_audio_segments, final_a)
-            self.durations[f"Stage 6: Final Mix ({lang})"] = 0.1  # Placeholder for profile compatibility
-            return (final_a, lang, LANG_MAP.get(lang, lang))
-
-        # Run all languages in parallel!
-        # The LLMService and TTSService will handle the GPU bottle-necking.
-        all_audio_tracks = []
-        with ThreadPoolExecutor(max_workers=len(self.target_langs)) as lang_executor:
-            lang_futures = [lang_executor.submit(produce_language, lang) for lang in self.target_langs]
-            for lf in as_completed(lang_futures):
-                track_res = lf.result()
-                if track_res:
-                    all_audio_tracks.append(track_res)
+            self.durations[f"Stage 5b: Sync Production ({lang})"] = (time.perf_counter() - t_start_sync_all) / len(self.target_langs)
+            self.durations[f"Stage 6: Final Mix ({lang})"] = 0.1
+            all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
 
         # Stop services and unload LLM from VRAM
         llm_service.stop()

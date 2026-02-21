@@ -50,10 +50,11 @@ The system is designed as a **Modular Monolith** with a clear separation between
     -   **Stage 2: Analysis:** Whisper transcribes audio; Diarization identifies speakers.
     -   **Stage 3: Context:** LLM analyzes the script for context and speaker traits.
     -   **Stage 4: Refinement:** Voice references are extracted and validated (ZCR check).
-    -   **Stage 5: Production (Parallel):**
-        -   All target languages are processed simultaneously in a thread pool.
+    -   **Stage 5: Production (Global Task Pool):**
+        -   All segments from all target languages are unified into a single task pool.
+        -   A global thread pool of orchestrators processes segments concurrently, regardless of language.
         -   Resources (LLM, TTS) are accessed via an Internal RPC layer with priority queues.
-        -   **Sync Loop:** Audio is generated. If duration mismatches, LLM rewrites text to fit constraints (strictly <= original duration).
+        -   **Sync Loop:** Audio is generated and refined (strictly <= original duration).
     -   **Stage 6: Mixing:** New vocals are mixed with original background audio.
     -   **Stage 7: Muxing:** Final audio is merged into the video container.
 4.  **Completion:** The task status is updated to `DONE`.

@@ -36,7 +36,7 @@ class LLMManager:
         service: Optional[Any] = None,
     ):
         self.model_path = model_path
-        self.device = "cpu"  # Default
+        self.device = "cpu" # Default
         self.inference_lock = inference_lock
         self.debug_mode = debug_mode
         self.target_langs = target_langs or ["pl"]
@@ -45,9 +45,11 @@ class LLMManager:
         self.llm_stats = {"tokens": 0, "time": 0}
         self.ready_event = threading.Event()
         self.abort_event = abort_event or threading.Event()
+        self._load_lock = threading.Lock()
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
 
     def ensure_model_downloaded(self):
+
         """Ensures the model file exists locally. Downloads if missing. Does NOT load to VRAM."""
         if MOCK_MODE:
             return
@@ -68,11 +70,16 @@ class LLMManager:
             logging.info("LLM: Download completed successfully.")
 
     def load_model(self):
-        """Loads the LLM into VRAM or RAM. Skips in MOCK_MODE."""
-        if self.status == "READY":
+        """Loads the LLM into VRAM or RAM. Skips in MOCK_MODE. Thread-safe."""
+        if self.status == "READY" or self.llm is not None:
             return
 
-        self.status = "LOADING"
+        with self._load_lock:
+            # Double-check after acquiring lock
+            if self.status == "READY" or self.llm is not None:
+                return
+
+            self.status = "LOADING"
         if MOCK_MODE:
             logging.info("LLM: MOCK_MODE enabled. Skipping model load.")
             self.status = "READY"
@@ -106,9 +113,8 @@ class LLMManager:
                 model_path=self.model_path,
                 n_gpu_layers=n_gpu_layers,
                 main_gpu=main_gpu,
-                n_ctx=8192,
-                n_batch=1024,
-                n_ubatch=512,
+                n_ctx=4096,
+                n_batch=512,
                 n_threads=8,
                 flash_attn=(n_gpu_layers > 0),  # Flash Attn only works with CUDA
                 verbose=False,
@@ -167,9 +173,13 @@ class LLMManager:
             return {"choices": [{"text": "{}"}]}
 
         # RPC Service Path
+        if not self.llm:
+            self.load_model()
+
         if self.service:
 
             def _direct_call(p, **kw):
+                if not self.llm: raise RuntimeError("LLM failed to load!")
                 return self.llm(p, **kw)
 
             future = self.service.submit(_direct_call, prompt, priority=priority, **kwargs)

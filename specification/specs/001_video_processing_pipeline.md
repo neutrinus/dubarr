@@ -45,18 +45,15 @@ The system verifies model presence and downloads missing files. To maximize avai
 *   **Output:**
     *   `refs/{speaker_id}.wav` (Reference audio for TTS).
 
-### 2.5 Stage 5: Production (Parallel)
-*   **Action:** All `target_langs` are processed concurrently in a Thread Pool.
-*   **Workflow per language:**
-    1.  **Draft Translation:** LLM translates the script.
-    2.  **Sync Loop:** (See Spec 002 for details).
-        -   TTS generates audio via `TTSService`.
-        -   Strict duration enforcement (audio <= video).
-        -   Up to 5 refinement attempts.
-    3.  **Mastering:** Applies EQ, compression, and panning.
-*   **Resource Management:** GPU-heavy tasks (LLM, TTS) are queued in an Internal RPC layer to prevent resource conflicts.
-*   **Output:**
-    *   `final_{lang}_{index}.wav` (Individual segments).
+### 2.5 Stage 5: Production (Global Task Pool)
+*   **Action:** All segments from all `target_langs` are combined into a single task pool to maximize resource utilization.
+*   **Workflow:**
+    1.  **Draft Translation:** LLM generates drafts for all languages (sequential batching).
+    2.  **Global Task Queue:** A unified list of all segments is created.
+    3.  **Concurrent Execution:** A global Thread Pool of orchestrators processes segments.
+    4.  **Sync Loop:** Each segment uses `LLMService` and `TTSService` via RPC.
+*   **Resource Management:** GPU-heavy tasks are prioritized (Refinement > Drafting) across all languages simultaneously.
+*   **Output:** `final_{lang}_{index}.wav` segments, sorted and grouped by language.
 
 ### 2.6 Stage 6: Final Mix
 *   **Input:** `final_{lang}_{index}.wav` segments, `accompaniment.wav`.

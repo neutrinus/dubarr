@@ -5,11 +5,14 @@ import logging
 
 
 class ResourceMonitor(threading.Thread):
-    def __init__(self, state_ref=None, interval=5.0):
+    def __init__(self, state_ref=None, interval=5.0, llm_service=None, tts_service=None):
         super().__init__()
         self.interval = interval
         self.state = state_ref or {}
         self.stop_event = threading.Event()
+        self.llm_service = llm_service
+        self.tts_service = tts_service
+        self.orchestrator_queue_size = 0
 
     def run(self):
         import psutil
@@ -51,10 +54,18 @@ class ResourceMonitor(threading.Thread):
                 while len(gpus) < 2:
                     gpus.append({"util": "0", "used": "0", "free": "0", "total": "0"})
 
+                # Queue sizes
+                q_info = ""
+                if self.llm_service or self.tts_service or self.orchestrator_queue_size > 0:
+                    llm_q = self.llm_service.get_queue_size() if self.llm_service else 0
+                    tts_q = self.tts_service.get_queue_size() if self.tts_service else 0
+                    q_info = f" | QUEUE: LLM:{llm_q} TTS:{tts_q} PENDING:{self.orchestrator_queue_size}"
+
                 logging.info(
                     f"[Monitor] CPU:{cpu}% RAM:{ram}% | "
                     f"GPU0:{gpus[0]['util']}% Mem:{gpus[0]['used']}/{gpus[0]['total']}MB (Free:{gpus[0]['free']}MB) | "
                     f"GPU1:{gpus[1]['util']}% Mem:{gpus[1]['used']}/{gpus[1]['total']}MB (Free:{gpus[1]['free']}MB)"
+                    f"{q_info}"
                 )
 
             except Exception as e:
