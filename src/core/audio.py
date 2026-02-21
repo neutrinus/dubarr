@@ -46,7 +46,14 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
     ]
     import subprocess
 
-    subprocess.run(demucs_cmd, check=True)
+    # 10 minutes timeout for Demucs is reasonable for most videos.
+    # If it takes longer, something is likely wrong or hardware is too slow.
+    try:
+        subprocess.run(demucs_cmd, check=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        logger.error("Demucs separation TIMED OUT (600s).")
+        raise RuntimeError("Audio separation took too long.")
+    
     GPUManager.force_gc()
 
     found = glob.glob(os.path.join(TEMP_DIR, "**", "vocals.mp3"), recursive=True)
@@ -128,7 +135,7 @@ def mix_audio(bg: str, clips: List, out: str):
         cmd.extend(["-filter_complex_script", filter_script_path, "-map", "[out_a]", batch_out, "-y"])
         import subprocess
 
-        subprocess.run(cmd, capture_output=True, check=True)
+        subprocess.run(cmd, capture_output=True, check=True, timeout=300)
 
         intermediate_speech_files.append(batch_out)
 

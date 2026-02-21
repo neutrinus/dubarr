@@ -58,11 +58,16 @@ class GPUService(threading.Thread):
 
                 func, args, kwargs, future = task
                 if future.set_running_or_notify_cancel():
+                    t_start = time.perf_counter()
                     try:
                         result = func(*args, **kwargs)
+                        duration = time.perf_counter() - t_start
+                        if duration > 30: # 30s is long for a single segment
+                            logger.warning(f"Service [{self.service_name}] slow task completed in {duration:.2f}s.")
                         future.set_result(result)
                     except Exception as e:
-                        logger.error(f"Service [{self.service_name}] task failed: {e}")
+                        duration = time.perf_counter() - t_start
+                        logger.error(f"Service [{self.service_name}] task failed after {duration:.2f}s: {e}")
                         future.set_exception(e)
                 self.queue.task_done()
             except queue.Empty:

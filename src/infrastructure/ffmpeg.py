@@ -49,7 +49,11 @@ class FFmpegWrapper:
     def get_duration(path: str) -> float:
         """Gets duration of a media file."""
         cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path]
-        return float(subprocess.check_output(cmd, timeout=10).strip())
+        try:
+            return float(subprocess.check_output(cmd, timeout=10).strip())
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError):
+            logger.error(f"FFmpeg get_duration failed or timed out for {path}")
+            return 0.0
 
     @staticmethod
     def apply_filter(input_path: str, output_path: str, filter_chain: str):
