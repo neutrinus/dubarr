@@ -64,7 +64,7 @@ The system includes an **Intelligent GPU Manager** that orchestrates VRAM usage 
 -   **Behavior:**
     -   Models (LLM, TTS, Whisper, Diarization) are loaded into memory only when their specific stage is active.
     -   Whisper and Diarization models are explicitly unloaded immediately after use to free space for synthesis.
-    -   **Parallel Slots:** LLM (Gemma 3 12B) is configured with multiple parallel inference slots (e.g., 4) when sufficient VRAM is available.
+    -   **Parallel Slots:** LLM (Gemma 3 12B) utilizes parallel inference slots when sufficient VRAM is available. However, due to stability requirements with `llama-cpp-python` CUDA bindings, the `LLMService` is restricted to **1 worker thread** to prevent memory corruption.
     -   **RPC Serialization:** Access to GPU resources is serialized via an Internal RPC layer with priority-based queuing.
 
 ## 3. Hardware Requirements
