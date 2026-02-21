@@ -183,24 +183,18 @@ class XTTSClient:
             res = requests.post(f"{self.server_url}/synthesize", json=payload, timeout=120)
             if res.status_code != 200:
                 error_text = res.text
-                # Detect CUDA device-side assert error
-                if "device-side assert triggered" in error_text:
-                    if retry_on_cuda:
-                        logging.warning("XTTS: Detected CUDA crash (device-side assert). Requesting synchronized restart...")
-                        self._handle_restart()
-                        logging.info("XTTS: Server restarted. Retrying synthesis...")
-                        return self.synthesize(text, ref_audio, output_path, language=language, retry_on_cuda=False)
+                logging.error(f"XTTS Server returned {res.status_code}: {error_text}")
 
-                # Detect 'sens' variable error (internal TTS library bug)
-                if "local variable 'sens' referenced before assignment" in error_text:
-                    if retry_on_cuda:
-                        logging.warning("XTTS: Detected library internal bug ('sens' error). Restarting server...")
-                        self._handle_restart()
-                        return self.synthesize(text, ref_audio, output_path, language=language, retry_on_cuda=False)
-
-                # Detect Tensor Size Mismatch (XTTS v2 specific internal error)
+                # Detect Tensor Size Mismatch (XTTS v2 specific internal error) - This is input related, do NOT restart
                 if "size of tensor" in error_text and "must match" in error_text:
                     raise ValueError(f"XTTS Tensor Error: {error_text}")
+
+                # For ALL other 500 errors (CUDA assert, sens error, unknown internal bugs), RESTART.
+                if retry_on_cuda:
+                    logging.warning(f"XTTS: Server failure ({res.status_code}). Requesting synchronized restart...")
+                    self._handle_restart()
+                    logging.info("XTTS: Server restarted. Retrying synthesis...")
+                    return self.synthesize(text, ref_audio, output_path, language=language, retry_on_cuda=False)
 
                 raise RuntimeError(f"XTTS Server Error: {error_text}")
         except Exception as e:
