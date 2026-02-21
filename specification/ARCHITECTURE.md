@@ -65,7 +65,11 @@ The system is designed as a **Modular Monolith** with a clear separation between
     -   `.venv_app` (Python 3.12): Main application, API, Whisper, Pyannote.
     -   `.venv_tts` (Python 3.10): Dedicated environment for Coqui-TTS to resolve dependency conflicts.
 -   **Step Caching:** The pipeline checks `job_steps` in the DB before running a stage. If a result exists, it's skipped. This allows resuming failed jobs without re-processing expensive steps.
--   **FFmpeg Direct Usage:** We use `subprocess` to call FFmpeg directly for complex filter chains (e.g., side-chain ducking, speed adjustment).
+-   **Internal RPC (GPU Services):** Resource-heavy tasks (LLM, TTS) are offloaded to dedicated service threads with priority queues.
+    -   **LLM Stability:** Due to thread-safety limitations in `llama-cpp-python` (CUDA), the `LLMService` is restricted to **1 worker thread** to prevent Segmentation Faults.
+    -   **Concurrency:** The main pipeline uses multiple orchestrator threads (default: 4) to handle logic, while the RPC layer ensures serialized access to GPU resources.
+-   **FFmpeg Direct Usage:**
+ We use `subprocess` to call FFmpeg directly for complex filter chains (e.g., side-chain ducking, speed adjustment).
 -   **Synchronous & Asynchronous Mix:** The web server is async (FastAPI), but the pipeline runs in a separate thread/process (Worker) due to heavy CPU/GPU blocking operations.
 -   **Local Database:** SQLite is used for simplicity and portability. It stores both task metadata and JSON blobs of intermediate results.
 
