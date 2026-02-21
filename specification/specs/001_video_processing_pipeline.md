@@ -12,11 +12,11 @@ The system verifies model presence and downloads missing files. To maximize avai
 ### Stage 1: Audio Separation
 *   **Input:** Original video file path.
 *   **Action:**
-    1.  Extracts audio track.
-    2.  Uses an ML model (e.g., Demucs/Spleeter via `prep_audio`) to separate vocals from background music/noise.
+    1.  Extracts original stereo audio track.
+    2.  Uses an ML model (e.g., Demucs via `prep_audio`) to separate vocals from background music/noise.
 *   **Output:**
-    *   `vocals.wav` (Clean speech)
-    *   `accompaniment.wav` (Music/SFX)
+    *   `orig.wav` (Original stereo audio)
+    *   `vocals.mp3` (Clean speech separated by Demucs)
 
 ### 2.2 Stage 2: Audio Analysis
 *   **Input:** `vocals.wav`.
@@ -76,7 +76,7 @@ The system verifies model presence and downloads missing files. To maximize avai
     *   **Action:**
         1.  Calculates total processing time and individual stage durations.
         2.  Calculates LLM performance metrics (tokens per second).
-        3.  Logs a detailed performance report to the system logs.
+        3.  Generates a detailed performance report logged to the system console.
         4.  Cleans up temporary files (unless `debug_mode` is enabled).
         5.  Updates task status to `DONE`.
     
