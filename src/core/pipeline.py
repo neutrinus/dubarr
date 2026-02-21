@@ -421,8 +421,21 @@ class DubbingPipeline:
             ext = os.path.splitext(vpath)[1] or ".mkv"
             final_video = os.path.join(self.temp_dir, f"final_muxed{ext}")
             self._run_step("Stage 7: Muxing", FFmpegWrapper.mux_video, task_id, vpath, all_audio_tracks, final_video)
-            logger.info(f"Replacing original file: {vpath}")
-            shutil.move(final_video, vpath)
+
+            # Atomic swap with backup
+            bak_path = vpath + ".bak"
+            logger.info(f"Moving original to backup: {bak_path}")
+            shutil.move(vpath, bak_path)
+            try:
+                logger.info(f"Installing dubbed version: {vpath}")
+                shutil.move(final_video, vpath)
+                # If everything is fine, we could delete the backup,
+                # but keeping it for a moment is safer.
+                # os.remove(bak_path)
+            except Exception as e:
+                logger.error(f"Failed to install dubbed version! Restoring backup. Error: {e}")
+                shutil.move(bak_path, vpath)
+                raise e
 
         self.tts_manager.shutdown()
         if self.monitor:
