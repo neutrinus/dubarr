@@ -53,7 +53,7 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
     except subprocess.TimeoutExpired:
         logger.error("Demucs separation TIMED OUT (600s).")
         raise RuntimeError("Audio separation took too long.")
-    
+
     GPUManager.force_gc()
 
     found = glob.glob(os.path.join(TEMP_DIR, "**", "vocals.mp3"), recursive=True)

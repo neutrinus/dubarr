@@ -41,18 +41,22 @@ class TestTTSClient(unittest.TestCase):
         self.assertTrue(res)
         mock_popen.assert_called_once()
 
+    @patch("requests.get")
     @patch("requests.post")
-    def test_synthesize_success(self, mock_post):
+    def test_synthesize_success(self, mock_post, mock_get):
         mock_post.return_value.status_code = 200
         self.client.synthesize("text", "ref.wav", "out.wav", "pl")
         mock_post.assert_called_once()
         payload = mock_post.call_args[1]["json"]
         self.assertEqual(payload["language"], "pl")
 
+    @patch("requests.get")
     @patch("requests.post")
-    def test_synthesize_error(self, mock_post):
+    def test_synthesize_error(self, mock_post, mock_get):
         mock_post.return_value.status_code = 500
         mock_post.return_value.text = "Error message"
+        # Mock health check to avoid long wait during restart attempt
+        mock_get.return_value.status_code = 200
         with self.assertRaises(RuntimeError):
             self.client.synthesize("text", "ref.wav", "out.wav", "pl")
 

@@ -2,6 +2,7 @@ import time
 import threading
 import queue
 import logging
+import time
 import concurrent.futures
 import itertools
 from typing import Callable
@@ -63,7 +64,7 @@ class GPUService(threading.Thread):
                     try:
                         result = func(*args, **kwargs)
                         duration = time.perf_counter() - t_start
-                        if duration > 30: # 30s is long for a single segment
+                        if duration > 30:  # 30s is long for a single segment
                             logger.warning(f"Service [{self.service_name}] slow task completed in {duration:.2f}s.")
                         future.set_result(result)
                     except Exception as e:
