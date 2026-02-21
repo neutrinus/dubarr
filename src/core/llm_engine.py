@@ -36,7 +36,7 @@ class LLMManager:
         service: Optional[Any] = None,
     ):
         self.model_path = model_path
-        self.device = "cpu" # Default
+        self.device = "cpu"  # Default
         self.inference_lock = inference_lock
         self.debug_mode = debug_mode
         self.target_langs = target_langs or ["pl"]
@@ -49,7 +49,6 @@ class LLMManager:
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
 
     def ensure_model_downloaded(self):
-
         """Ensures the model file exists locally. Downloads if missing. Does NOT load to VRAM."""
         if MOCK_MODE:
             return
@@ -179,7 +178,8 @@ class LLMManager:
         if self.service:
 
             def _direct_call(p, **kw):
-                if not self.llm: raise RuntimeError("LLM failed to load!")
+                if not self.llm:
+                    raise RuntimeError("LLM failed to load!")
                 return self.llm(p, **kw)
 
             future = self.service.submit(_direct_call, prompt, priority=priority, **kwargs)

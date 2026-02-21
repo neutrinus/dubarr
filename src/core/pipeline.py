@@ -424,9 +424,9 @@ class DubbingPipeline:
 
         logger.info(f"--- STARTING GLOBAL PRODUCTION POOL ({len(all_sync_tasks)} tasks) ---")
         t_start_sync_all = time.perf_counter()
-        
+
         sync_results_by_lang = {lang: [] for lang in self.target_langs}
-        
+
         if self.monitor:
             self.monitor.orchestrator_queue_size = len(all_sync_tasks)
 
@@ -434,9 +434,7 @@ class DubbingPipeline:
         # We use a larger pool since these are mostly waiting for RPC services
         with ThreadPoolExecutor(max_workers=8) as executor:
             future_to_task = {
-                executor.submit(
-                    self.synchronizer.process_segment, task[0], task[1], vocals, script, self.global_context
-                ): task
+                executor.submit(self.synchronizer.process_segment, task[0], task[1], vocals, script, self.global_context): task
                 for task in all_sync_tasks
             }
 
@@ -450,7 +448,7 @@ class DubbingPipeline:
 
                 seg, lang = future_to_task[future]
                 idx = seg["index"]
-                
+
                 try:
                     seg_result = future.result()
                     if seg_result:
@@ -462,11 +460,11 @@ class DubbingPipeline:
                         sync_results_by_lang[lang].append(seg_result)
                 except Exception as e:
                     logger.error(f"Segment {idx} ({lang}) failed completely: {e}")
-                
+
                 completed_count += 1
                 if self.monitor:
                     self.monitor.orchestrator_queue_size = total_tasks - completed_count
-                
+
                 if completed_count % 10 == 0:
                     logger.info(f"  [Global Progress] {completed_count}/{total_tasks} segments processed.")
 
@@ -504,7 +502,9 @@ class DubbingPipeline:
 
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
             mix_audio(a_stereo, final_audio_segments, final_a)
-            self.durations[f"Stage 5b: Sync Production ({lang})"] = (time.perf_counter() - t_start_sync_all) / len(self.target_langs)
+            self.durations[f"Stage 5b: Sync Production ({lang})"] = (time.perf_counter() - t_start_sync_all) / len(
+                self.target_langs
+            )
             self.durations[f"Stage 6: Final Mix ({lang})"] = 0.1
             all_audio_tracks.append((final_a, lang, LANG_MAP.get(lang, lang)))
 
