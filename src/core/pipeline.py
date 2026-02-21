@@ -482,50 +482,78 @@ class DubbingPipeline:
         logger.info(f"--- STARTING GLOBAL PRODUCTION POOL ({len(all_sync_tasks)} tasks) ---")
         t_start_sync_all = time.perf_counter()
 
-        sync_results_by_lang = {lang: [] for lang in self.target_langs}
-
-        if self.monitor:
-            self.monitor.orchestrator_queue_size = len(all_sync_tasks)
-
-        # 3. Global Concurrent Execution (Flattened)
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            future_to_task = {
-                executor.submit(
-                    self.synchronizer.process_segment, task[0], task[1], vocals, script, self.global_context
-                ): task
-                for task in all_sync_tasks
-            }
-
-            completed_count = 0
-            total_tasks = len(all_sync_tasks)
-            pending_ids = {seg["index"] for seg, _ in all_sync_tasks}
-
-            # Better approach: Iterate manually with timeout
-            try:
-                for future in as_completed(future_to_task):
-                    if self.abort_event.is_set():
-                        executor.shutdown(wait=False)
-                        raise RuntimeError("Processing aborted via event")
-
-                    seg, lang = future_to_task[future]
-                    idx = seg["index"]
-
+                sync_results_by_lang = {lang: [] for lang in self.target_langs}
+                
+                checkpoint_path = os.path.join(self.temp_dir, f"stage5_checkpoint_{task_id}.json")
+                if os.path.exists(checkpoint_path):
                     try:
-                        # 120s timeout per segment is generous but ensures we don't hang forever
-                        seg_result = future.result(timeout=120)
-                        if seg_result:
-                            # Restore metadata for mixing
-                            seg_result["start"] = script[idx]["start"]
-                            seg_result["end"] = script[idx]["end"]
-                            seg_result["speaker"] = script[idx]["speaker"]
-                            seg_result["index"] = idx
-                            sync_results_by_lang[lang].append(seg_result)
-                    except TimeoutError:
-                        logger.error(f"Segment {idx} ({lang}) TIMED OUT in orchestrator. Skipping.")
+                        with open(checkpoint_path, "r") as f_cp:
+                            checkpoint_data = json.load(f_cp)
+                            for lang, results in checkpoint_data.items():
+                                if lang in sync_results_by_lang:
+                                    sync_results_by_lang[lang] = results
+                        logger.info(f"Restored {sum(len(r) for r in sync_results_by_lang.values())} segments from checkpoint.")
                     except Exception as e:
-                        logger.error(f"Segment {idx} ({lang}) failed completely: {e}")
-
-                    completed_count += 1
+                        logger.warning(f"Failed to load checkpoint: {e}")
+        
+                if self.monitor:
+                    self.monitor.orchestrator_queue_size = len(all_sync_tasks)
+        
+                # 3. Global Concurrent Execution (Flattened)
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    # Filter out tasks that are already in checkpoint
+                    remaining_tasks = []
+                    for seg, lang in all_sync_tasks:
+                        idx = seg["index"]
+                        if any(r["index"] == idx for r in sync_results_by_lang[lang]):
+                            continue
+                        remaining_tasks.append((seg, lang))
+                    
+                    logger.info(f"Tasks remaining after checkpoint: {len(remaining_tasks)}/{len(all_sync_tasks)}")
+                    
+                    future_to_task = {
+                        executor.submit(
+                            self.synchronizer.process_segment, task[0], task[1], vocals, script, self.global_context
+                        ): task
+                        for task in remaining_tasks
+                    }
+        
+                    completed_count = len(all_sync_tasks) - len(remaining_tasks)
+                    total_tasks = len(all_sync_tasks)
+                    pending_ids = {seg["index"] for seg, _ in remaining_tasks}
+        
+                    # Better approach: Iterate manually with timeout
+                    try:
+                        for future in as_completed(future_to_task):
+                            if self.abort_event.is_set():
+                                executor.shutdown(wait=False)
+                                raise RuntimeError("Processing aborted via event")
+        
+                            seg, lang = future_to_task[future]
+                            idx = seg["index"]
+                            
+                            try:
+                                # 120s timeout per segment is generous but ensures we don't hang forever
+                                seg_result = future.result(timeout=120)
+                                if seg_result:
+                                    # Restore metadata for mixing
+                                    seg_result["start"] = script[idx]["start"]
+                                    seg_result["end"] = script[idx]["end"]
+                                    seg_result["speaker"] = script[idx]["speaker"]
+                                    seg_result["index"] = idx
+                                    sync_results_by_lang[lang].append(seg_result)
+                                    
+                                    # Update checkpoint every segment
+                                    try:
+                                        with open(checkpoint_path, "w") as f_cp:
+                                            json.dump(sync_results_by_lang, f_cp, indent=2)
+                                    except Exception:
+                                        pass
+                            except TimeoutError:
+                                logger.error(f"Segment {idx} ({lang}) TIMED OUT in orchestrator. Skipping.")
+                            except Exception as e:
+                                logger.error(f"Segment {idx} ({lang}) failed completely: {e}")
+                            completed_count += 1
                     if idx in pending_ids:
                         pending_ids.remove(idx)
 
@@ -582,5 +610,12 @@ class DubbingPipeline:
 
         if self.db and task_id:
             self.db.save_step_result(task_id, "Stage 5: Production", "DONE", result_data={"langs": self.target_langs})
+
+        # Remove checkpoint upon success
+        if os.path.exists(checkpoint_path):
+            try:
+                os.remove(checkpoint_path)
+            except Exception:
+                pass
 
         return all_audio_tracks
