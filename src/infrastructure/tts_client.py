@@ -42,7 +42,7 @@ class XTTSClient:
         """Thread function to capture and log subprocess output."""
         if not self.server_process:
             return
-        
+
         # Read from stdout and stderr in a way that doesn't block forever
         # and allows the thread to terminate.
         try:
@@ -53,7 +53,7 @@ class XTTSClient:
                     break
         except Exception:
             pass
-        
+
         try:
             for line in iter(self.server_process.stderr.readline, ""):
                 if line:
@@ -92,13 +92,13 @@ class XTTSClient:
 
             # Capture both stdout and stderr
             self.server_process = subprocess.Popen(
-                [python_path, server_path], 
-                env=env, 
+                [python_path, server_path],
+                env=env,
                 preexec_fn=os.setsid,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1
+                bufsize=1,
             )
 
             # Start log capture thread
@@ -136,7 +136,7 @@ class XTTSClient:
         # XTTS v2 safety: split text if it's too long (> 250 chars)
         # However, tts_server.py already does sentence splitting if it uses tts.tts_to_file
         # but the CUDA error might still happen on long sequences.
-        
+
         # Map language to XTTS supported
         if language == "pl":
             xtts_lang = "pl"
@@ -169,7 +169,7 @@ class XTTSClient:
                         self._handle_restart()
                         logging.info("XTTS: Server restarted. Retrying synthesis...")
                         return self.synthesize(text, ref_audio, output_path, language=language, retry_on_cuda=False)
-                
+
                 # Detect Tensor Size Mismatch (XTTS v2 specific internal error)
                 if "size of tensor" in error_text and "must match" in error_text:
                     raise ValueError(f"XTTS Tensor Error: {error_text}")
@@ -178,9 +178,9 @@ class XTTSClient:
         except Exception as e:
             # Also catch connection errors which might occur if the server process crashed completely
             if retry_on_cuda and isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
-                 logging.warning(f"XTTS: Connection error ({e}). Requesting synchronized restart...")
-                 self._handle_restart()
-                 return self.synthesize(text, ref_audio, output_path, language=language, retry_on_cuda=False)
+                logging.warning(f"XTTS: Connection error ({e}). Requesting synchronized restart...")
+                self._handle_restart()
+                return self.synthesize(text, ref_audio, output_path, language=language, retry_on_cuda=False)
 
             logging.error(f"XTTS Synthesis Failed: {e}")
             raise e
@@ -196,7 +196,7 @@ class XTTSClient:
                     return
             except Exception:
                 pass
-            
+
             self.stop_server()
             time.sleep(2)
             self.start_server()
@@ -213,7 +213,6 @@ class XTTSClient:
                 pass
             self.server_process = None
             self._log_thread = None
-
 
 
 class XTTSWrapper:

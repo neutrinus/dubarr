@@ -82,7 +82,7 @@ class WhisperManager:
     def _run_transcribe(self, audio_path: str) -> List[Dict]:
         ts, info = self.model.transcribe(audio_path)
         logger.info(f"Whisper: Starting transcription of {info.duration:.2f}s audio (Language: {info.language})")
-        
+
         res = []
         for x in ts:
             if x.avg_logprob >= -1.0:
@@ -97,7 +97,7 @@ class WhisperManager:
                 # Log progress every few segments or every 30 seconds of audio
                 if len(res) % 20 == 0:
                     logger.info(f"Whisper Progress: {x.end:.2f}s / {info.duration:.2f}s transcribed...")
-        
+
         logger.info(f"Whisper: Completed transcription. Found {len(res)} segments.")
         return res
 

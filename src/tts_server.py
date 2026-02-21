@@ -30,11 +30,11 @@ def synthesize():
     try:
         # Standard XTTS synthesis
         tts.tts_to_file(text=text, speaker_wav=ref_audio, language=language, file_path=output_path)
-        
+
         # Free GPU memory after each call to prevent fragmentation/crashes
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            
+
         return jsonify({"status": "success"})
     except Exception as e:
         logging.error(f"XTTS Synthesis Failed: {e}")

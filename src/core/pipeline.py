@@ -408,9 +408,9 @@ class DubbingPipeline:
             # 3 workers per language is a good balance.
             with ThreadPoolExecutor(max_workers=3) as executor:
                 futures = {
-                    executor.submit(
-                        self.synchronizer.process_segment, seg, lang, vocals, script, self.global_context
-                    ): seg["index"]
+                    executor.submit(self.synchronizer.process_segment, seg, lang, vocals, script, self.global_context): seg[
+                        "index"
+                    ]
                     for seg in draft_segments
                 }
 
@@ -492,7 +492,7 @@ class DubbingPipeline:
         # The LLMService and TTSService will handle the GPU bottle-necking.
         all_audio_tracks = []
         with ThreadPoolExecutor(max_workers=len(self.target_langs)) as lang_executor:
-            lang_futures = [lang_executor.submit(produce_language, l) for l in self.target_langs]
+            lang_futures = [lang_executor.submit(produce_language, lang) for lang in self.target_langs]
             for lf in as_completed(lang_futures):
                 track_res = lf.result()
                 if track_res:

@@ -25,7 +25,7 @@ class TTSManager:
         temp_dir: str,
         speaker_refs: Dict,
         abort_event: threading.Event,
-        service: Optional[Any] = None, # TTSService
+        service: Optional[Any] = None,  # TTSService
     ):
         self.device = "cpu"
         self.inference_lock = inference_lock
@@ -110,11 +110,11 @@ class TTSManager:
 
         # RPC Service Path
         if self.service:
-            # We must use a direct call helper to avoid recursion if the worker 
+            # We must use a direct call helper to avoid recursion if the worker
             # thread happens to call this method (which it won't, but it's safe)
             def _direct_call(*a, **kw):
                 return self.engine.synthesize(*a, **kw)
-            
+
             # Synthesis tasks are Priority 1 (High)
             future = self.service.submit(_direct_call, *args, priority=1, **kwargs)
             return future.result()
@@ -158,18 +158,18 @@ class TTSManager:
                         if os.path.exists(p) and p != chosen_ref:
                             fallback_ref = p
                             break
-                    
+
                     if not fallback_ref:
                         for p in self.last_good_samples.values():
                             if os.path.exists(p) and p != chosen_ref:
                                 fallback_ref = p
                                 break
-                    
+
                     if fallback_ref:
                         self._run_synthesis(clean_text, fallback_ref, raw_path, language=lang)
                         voice_type = "TENSOR_FALLBACK"
                     else:
-                        raise ve # Re-raise if no other fallback
+                        raise ve  # Re-raise if no other fallback
                 else:
                     raise ve
 
@@ -238,7 +238,7 @@ class TTSManager:
         if all_goldens:
             logging.info(f"TTS: [ID: {idx}] Using Global Golden fallback for speaker {spk}")
             return all_goldens[0], "FALLBACK_GOLDEN"
-        
+
         all_last_goods = [p for p in self.last_good_samples.values() if os.path.exists(p)]
         if all_last_goods:
             logging.info(f"TTS: [ID: {idx}] Using Global LastGood fallback for speaker {spk}")
@@ -247,4 +247,3 @@ class TTSManager:
         if os.path.exists(dyn_path):
             os.remove(dyn_path)
         return None, "UNKNOWN"
-

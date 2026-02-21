@@ -54,7 +54,7 @@ class SegmentSynchronizer:
                 actual_dur = result["duration"]
 
             delta = actual_dur - target_dur
-            
+
             # Acceptance Criteria: Strictly not longer than original
             # We allow a very tiny margin (0.05s) for technical jitter
             is_acceptable = actual_dur <= (target_dur + 0.05)
@@ -104,7 +104,7 @@ class SegmentSynchronizer:
 
         # Filter attempts that are within time limit
         valid_attempts = [a for a in attempts if a["duration"] <= (target_dur + 0.1)]
-        
+
         if valid_attempts:
             # Pick the longest one that fits (closest to original duration)
             best_attempt = max(valid_attempts, key=lambda x: x["duration"])
@@ -114,9 +114,7 @@ class SegmentSynchronizer:
             best_attempt = min(attempts, key=lambda x: x["duration"])
             status = "FORCED_SHORT_FALLBACK"
 
-        logger.warning(
-            f"[ID: {idx}] {status}: Selection duration {best_attempt['duration']:.2f}s vs Target {target_dur:.2f}s"
-        )
+        logger.warning(f"[ID: {idx}] {status}: Selection duration {best_attempt['duration']:.2f}s vs Target {target_dur:.2f}s")
 
         # Clean up other attempts
         if not self.debug_mode:
@@ -130,4 +128,3 @@ class SegmentSynchronizer:
             "duration": best_attempt["duration"],
             "status": status,
         }
-

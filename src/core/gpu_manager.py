@@ -2,7 +2,6 @@ import time
 import logging
 import gc
 import subprocess
-import threading
 
 try:
     import torch
@@ -113,7 +112,7 @@ class GPUManager:
             if elapsed > timeout:
                 logger.error(f"GPU Manager: Timeout waiting for {needed_mb}MB for {purpose}.")
                 # Return the one with most space anyway, or CPU
-                return f"cuda:0" if torch.cuda.device_count() > 0 else "cpu"
+                return "cuda:0" if torch.cuda.device_count() > 0 else "cpu"
 
             if int(elapsed) % 30 == 0:
                 logger.info(

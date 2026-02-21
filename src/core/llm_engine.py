@@ -51,10 +51,11 @@ class LLMManager:
         """Ensures the model file exists locally. Downloads if missing. Does NOT load to VRAM."""
         if MOCK_MODE:
             return
-        
+
         if not os.path.exists(self.model_path):
             logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
             from huggingface_hub import hf_hub_download
+
             repo_id = "bartowski/google_gemma-3-12b-it-GGUF"
             filename = os.path.basename(self.model_path)
             os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
@@ -167,9 +168,10 @@ class LLMManager:
 
         # RPC Service Path
         if self.service:
+
             def _direct_call(p, **kw):
                 return self.llm(p, **kw)
-            
+
             future = self.service.submit(_direct_call, prompt, priority=priority, **kwargs)
             return future.result()
 
@@ -363,7 +365,9 @@ class LLMManager:
 
         t0 = time.perf_counter()
         # Refinement is Priority 1 (High)
-        res = self._run_inference(prompt, priority=1, max_tokens=200, temperature=0.7, stop=["<|im_end|>"])  # Higher temp for creativity
+        res = self._run_inference(
+            prompt, priority=1, max_tokens=200, temperature=0.7, stop=["<|im_end|>"]
+        )  # Higher temp for creativity
         self._update_stats(res, time.perf_counter() - t0)
 
         try:

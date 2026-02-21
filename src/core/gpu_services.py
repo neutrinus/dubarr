@@ -3,15 +3,17 @@ import queue
 import logging
 import concurrent.futures
 import itertools
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Callable
 
 logger = logging.getLogger(__name__)
+
 
 class GPUService(threading.Thread):
     """
     A base class for GPU-bound services that handle tasks via a priority queue.
     Ensures managed access to a specific GPU resource.
     """
+
     def __init__(self, name: str, num_workers: int = 1):
         super().__init__(name=f"Service-{name}-Manager", daemon=True)
         self.service_name = name
@@ -47,8 +49,9 @@ class GPUService(threading.Thread):
         while not self._stop_event.is_set():
             try:
                 priority, _, task = self.queue.get(timeout=1.0)
-                if task is None: break
-                
+                if task is None:
+                    break
+
                 func, args, kwargs, future = task
                 if future.set_running_or_notify_cancel():
                     try:
@@ -58,7 +61,8 @@ class GPUService(threading.Thread):
                         logger.error(f"Service [{self.service_name}] task failed: {e}")
                         future.set_exception(e)
                 self.queue.task_done()
-            except queue.Empty: continue
+            except queue.Empty:
+                continue
             except Exception as e:
                 logger.error(f"Service [{self.service_name}] worker error: {e}")
 
@@ -68,12 +72,16 @@ class GPUService(threading.Thread):
         self._stop_event.wait()
         logger.info(f"GPU Service [{self.service_name}] stopping...")
 
+
 class LLMService(GPUService):
     """Dedicated service for LLM inference. Supports parallel slots."""
+
     def __init__(self, num_workers: int = 2):
         super().__init__("LLM", num_workers=num_workers)
 
+
 class TTSService(GPUService):
     """Dedicated service for TTS synthesis. Sequential preferred for XTTS stability."""
+
     def __init__(self):
         super().__init__("TTS", num_workers=1)
