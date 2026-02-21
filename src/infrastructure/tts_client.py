@@ -170,8 +170,16 @@ class XTTSClient:
                         logging.info("XTTS: Server restarted. Retrying synthesis...")
                         return self.synthesize(text, ref_audio, output_path, language=language, retry_on_cuda=False)
 
+                # Detect 'sens' variable error (internal TTS library bug)
+                if "local variable 'sens' referenced before assignment" in error_text:
+                    if retry_on_cuda:
+                        logging.warning("XTTS: Detected library internal bug ('sens' error). Restarting server...")
+                        self._handle_restart()
+                        return self.synthesize(text, ref_audio, output_path, language=language, retry_on_cuda=False)
+
                 # Detect Tensor Size Mismatch (XTTS v2 specific internal error)
                 if "size of tensor" in error_text and "must match" in error_text:
+                    raise ValueError(f"XTTS Tensor Error: {error_text}")
                     raise ValueError(f"XTTS Tensor Error: {error_text}")
 
                 raise RuntimeError(f"XTTS Server Error: {error_text}")

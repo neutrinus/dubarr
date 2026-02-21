@@ -46,6 +46,7 @@ class LLMManager:
         self.ready_event = threading.Event()
         self.abort_event = abort_event or threading.Event()
         self._load_lock = threading.Lock()
+        self._inference_thread_lock = threading.Lock()
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
 
     def ensure_model_downloaded(self):
@@ -180,7 +181,12 @@ class LLMManager:
             def _direct_call(p, **kw):
                 if not self.llm:
                     raise RuntimeError("LLM failed to load!")
-                return self.llm(p, **kw)
+                with self._inference_thread_lock:
+                    try:
+                        return self.llm(p, **kw)
+                    except Exception as e:
+                        logging.error(f"LLM Internal Error during inference: {e}", exc_info=True)
+                        raise
 
             future = self.service.submit(_direct_call, prompt, priority=priority, **kwargs)
             return future.result()
@@ -352,6 +358,8 @@ class LLMManager:
         actual_dur: float,
         target_dur: float,
         glossary: Dict,
+        context_before: str = "",
+        context_after: str = "",
     ) -> str:
         """Refines text based on actual audio duration feedback."""
         delta = actual_dur - target_dur
@@ -371,13 +379,16 @@ class LLMManager:
             status=status,
             delta=round(delta, 2),
             glossary=json.dumps(glossary, ensure_ascii=False),
+            context_before=context_before,
+            context_after=context_after,
         )
 
         t0 = time.perf_counter()
         # Refinement is Priority 1 (High)
+        # Using temperature 0.3 for more stable/grammatical results
         res = self._run_inference(
-            prompt, priority=1, max_tokens=200, temperature=0.7, stop=["<|im_end|>"]
-        )  # Higher temp for creativity
+            prompt, priority=1, max_tokens=200, temperature=0.3, stop=["<|im_end|>"]
+        )
         self._update_stats(res, time.perf_counter() - t0)
 
         try:

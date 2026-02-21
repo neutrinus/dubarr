@@ -90,12 +90,21 @@ T_REFINE_DURATION = """<|im_start|>system
 You are a Dubbing Director adjusting a script to match the original actor's timing.
 The current translation does not fit the audio duration constraint.
 
-TASK: Rewrite the text to match the Target Duration.
+TASK: Rewrite the text to match the Target Duration while maintaining PERFECT GRAMMAR.
 - If current duration > target: Shorten the text (remove fillers, use synonyms).
 - If current duration < target: Expand the text (add natural fillers, adjectives, rephrase).
 
+CONTEXT:
+- Previous line: "{context_before}"
+- Next line: "{context_after}"
+
 GLOSSARY (Use strict phonetic spelling for names):
 {glossary}
+
+CRITICAL RULES:
+1. DO NOT SACRIFICE GRAMMAR FOR BREVITY. (Example: "na rampa" is WRONG, "na rampę" is RIGHT).
+2. Maintain the tone and flow of the surrounding context.
+3. Ensure the text is natural and easy to speak.
 
 INPUT DATA:
 - Original (Ref): "{original_text}"

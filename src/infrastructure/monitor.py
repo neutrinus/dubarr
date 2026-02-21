@@ -5,7 +5,7 @@ import logging
 
 
 class ResourceMonitor(threading.Thread):
-    def __init__(self, state_ref=None, interval=5.0, llm_service=None, tts_service=None):
+    def __init__(self, state_ref=None, interval=10.0, llm_service=None, tts_service=None):
         super().__init__()
         self.interval = interval
         self.state = state_ref or {}

@@ -390,8 +390,8 @@ class DubbingPipeline:
         self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
 
         # Initialize GPU RPC Services
-        # 4 workers for LLM to handle parallel slots on 12GB GPU
-        llm_service = LLMService(num_workers=4)
+        # 1 worker for LLM to ensure absolute stability with llama-cpp-python CUDA
+        llm_service = LLMService(num_workers=1)
         tts_service = TTSService()
         llm_service.start()
         tts_service.start()
@@ -432,7 +432,7 @@ class DubbingPipeline:
 
         # 3. Global Concurrent Execution (Flattened)
         # We use a larger pool since these are mostly waiting for RPC services
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             future_to_task = {
                 executor.submit(self.synchronizer.process_segment, task[0], task[1], vocals, script, self.global_context): task
                 for task in all_sync_tasks

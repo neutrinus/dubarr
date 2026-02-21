@@ -83,12 +83,23 @@ class SegmentSynchronizer:
             # 3. Refine (if not last attempt)
             if attempt < attempt_limit:
                 logger.info(f"[ID: {idx}] REJECTED (Too long: {actual_dur:.2f}s > {target_dur:.2f}s). Refining text...")
+                
+                # Get context from script
+                context_before = ""
+                context_after = ""
+                if idx > 0:
+                    context_before = full_script[idx-1].get("text_en", "")
+                if idx < len(full_script) - 1:
+                    context_after = full_script[idx+1].get("text_en", "")
+
                 new_text = self.llm.refine_translation_by_duration(
                     original_text=original_text,
                     current_text=current_text,
                     actual_dur=actual_dur,
                     target_dur=target_dur,
                     glossary=global_context.get("glossary", {}),
+                    context_before=context_before,
+                    context_after=context_after
                 )
 
                 if new_text == current_text:
