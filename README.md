@@ -134,6 +134,7 @@ The system processes each video through 7 major stages:
 *   [Open Dubbing (Softcatala)](https://github.com/Softcatala/open-dubbing) - Focusing on open datasets and Catalan.
 *   [PyVideoTrans](https://github.com/jianchang512/pyvideotrans) - Comprehensive GUI-based tool.
 *   [VideoTranslator](https://github.com/davy1ex/videoTranslator) - Various local/cloud engine support.
+*   [Dubarr](https://github.com/p1zzm1ssile/Dubarr) - Another project with a similar name.
 
 ---
 
