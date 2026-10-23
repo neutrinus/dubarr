@@ -17,6 +17,9 @@ try:
 except ImportError:
     torch = None
 
+# Zero-shot cloning from shorter clips sounds noticeably off (XTTS wants ~6s of clean speech)
+MIN_DYNAMIC_REF_DUR = 4.0
+
 
 class TTSManager:
     def __init__(
@@ -195,43 +198,50 @@ class TTSManager:
             logging.error(f"TTS: [ID: {idx}] Gen failed: {e}")
             return None
 
+    def set_speaker_refs(self, speaker_refs: Dict):
+        """Installs the golden references of the current video and drops samples left over from the previous one."""
+        self.speaker_refs = dict(speaker_refs or {})
+        self.last_good_samples = {}
+
     def _select_reference(self, item: Dict, vocals_path: str):
-        """Implements the Voice Migration Strategy hierarchy."""
+        """Implements the Voice Migration Strategy hierarchy.
+
+        The golden reference (a long, clean, scored sample of the speaker) comes first: zero-shot
+        cloning needs several seconds of clean speech, and a single reference keeps the voice
+        consistent across lines. A per-line dynamic sample is only used when the speaker has no
+        golden reference and the line itself is long enough to clone from.
+        """
         spk = item["speaker"]
         idx = item["index"]
         start, end = item["start"], item["end"]
         dur = end - start
 
-        # Path for dynamic extraction
-        dyn_path = os.path.join(self.temp_dir, f"dyn_{idx}.wav")
-
-        # Attempt Dynamic Extraction
-        audio_processor.extract_clean_segment(vocals_path, start, end, dyn_path)
-        zcr = measure_zcr(dyn_path)
-
-        is_good_dynamic = os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25 and dur > 0.8
-
-        if is_good_dynamic:
-            # Update Last Good Sample
-            last_good_path = os.path.join(self.temp_dir, f"last_good_{spk}.wav")
-            shutil.copy(dyn_path, last_good_path)
-            self.last_good_samples[spk] = last_good_path
-            return dyn_path, "DYNAMIC"
-
-        # Fallback 1: Last Good
-        if spk in self.last_good_samples and os.path.exists(self.last_good_samples[spk]):
-            if os.path.exists(dyn_path):
-                os.remove(dyn_path)
-            return self.last_good_samples[spk], "LAST_GOOD"
-
-        # Fallback 2: Golden (Global)
+        # 1. Golden (scored speaker reference)
         golden_ref = self.speaker_refs.get(spk)
         if golden_ref and os.path.exists(golden_ref):
-            if os.path.exists(dyn_path):
-                os.remove(dyn_path)
             return golden_ref, "GOLDEN"
 
-        # Fallback 3: Global Fallback (Any Golden or Last Good)
+        # 2. Dynamic extraction from the line itself
+        if dur >= MIN_DYNAMIC_REF_DUR:
+            dyn_path = os.path.join(self.temp_dir, f"dyn_{idx}.wav")
+            audio_processor.extract_clean_segment(vocals_path, start, end, dyn_path)
+            zcr = measure_zcr(dyn_path)
+
+            if os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25:
+                # Update Last Good Sample
+                last_good_path = os.path.join(self.temp_dir, f"last_good_{spk}.wav")
+                shutil.copy(dyn_path, last_good_path)
+                self.last_good_samples[spk] = last_good_path
+                return dyn_path, "DYNAMIC"
+
+            if os.path.exists(dyn_path):
+                os.remove(dyn_path)
+
+        # 3. Last Good dynamic sample of this speaker
+        if spk in self.last_good_samples and os.path.exists(self.last_good_samples[spk]):
+            return self.last_good_samples[spk], "LAST_GOOD"
+
+        # 4. Global Fallback (Any Golden or Last Good)
         # If we reach here, we have no specific reference for this speaker.
         # We pick the first available one from Golden refs, then Last Good.
         all_goldens = [p for p in self.speaker_refs.values() if os.path.exists(p)]
@@ -244,6 +254,4 @@ class TTSManager:
             logging.info(f"TTS: [ID: {idx}] Using Global LastGood fallback for speaker {spk}")
             return all_last_goods[0], "FALLBACK_LASTGOOD"
 
-        if os.path.exists(dyn_path):
-            os.remove(dyn_path)
         return None, "UNKNOWN"

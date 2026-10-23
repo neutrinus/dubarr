@@ -134,6 +134,7 @@ class DubbingPipeline:
 
     def _extract_refs(self, script, vocals_path, ddir):
         logger.info("Extracting Smart Weighted Normalized voice references (v2 - Scored 0-100)")
+        self.speaker_refs = {}
         ref_debug = os.path.join(ddir, "refs") if self.debug_mode else None
         if ref_debug:
             os.makedirs(ref_debug, exist_ok=True)
@@ -262,6 +263,8 @@ class DubbingPipeline:
             elif my_best[1] < 65:
                 logger.warning(f"  [Speaker {spk}] Low Score {my_best[1]}. Using best available candidate.")
 
+        return self.speaker_refs
+
     def _apply_mastering_and_speed(self, r, f, spk, speed):
         p = self.speaker_pans.get(spk)
         if p is None:
@@ -387,7 +390,9 @@ class DubbingPipeline:
         self.global_context = analysis_results["context"]
         self.speaker_info = analysis_results["speakers"]
 
-        self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
+        refs = self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
+        self.speaker_refs = refs or {}
+        self.tts_manager.set_speaker_refs(self.speaker_refs)
 
         # 5. Production (Per Language / Global Task Pool)
         # Initialize GPU RPC Services

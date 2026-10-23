@@ -51,3 +51,20 @@ class TestDubbingPipeline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_extract_refs_returns_golden_refs(self):
+        script = [
+            {"speaker": "A", "start": 10.0, "end": 18.0, "text_en": "This is a long and clean line of dialogue here"},
+            {"speaker": "A", "start": 20.0, "end": 21.0, "text_en": "Short"},
+        ]
+        self.pipeline.speaker_refs = {"OLD": "/tmp/old.wav"}
+        with (
+            patch("core.pipeline.run_cmd"),
+            patch("core.pipeline.measure_zcr", return_value=0.05),
+            patch("core.pipeline.shutil.move"),
+        ):
+            refs = self.pipeline._extract_refs(script, "vocals.wav", "/tmp/ddir")
+
+        self.assertEqual(list(refs.keys()), ["A"])
+        self.assertTrue(refs["A"].endswith("ref_A.wav"))
+        self.assertIs(refs, self.pipeline.speaker_refs)

@@ -25,20 +25,64 @@ class TestTTSManager(unittest.TestCase):
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
-    def test_select_reference_golden_fallback(self):
-        # Case where dynamic extraction and last good fail
+    def test_select_reference_prefers_golden_over_dynamic(self):
         with (
-            patch("core.audio.extract_clean_segment"),
-            patch("utils.measure_zcr", return_value=0.5),
-            patch("os.path.getsize", return_value=1000),
-            patch("os.remove"),
-            patch("os.path.exists", side_effect=lambda p: p == "golden.wav" or "dyn" in p),
+            patch("core.tts_manager.audio_processor.extract_clean_segment") as mock_extract,
+            patch("os.path.exists", side_effect=lambda p: p == "golden.wav"),
         ):
             ref, voice_type = self.manager._select_reference(
-                {"speaker": "SPK1", "index": 0, "start": 0, "end": 1}, "vocals.wav"
+                {"speaker": "SPK1", "index": 0, "start": 0, "end": 8}, "vocals.wav"
             )
             self.assertEqual(voice_type, "GOLDEN")
             self.assertEqual(ref, "golden.wav")
+            mock_extract.assert_not_called()
+
+    def test_select_reference_dynamic_without_golden(self):
+        dyn_path = os.path.join(self.temp_dir, "dyn_0.wav")
+        with (
+            patch("core.tts_manager.audio_processor.extract_clean_segment"),
+            patch("core.tts_manager.measure_zcr", return_value=0.1),
+            patch("os.path.getsize", return_value=10000),
+            patch("os.path.exists", side_effect=lambda p: p == dyn_path),
+            patch("core.tts_manager.shutil.copy"),
+        ):
+            ref, voice_type = self.manager._select_reference(
+                {"speaker": "SPK2", "index": 0, "start": 0, "end": 5}, "vocals.wav"
+            )
+            self.assertEqual(voice_type, "DYNAMIC")
+            self.assertEqual(ref, dyn_path)
+            self.assertIn("SPK2", self.manager.last_good_samples)
+
+    def test_select_reference_skips_dynamic_for_short_line(self):
+        self.manager.last_good_samples["SPK2"] = "last_good_SPK2.wav"
+        with (
+            patch("core.tts_manager.audio_processor.extract_clean_segment") as mock_extract,
+            patch("os.path.exists", side_effect=lambda p: p == "last_good_SPK2.wav"),
+        ):
+            ref, voice_type = self.manager._select_reference(
+                {"speaker": "SPK2", "index": 0, "start": 0, "end": 1.5}, "vocals.wav"
+            )
+            self.assertEqual(voice_type, "LAST_GOOD")
+            self.assertEqual(ref, "last_good_SPK2.wav")
+            mock_extract.assert_not_called()
+
+    def test_select_reference_falls_back_to_other_golden(self):
+        with (
+            patch("core.tts_manager.audio_processor.extract_clean_segment") as mock_extract,
+            patch("os.path.exists", side_effect=lambda p: p == "golden.wav"),
+        ):
+            ref, voice_type = self.manager._select_reference(
+                {"speaker": "SPK2", "index": 0, "start": 0, "end": 1}, "vocals.wav"
+            )
+            self.assertEqual(voice_type, "FALLBACK_GOLDEN")
+            self.assertEqual(ref, "golden.wav")
+            mock_extract.assert_not_called()
+
+    def test_set_speaker_refs_resets_last_good(self):
+        self.manager.last_good_samples["SPK1"] = "old.wav"
+        self.manager.set_speaker_refs({"SPK3": "ref_SPK3.wav"})
+        self.assertEqual(self.manager.speaker_refs, {"SPK3": "ref_SPK3.wav"})
+        self.assertEqual(self.manager.last_good_samples, {})
 
     def test_synthesize_item_success(self):
         item = {"speaker": "SPK1", "index": 0, "text": "Hello", "start": 0, "end": 2}
