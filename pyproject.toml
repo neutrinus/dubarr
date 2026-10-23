@@ -37,6 +37,7 @@ runtime = [
     "pyannote.audio==4.0.4",
     "diffq",
     "faster-whisper",
+    "av<19",  # av 19 dropped open(metadata_errors=...), which faster-whisper 1.2.1 uses
     "transformers>=4.57",
     "coqui-tts @ git+https://github.com/idiap/coqui-ai-TTS.git@dev",
 ]

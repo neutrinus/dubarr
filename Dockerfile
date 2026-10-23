@@ -21,7 +21,7 @@ RUN uv python install 3.12 3.10 && \
     uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
     --index-strategy unsafe-best-match \
     "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio" \
-    "pyannote.audio==4.0.4" "faster-whisper" "demucs" "diffq" \
+    "pyannote.audio==4.0.4" "faster-whisper" "av<19" "demucs" "diffq" \
     "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
     "fastapi" "uvicorn[standard]" "websockets" "jinja2" "python-multipart" && \
     uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \

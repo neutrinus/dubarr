@@ -71,13 +71,13 @@ jobs:
           uv python install 3.12 3.10
           uv venv .venv_app --python 3.12
           # Torch from the CPU index first, everything else from PyPI only: the CPU index also serves
-          # stale builds of unrelated packages (an old `av` broke faster-whisper).
+          # stale builds of unrelated packages.
           uv pip install --python .venv_app/bin/python3 --index-url https://download.pytorch.org/whl/cpu \
             "torch>=2.5.0" "torchvision" "torchaudio"
           TORCH_PIN=$(.venv_app/bin/python3 -c "import torch; print(torch.__version__.split('+')[0])")
           uv pip install --python .venv_app/bin/python3 \
             "numpy==2.2.2" "torch==$TORCH_PIN" "torchvision" "torchaudio" \
-            "pyannote.audio==4.0.4" "faster-whisper" "av>=15" "demucs" "diffq" \
+            "pyannote.audio==4.0.4" "faster-whisper" "av>=15,<19" "demucs" "diffq" \
             "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
             "fastapi" "uvicorn[standard]" "websockets" "jinja2" "python-multipart"
           uv pip install --python .venv_app/bin/python3 llama-cpp-python \
