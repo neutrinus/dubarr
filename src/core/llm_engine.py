@@ -324,6 +324,9 @@ class LLMManager:
                     if "id" in item
                 }
 
+                missing = [idx for idx in batch_indices if idx not in trans_map]
+                if missing:
+                    logging.warning(f"LLM: No {lang_name} translation for lines {missing}, keeping the original text")
                 for idx in batch_indices:
                     txt = trans_map.get(idx, script[idx]["text_en"])  # Fallback to original
                     drafts.append(
