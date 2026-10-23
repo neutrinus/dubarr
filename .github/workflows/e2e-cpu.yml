@@ -70,9 +70,13 @@ jobs:
         run: |
           uv python install 3.12 3.10
           uv venv .venv_app --python 3.12
+          # Torch from the CPU index first, everything else from PyPI only: the CPU index also serves
+          # stale builds of unrelated packages (an old `av` broke faster-whisper).
+          uv pip install --python .venv_app/bin/python3 --index-url https://download.pytorch.org/whl/cpu \
+            "torch>=2.5.0" "torchvision" "torchaudio"
+          TORCH_PIN=$(.venv_app/bin/python3 -c "import torch; print(torch.__version__.split('+')[0])")
           uv pip install --python .venv_app/bin/python3 \
-            --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cpu \
-            "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio" \
+            "numpy==2.2.2" "torch==$TORCH_PIN" "torchvision" "torchaudio" \
             "pyannote.audio==4.0.4" "faster-whisper" "av>=15" "demucs" "diffq" \
             "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
             "fastapi" "uvicorn[standard]" "websockets" "jinja2" "python-multipart"
@@ -82,8 +86,9 @@ jobs:
       - name: Create TTS venv (Python 3.10)
         run: |
           uv venv .venv_tts --python 3.10
+          uv pip install --python .venv_tts/bin/python3 --index-url https://download.pytorch.org/whl/cpu \
+            "torch==2.4.0" "torchaudio==2.4.0"
           uv pip install --python .venv_tts/bin/python3 \
-            --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cpu \
             "numpy>=1.26.0" "torch==2.4.0" "torchaudio==2.4.0" \
             "flask" "git+https://github.com/idiap/coqui-ai-TTS.git@dev"
           # Same transformers compatibility patch as the Dockerfile
@@ -107,6 +112,7 @@ jobs:
       - name: Run E2E
         run: |
           export PATH="$GITHUB_WORKSPACE/.venv_app/bin:$PATH"
+          python3 -c "import torch, av, faster_whisper; print('torch', torch.__version__, 'av', av.__version__, 'faster-whisper', faster_whisper.__version__)"
           python3 scripts/e2e_test.py
 
       - name: Upload result
