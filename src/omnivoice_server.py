@@ -23,8 +23,12 @@ _prompt_cache = OrderedDict()
 
 def load_model():
     global model
-    logging.info(f"OmniVoice: Loading model on cuda:{gpu_id}...")
-    model = OmniVoice.from_pretrained("k2-fsa/OmniVoice", device_map=f"cuda:{gpu_id}", dtype=torch.float16)
+    if torch.cuda.is_available():
+        device, dtype = f"cuda:{gpu_id}", torch.float16
+    else:
+        device, dtype = "cpu", torch.float32
+    logging.info(f"OmniVoice: Loading model on {device}...")
+    model = OmniVoice.from_pretrained("k2-fsa/OmniVoice", device_map=device, dtype=dtype)
     logging.info("OmniVoice: Model loaded.")
 
 

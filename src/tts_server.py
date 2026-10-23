@@ -13,9 +13,10 @@ gpu_id = int(os.environ.get("GPU_TTS", 0))
 
 def load_tts():
     global tts
-    logging.info(f"XTTS: Loading model on cuda:{gpu_id}...")
+    device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
+    logging.info(f"XTTS: Loading model on {device}...")
     os.environ["COQUI_TOS_AGREED"] = "1"
-    tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(f"cuda:{gpu_id}")
+    tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
     logging.info("XTTS: Model loaded.")
 
 

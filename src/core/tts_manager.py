@@ -139,11 +139,12 @@ class TTSManager:
         idx = item["index"]
 
         # 1. Select Reference Audio (Migration Strategy)
-        chosen_ref, voice_type = self._select_reference(item, vocals_path)
+        chosen_ref, voice_type = self._select_reference(item, vocals_path, lang)
 
         # 2. Prepare TTS inputs
         clean_text = item["text"].strip()
-        raw_path = os.path.join(self.temp_dir, f"raw_{idx}.wav")
+        # Languages are produced concurrently and share segment indexes
+        raw_path = os.path.join(self.temp_dir, f"raw_{lang}_{idx}.wav")
 
         # 3. Calculate constraints
         slot_dur = item["end"] - item["start"]
@@ -209,7 +210,7 @@ class TTSManager:
         self.speaker_refs = dict(speaker_refs or {})
         self.last_good_samples = {}
 
-    def _select_reference(self, item: Dict, vocals_path: str):
+    def _select_reference(self, item: Dict, vocals_path: str, lang: str = ""):
         """Implements the Voice Migration Strategy hierarchy.
 
         With XTTS the golden reference (a long, clean, scored sample of the speaker) comes first:
@@ -230,7 +231,7 @@ class TTSManager:
 
         # 1. Dynamic extraction from the line itself
         if use_line:
-            dyn_ref = self._extract_line_ref(item, vocals_path)
+            dyn_ref = self._extract_line_ref(item, vocals_path, lang)
             if dyn_ref:
                 return dyn_ref, "DYNAMIC"
 
@@ -257,17 +258,17 @@ class TTSManager:
 
         return None, "UNKNOWN"
 
-    def _extract_line_ref(self, item: Dict, vocals_path: str) -> Optional[str]:
+    def _extract_line_ref(self, item: Dict, vocals_path: str, lang: str = "") -> Optional[str]:
         """Cuts the line from the vocals track; returns its path if it is clean enough to clone from."""
         spk = item["speaker"]
-        dyn_path = os.path.join(self.temp_dir, f"dyn_{item['index']}.wav")
+        dyn_path = os.path.join(self.temp_dir, f"dyn_{lang}_{item['index']}.wav")
         audio_processor.extract_clean_segment(vocals_path, item["start"], item["end"], dyn_path)
         zcr = measure_zcr(dyn_path)
 
         if os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25:
             write_ref_text(dyn_path, item.get("source_text", ""))
             # Update Last Good Sample
-            last_good_path = os.path.join(self.temp_dir, f"last_good_{spk}.wav")
+            last_good_path = os.path.join(self.temp_dir, f"last_good_{lang}_{spk}.wav")
             shutil.copy(dyn_path, last_good_path)
             if os.path.exists(ref_text_path(dyn_path)):
                 shutil.copy(ref_text_path(dyn_path), ref_text_path(last_good_path))

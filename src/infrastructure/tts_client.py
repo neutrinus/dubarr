@@ -6,7 +6,7 @@ import logging
 import signal
 import threading
 
-from config import MOCK_MODE
+from config import MOCK_MODE, OMNIVOICE_PYTHON, TTS_PYTHON, TTS_TIMEOUT
 
 # XTTS v2 supported languages
 XTTS_LANGS = [
@@ -96,7 +96,7 @@ class TTSServerClient:
             env["PYTHONUNBUFFERED"] = "1"
 
             python_path = self.PYTHON_PATH
-            server_path = self.SERVER_SCRIPT
+            server_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), self.SERVER_SCRIPT)
 
             # Capture both stdout and stderr
             self.server_process = subprocess.Popen(
@@ -177,7 +177,7 @@ class TTSServerClient:
 
         try:
             logging.info(f"{self.NAME}Client: Sending request for text: {text[:20]}...")
-            res = requests.post(f"{self.server_url}/synthesize", json=payload, timeout=60)
+            res = requests.post(f"{self.server_url}/synthesize", json=payload, timeout=TTS_TIMEOUT)
             logging.info(f"{self.NAME}Client: Received response {res.status_code}")
             if res.status_code != 200:
                 error_text = res.text
@@ -243,7 +243,7 @@ class XTTSClient(TTSServerClient):
     """XTTS v2 (coqui-tts) server, see src/tts_server.py."""
 
     NAME = "XTTS"
-    PYTHON_PATH = "/app/.venv_tts/bin/python3"
+    PYTHON_PATH = TTS_PYTHON
     SERVER_SCRIPT = "tts_server.py"
     DEFAULT_PORT = 5050
 
@@ -257,7 +257,7 @@ class OmniVoiceClient(TTSServerClient):
     """OmniVoice (k2-fsa) server, see src/omnivoice_server.py."""
 
     NAME = "OmniVoice"
-    PYTHON_PATH = "/app/.venv_omnivoice/bin/python3"
+    PYTHON_PATH = OMNIVOICE_PYTHON
     SERVER_SCRIPT = "omnivoice_server.py"
     DEFAULT_PORT = 5051
 

@@ -42,7 +42,7 @@ class TestTTSManager(unittest.TestCase):
             mock_extract.assert_not_called()
 
     def test_select_reference_dynamic_without_golden(self):
-        dyn_path = os.path.join(self.temp_dir, "dyn_0.wav")
+        dyn_path = os.path.join(self.temp_dir, "dyn__0.wav")
         with (
             patch("core.tts_manager.audio_processor.extract_clean_segment"),
             patch("core.tts_manager.measure_zcr", return_value=0.1),
@@ -84,7 +84,7 @@ class TestTTSManager(unittest.TestCase):
 
     def test_omnivoice_prefers_clean_line_clip(self):
         self.manager.backend = "omnivoice"
-        dyn_path = os.path.join(self.temp_dir, "dyn_0.wav")
+        dyn_path = os.path.join(self.temp_dir, "dyn__0.wav")
         item = {"speaker": "SPK1", "index": 0, "start": 0, "end": 5, "source_text": "Get out of here!"}
         with (
             patch("core.tts_manager.audio_processor.extract_clean_segment"),
@@ -96,7 +96,7 @@ class TestTTSManager(unittest.TestCase):
             ref, voice_type = self.manager._select_reference(item, "vocals.wav")
         self.assertEqual(voice_type, "DYNAMIC")
         self.assertEqual(ref, dyn_path)
-        with open(os.path.join(self.temp_dir, "dyn_0.txt"), encoding="utf-8") as f:
+        with open(os.path.join(self.temp_dir, "dyn__0.txt"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "Get out of here!")
 
     def test_omnivoice_uses_golden_for_short_line(self):
@@ -119,7 +119,9 @@ class TestTTSManager(unittest.TestCase):
             patch("os.path.getsize", return_value=5000),
         ):
             self.manager._synthesize_item(item, "pl", "vocals.wav", [])
-        self.assertEqual(self.manager.engine.synthesize.call_args.kwargs["max_duration"], 2.5)
+        call = self.manager.engine.synthesize.call_args
+        self.assertEqual(call.kwargs["max_duration"], 2.5)
+        self.assertTrue(call.args[2].endswith("raw_pl_0.wav"))
 
     def test_set_speaker_refs_resets_last_good(self):
         self.manager.last_good_samples["SPK1"] = "old.wav"
