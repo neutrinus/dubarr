@@ -85,6 +85,12 @@ CI (`.github/workflows/pipeline.yml`) runs the same lint + tests on Python 3.10,
 `scripts/smoke_test.py` against a container started with `MOCK_MODE=1`. Images are pushed to `ghcr.io` only from `main`
 and tags.
 
+`.github/workflows/e2e-cpu.yml` runs `scripts/e2e_test.py`: it cuts a 60 s public-domain clip (NASA), dubs it with the
+real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 1.5B GGUF, XTTS v2 on CPU), and checks the
+muxed tracks (count, tags, duration, not silent). It runs nightly, on push to `main`, on manual dispatch, and on PRs that
+touch the workflow or the script. Without the `HF_TOKEN` secret, diarization is replaced by a single speaker. It tests
+plumbing, not translation quality.
+
 Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 4 GB each for Whisper and XTTS),
 `HF_TOKEN` with access to the pyannote models, and the Docker image (two venvs: `.venv_app` on Python 3.12 and
 `.venv_tts` on Python 3.10 for Coqui). Use `docker compose up --build`. Outside Docker you must start
@@ -102,6 +108,10 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
 | `VERBOSE` | `0` | DEBUG log level. |
 | `API_USER` / `API_PASS` | `dubarr` / `dubarr` | Basic auth for `/webhook`, `/upload`, `/download`, `/debug`. |
 | `PUID` / `PGID` | `1000` | Container user, handled by `entrypoint.sh`. |
+| `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
+| `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |
+| `TTS_PYTHON` | `/app/.venv_tts/bin/python3` | Interpreter used to start `tts_server.py`. |
+| `TTS_TIMEOUT` | `60` | Seconds per XTTS request (raise it on CPU). |
 
 ## Conventions
 

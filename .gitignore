@@ -47,3 +47,4 @@ TOKEN
 .vscode/
 .idea/
 .DS_Store
+e2e_out/

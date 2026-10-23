@@ -1,0 +1,121 @@
+name: E2E (CPU, real models)
+
+# Dubs a short public-domain clip with the real pipeline on a CPU runner, using small models
+# (Whisper small, Qwen2.5 1.5B, XTTS v2 on CPU). Checks plumbing, not translation quality.
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Video URL or path (default: NASA ISS interview, public domain)"
+        required: false
+      start:
+        description: "Clip start (seconds)"
+        default: "60"
+      duration:
+        description: "Clip length (seconds)"
+        default: "60"
+      langs:
+        description: "Target languages"
+        default: "pl"
+  schedule:
+    - cron: "0 3 * * *"
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/e2e-cpu.yml"
+      - "scripts/e2e_test.py"
+
+concurrency:
+  group: e2e-cpu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Dub a real clip on CPU
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      UV_HTTP_TIMEOUT: "600"
+      DATA_DIR: ${{ github.workspace }}/e2e_out/data
+      HF_HOME: ${{ github.workspace }}/.model-cache/hf
+      TORCH_HOME: ${{ github.workspace }}/.model-cache/torch
+      TTS_HOME: ${{ github.workspace }}/.model-cache/tts
+      XDG_DATA_HOME: ${{ github.workspace }}/.model-cache/xdg
+      COQUI_TOS_AGREED: "1"
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      WHISPER_MODEL: small
+      LLM_MODEL_REPO: Qwen/Qwen2.5-1.5B-Instruct-GGUF
+      LLM_MODEL_FILE: qwen2.5-1.5b-instruct-q4_k_m.gguf
+      TTS_PYTHON: ${{ github.workspace }}/.venv_tts/bin/python3
+      TTS_TIMEOUT: "600"
+      TARGET_LANGS: ${{ inputs.langs || 'pl' }}
+      E2E_VIDEO_URL: ${{ inputs.video_url }}
+      E2E_START: ${{ inputs.start || '60' }}
+      E2E_DURATION: ${{ inputs.duration || '60' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libsndfile1
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          version: "0.5.21"
+
+      # Same split as the Dockerfile: app on Python 3.12, Coqui XTTS in its own Python 3.10 venv. CPU wheels only.
+      - name: Create app venv (Python 3.12)
+        run: |
+          uv python install 3.12 3.10
+          uv venv .venv_app --python 3.12
+          uv pip install --python .venv_app/bin/python3 \
+            --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cpu \
+            "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio" \
+            "pyannote.audio==4.0.4" "faster-whisper" "demucs" "diffq" \
+            "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
+            "fastapi" "uvicorn[standard]" "websockets" "jinja2" "python-multipart"
+          uv pip install --python .venv_app/bin/python3 llama-cpp-python \
+            --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+
+      - name: Create TTS venv (Python 3.10)
+        run: |
+          uv venv .venv_tts --python 3.10
+          uv pip install --python .venv_tts/bin/python3 \
+            --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cpu \
+            "numpy>=1.26.0" "torch==2.4.0" "torchaudio==2.4.0" \
+            "flask" "git+https://github.com/idiap/coqui-ai-TTS.git@dev"
+          # Same transformers compatibility patch as the Dockerfile
+          f=$(.venv_tts/bin/python3 -c "import TTS, os; print(os.path.join(os.path.dirname(TTS.__file__), 'tts/layers/tortoise/autoregressive.py'))")
+          if [ -f "$f" ]; then
+            sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(elements, test_elements, *args, **kwargs):\n    return torch.isin(elements, test_elements)/' "$f"
+          fi
+
+      - name: Restore model cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .model-cache
+            e2e_out/data/models
+          key: e2e-models-v1-${{ env.WHISPER_MODEL }}-${{ env.LLM_MODEL_FILE }}
+
+      - name: Note missing HF_TOKEN
+        if: env.HF_TOKEN == ''
+        run: echo "::warning::HF_TOKEN secret is not set, diarization is replaced by a single speaker."
+
+      - name: Run E2E
+        run: |
+          export PATH="$GITHUB_WORKSPACE/.venv_app/bin:$PATH"
+          python3 scripts/e2e_test.py
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-result
+          path: |
+            e2e_out/clip.mkv
+            e2e_out/data/logs/processing.log
+          if-no-files-found: ignore
+          retention-days: 14

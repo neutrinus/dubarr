@@ -7,7 +7,7 @@ import gc
 from typing import List, Dict, Optional, Any
 from utils import parse_json, clean_output
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_TRANS, T_REFINE_DURATION
-from config import LANG_MAP, MOCK_MODE
+from config import LANG_MAP, MOCK_MODE, LLM_MODEL_REPO
 from core.gpu_manager import GPUManager
 
 try:
@@ -58,7 +58,7 @@ class LLMManager:
             logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
             from huggingface_hub import hf_hub_download
 
-            repo_id = "bartowski/google_gemma-3-12b-it-GGUF"
+            repo_id = LLM_MODEL_REPO
             filename = os.path.basename(self.model_path)
             os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
             hf_hub_download(

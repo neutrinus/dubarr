@@ -22,7 +22,9 @@ VIDEO_FOLDER = os.path.join(BASE_DIR, "videos")
 OUTPUT_FOLDER = os.path.join(DATA_DIR, "logs")
 DB_PATH = os.path.join(DATA_DIR, "queue.db")
 TEMP_DIR = os.path.join(DATA_DIR, "temp")
-MODEL_PATH = os.path.join(DATA_DIR, "models", "google_gemma-3-12b-it-Q4_K_M.gguf")
+LLM_MODEL_REPO = os.environ.get("LLM_MODEL_REPO", "bartowski/google_gemma-3-12b-it-GGUF")
+LLM_MODEL_FILE = os.environ.get("LLM_MODEL_FILE", "google_gemma-3-12b-it-Q4_K_M.gguf")
+MODEL_PATH = os.path.join(DATA_DIR, "models", LLM_MODEL_FILE)
 
 print(f"DEBUG: config.BASE_DIR={BASE_DIR}", flush=True)
 print(f"DEBUG: config.DATA_DIR={DATA_DIR}", flush=True)
@@ -30,7 +32,7 @@ print(f"DEBUG: config.VIDEO_FOLDER={VIDEO_FOLDER}", flush=True)
 print(f"DEBUG: config.OUTPUT_FOLDER={OUTPUT_FOLDER}", flush=True)
 print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
-WHISPER_MODEL = "large-v3-turbo"
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 
 # XTTS server: interpreter of the dedicated Python 3.10 venv and per-request timeout (CPU synthesis is slow)
 TTS_PYTHON = os.environ.get("TTS_PYTHON", "/app/.venv_tts/bin/python3")
