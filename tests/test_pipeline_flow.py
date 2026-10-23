@@ -168,6 +168,17 @@ class TestProductionPool(unittest.TestCase):
         with open(checkpoint) as f:
             self.assertEqual(len(json.load(f)["pl"]), 3)
 
+    def test_fails_instead_of_muxing_a_language_without_any_segment(self):
+        self.pipeline.temp_dir = self.workdir
+        self.pipeline.llm_manager.generate_drafts = MagicMock(side_effect=lambda script, *a: [dict(s) for s in script])
+        self.pipeline.synchronizer = MagicMock()
+        self.pipeline.synchronizer.process_segment.side_effect = RuntimeError("XTTS Server died during startup.")
+
+        with patch.object(self.pipeline, "_finalize_all_languages") as finalize:
+            with self.assertRaisesRegex(RuntimeError, "pl, de"):
+                self.pipeline._execute_production_pool(self.script, "vocals.wav", self.workdir, "orig.wav", None)
+        finalize.assert_not_called()
+
     def test_languages_do_not_share_segment_files(self):
         sync = SegmentSynchronizer(MagicMock(), MagicMock(), self.workdir)
         segment = {"index": 0, "text_en": "Hello", "start": 0, "end": 5, "speaker": "A"}
