@@ -1,7 +1,7 @@
 name: E2E (CPU, real models)
 
 # Dubs a short public-domain clip with the real pipeline on a CPU runner, using small models
-# (Whisper small, Qwen2.5 1.5B, XTTS v2 on CPU). Checks plumbing, not translation quality.
+# (Whisper small, Qwen2.5 3B, XTTS v2 on CPU). Checks plumbing, not translation quality.
 on:
   workflow_dispatch:
     inputs:
@@ -49,8 +49,8 @@ jobs:
       COQUI_TOS_AGREED: "1"
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       WHISPER_MODEL: small
-      LLM_MODEL_REPO: Qwen/Qwen2.5-1.5B-Instruct-GGUF
-      LLM_MODEL_FILE: qwen2.5-1.5b-instruct-q4_k_m.gguf
+      LLM_MODEL_REPO: Qwen/Qwen2.5-3B-Instruct-GGUF
+      LLM_MODEL_FILE: qwen2.5-3b-instruct-q4_k_m.gguf
       TTS_BACKEND: xtts  # the CPU job installs only the XTTS venv
       TTS_PYTHON: ${{ github.workspace }}/.venv_tts/bin/python3
       TTS_TIMEOUT: "600"

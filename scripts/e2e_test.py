@@ -162,6 +162,9 @@ def main():
 
         heard, prob, text = detect_language(clip, idx, WHISPER_MODEL)
         report.append(f"[{lang}] mean volume {vol} dB; Whisper hears '{heard}' (p={prob:.2f})")
+        if heard and heard != lang:
+            # Translation quality depends on the small CPU model, so this is a warning, not a failure
+            print(f"::warning::The '{title}' track sounds like '{heard}', not '{lang}'")
         report.append(f"[{lang}] transcript: {text[:500]}")
 
     out_duration = float(out_meta["format"]["duration"])
@@ -175,6 +178,7 @@ def main():
             ("segments accepted", r"\] ACCEPTED"),
             ("segments in fallback", r"_FALLBACK: Selection"),
             ("segments failed", r"failed completely|TIMED OUT|All synthesis attempts failed"),
+            ("draft batches with untranslated lines", r"translation for lines|Draft generation failed"),
         ]:
             count = len(re.findall(pattern, log))
             report.append(f"{label}: {count}")
