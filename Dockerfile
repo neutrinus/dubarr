@@ -30,8 +30,8 @@ RUN uv python install 3.12 3.10 && \
 RUN uv venv /app/.venv_tts --python 3.10 && \
     uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
     --index-strategy unsafe-best-match \
-    "numpy>=1.26.0" "torch==2.4.0" "torchaudio==2.4.0" \
-    "flask" "git+https://github.com/idiap/coqui-ai-TTS.git@dev" && \
+    "numpy>=1.26.0" "torch==2.8.0" "torchaudio==2.8.0" "transformers>=4.57,<5" \
+    "flask" "coqui-tts==0.28.0" && \
     uv cache clean
 
 # OmniVoice (default TTS backend) needs transformers>=5.3, so it gets its own venv too
