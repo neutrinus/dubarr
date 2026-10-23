@@ -24,6 +24,19 @@ class TestSynchronizer(unittest.TestCase):
         self.assertEqual(res["status"], "ACCEPTED")
         self.mock_llm.refine_translation_by_duration.assert_not_called()
 
+    def test_accepts_overrun_into_trailing_silence(self):
+        # Target=5.0 but 0.8s of silence follows; TTS produces 5.6 -> fits without refinement
+        segment = {"index": 0, "text_en": "Hello", "start": 0, "end": 5, "max_end": 5.8, "speaker": "A"}
+
+        self.mock_tts.synthesize_sync.return_value = {"audio_path": "fake.wav", "duration": 5.6, "voice_type": "MOCK"}
+
+        with patch("core.synchronizer.FFmpegWrapper.get_duration", return_value=5.6):
+            with patch("shutil.copy"):
+                res = self.sync.process_segment(segment, "pl", "voc.wav", [], {})
+
+        self.assertEqual(res["status"], "ACCEPTED")
+        self.mock_llm.refine_translation_by_duration.assert_not_called()
+
     def test_valid_fallback(self):
         # Scenario: Duration target = 5.0, TTS produces 5.08 (within 0.1s but not 0.05s)
         segment = {"index": 0, "text_en": "Hello", "start": 0, "end": 5, "speaker": "A"}

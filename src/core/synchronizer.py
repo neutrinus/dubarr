@@ -21,10 +21,11 @@ class SegmentSynchronizer:
         Orchestrates the feedback loop for a single segment.
         Returns the final accepted audio path and text.
         New Strategy: Strictly <= target duration, 3 attempts default.
+        Target duration includes the silence after the segment ("max_end"), if known.
         """
         original_text = segment.get("text_en", "")
         current_text = segment.get("text", original_text)
-        target_dur = segment["end"] - segment["start"]
+        target_dur = segment.get("max_end", segment["end"]) - segment["start"]
         speaker = segment["speaker"]
         idx = segment["index"]
 
@@ -58,7 +59,7 @@ class SegmentSynchronizer:
 
             delta = actual_dur - target_dur
 
-            # Acceptance Criteria: Strictly not longer than original
+            # Acceptance Criteria: Strictly not longer than original plus trailing silence
             # We allow a very tiny margin (0.05s) for technical jitter
             is_acceptable = actual_dur <= (target_dur + 0.05)
 

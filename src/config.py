@@ -32,8 +32,18 @@ print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
 WHISPER_MODEL = "large-v3-turbo"
 
-# Speech synthesis backend: "omnivoice" (default) or "xtts"
+# XTTS server: interpreter of the dedicated Python 3.10 venv and per-request timeout (CPU synthesis is slow)
+TTS_PYTHON = os.environ.get("TTS_PYTHON", "/app/.venv_tts/bin/python3")
+TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))
+
+# Speech synthesis backend: "omnivoice" (default) or "xtts", and the interpreter of the OmniVoice venv
 TTS_BACKEND = os.environ.get("TTS_BACKEND", "omnivoice").lower()
+OMNIVOICE_PYTHON = os.environ.get("OMNIVOICE_PYTHON", "/app/.venv_omnivoice/bin/python3")
+
+# Dubbed speech may run into the silence after a segment (never the silence before it).
+# Cap on how much trailing silence a segment may borrow, and the gap kept before the next speech.
+SLACK_AFTER_MAX = float(os.environ.get("SLACK_AFTER_MAX", "1.0"))
+SLACK_GUARD = 0.15
 
 
 # Safe logging setup
