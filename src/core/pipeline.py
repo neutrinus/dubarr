@@ -9,6 +9,7 @@ from typing import List, Optional
 
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR
 from infrastructure.ffmpeg import FFmpegWrapper
+from infrastructure.tts_client import write_ref_text
 from infrastructure.monitor import ResourceMonitor
 from core.audio import prep_audio, analyze_audio, mix_audio
 from utils import clean_srt, measure_zcr, run_cmd
@@ -246,6 +247,7 @@ class DubbingPipeline:
                     best_seg, best_score, wav_path = final_choice
                     out = os.path.join(self.temp_dir, f"ref_{spk}.wav")
                     shutil.move(wav_path, out)
+                    write_ref_text(out, best_seg["text_en"])
                     best_per_speaker[spk] = (best_seg, best_score)
                     self.speaker_refs[spk] = out
                     logger.info(

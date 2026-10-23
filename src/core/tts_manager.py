@@ -6,9 +6,9 @@ import threading
 import gc
 import subprocess
 from typing import List, Dict, Optional, Any
-from infrastructure.tts_client import XTTSWrapper
+from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
 from utils import measure_zcr, count_syllables
-from config import MOCK_MODE
+from config import MOCK_MODE, TTS_BACKEND
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
 
@@ -19,6 +19,8 @@ except ImportError:
 
 # Zero-shot cloning from shorter clips sounds noticeably off (XTTS wants ~6s of clean speech)
 MIN_DYNAMIC_REF_DUR = 4.0
+# OmniVoice clones well from 3-10 s; a clip of the line itself carries that scene's emotion
+LINE_REF_RANGE = (3.0, 10.0)
 
 
 class TTSManager:
@@ -29,6 +31,7 @@ class TTSManager:
         speaker_refs: Dict,
         abort_event: threading.Event,
         service: Optional[Any] = None,  # TTSService
+        backend: str = TTS_BACKEND,
     ):
         self.device = "cpu"
         self.inference_lock = inference_lock
@@ -36,6 +39,7 @@ class TTSManager:
         self.speaker_refs = speaker_refs  # Golden samples
         self.abort_event = abort_event
         self.service = service
+        self.backend = backend
         self.last_good_samples = {}
         self.engine = None
         self._engine_lock = threading.Lock()
@@ -58,14 +62,15 @@ class TTSManager:
             self.status = "LOADING"
             try:
                 # Dynamic GPU allocation
-                # XTTS v2 needs approx 4GB
-                self.device = GPUManager.get_best_gpu(needed_mb=4000, purpose="XTTS")
+                # XTTS v2 and OmniVoice (fp16) need approx 4GB
+                self.device = GPUManager.get_best_gpu(needed_mb=4000, purpose=self.backend)
 
                 gpu_id = 0
                 if "cuda" in self.device:
                     gpu_id = int(self.device.split(":")[-1])
 
-                self.engine = XTTSWrapper(gpu_id=gpu_id)
+                logging.info(f"TTS: Using backend '{self.backend}'")
+                self.engine = TTSWrapper(gpu_id=gpu_id, backend=self.backend)
                 self.status = "READY"
 
             except Exception as e:
@@ -100,7 +105,7 @@ class TTSManager:
         """Wrapper for TTS inference that respects the global lock or uses the RPC service."""
         if MOCK_MODE:
             # Extract output_path from args or kwargs
-            # Signature: synthesize(text, ref_audio, output_path, language="en")
+            # Signature: synthesize(text, ref_audio, output_path, language="en", max_duration=None)
             if len(args) >= 3:
                 output_path = args[2]
             else:
@@ -141,8 +146,9 @@ class TTSManager:
         raw_path = os.path.join(self.temp_dir, f"raw_{idx}.wav")
 
         # 3. Calculate constraints
+        slot_dur = item["end"] - item["start"]
         syl_count = count_syllables(clean_text, lang)
-        max_allowed_dur = max((syl_count * 0.4) + 1.5, (item["end"] - item["start"]) + 1.5)
+        max_allowed_dur = max((syl_count * 0.4) + 1.5, slot_dur + 1.5)
 
         try:
             if not chosen_ref:
@@ -151,7 +157,7 @@ class TTSManager:
 
             t0 = time.perf_counter()
             try:
-                self._run_synthesis(clean_text, chosen_ref, raw_path, language=lang)
+                self._run_synthesis(clean_text, chosen_ref, raw_path, language=lang, max_duration=slot_dur)
             except ValueError as ve:
                 if "XTTS Tensor Error" in str(ve):
                     logging.warning(f"TTS: [ID: {idx}] Tensor Error with ref {chosen_ref}. Trying global fallback...")
@@ -169,7 +175,7 @@ class TTSManager:
                                 break
 
                     if fallback_ref:
-                        self._run_synthesis(clean_text, fallback_ref, raw_path, language=lang)
+                        self._run_synthesis(clean_text, fallback_ref, raw_path, language=lang, max_duration=slot_dur)
                         voice_type = "TENSOR_FALLBACK"
                     else:
                         raise ve  # Re-raise if no other fallback
@@ -206,36 +212,31 @@ class TTSManager:
     def _select_reference(self, item: Dict, vocals_path: str):
         """Implements the Voice Migration Strategy hierarchy.
 
-        The golden reference (a long, clean, scored sample of the speaker) comes first: zero-shot
-        cloning needs several seconds of clean speech, and a single reference keeps the voice
-        consistent across lines. A per-line dynamic sample is only used when the speaker has no
-        golden reference and the line itself is long enough to clone from.
+        With XTTS the golden reference (a long, clean, scored sample of the speaker) comes first:
+        it needs several seconds of clean speech, and a single reference keeps the voice consistent.
+        OmniVoice clones well from 3-10 s, so a clean clip of the line itself is tried first there:
+        it carries the emotion of the scene. Short lines always use the golden reference.
         """
         spk = item["speaker"]
         idx = item["index"]
-        start, end = item["start"], item["end"]
-        dur = end - start
-
-        # 1. Golden (scored speaker reference)
+        dur = item["end"] - item["start"]
         golden_ref = self.speaker_refs.get(spk)
-        if golden_ref and os.path.exists(golden_ref):
+        has_golden = bool(golden_ref and os.path.exists(golden_ref))
+
+        if self.backend == "omnivoice":
+            use_line = LINE_REF_RANGE[0] <= dur <= LINE_REF_RANGE[1]
+        else:
+            use_line = not has_golden and dur >= MIN_DYNAMIC_REF_DUR
+
+        # 1. Dynamic extraction from the line itself
+        if use_line:
+            dyn_ref = self._extract_line_ref(item, vocals_path)
+            if dyn_ref:
+                return dyn_ref, "DYNAMIC"
+
+        # 2. Golden (scored speaker reference)
+        if has_golden:
             return golden_ref, "GOLDEN"
-
-        # 2. Dynamic extraction from the line itself
-        if dur >= MIN_DYNAMIC_REF_DUR:
-            dyn_path = os.path.join(self.temp_dir, f"dyn_{idx}.wav")
-            audio_processor.extract_clean_segment(vocals_path, start, end, dyn_path)
-            zcr = measure_zcr(dyn_path)
-
-            if os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25:
-                # Update Last Good Sample
-                last_good_path = os.path.join(self.temp_dir, f"last_good_{spk}.wav")
-                shutil.copy(dyn_path, last_good_path)
-                self.last_good_samples[spk] = last_good_path
-                return dyn_path, "DYNAMIC"
-
-            if os.path.exists(dyn_path):
-                os.remove(dyn_path)
 
         # 3. Last Good dynamic sample of this speaker
         if spk in self.last_good_samples and os.path.exists(self.last_good_samples[spk]):
@@ -255,3 +256,26 @@ class TTSManager:
             return all_last_goods[0], "FALLBACK_LASTGOOD"
 
         return None, "UNKNOWN"
+
+    def _extract_line_ref(self, item: Dict, vocals_path: str) -> Optional[str]:
+        """Cuts the line from the vocals track; returns its path if it is clean enough to clone from."""
+        spk = item["speaker"]
+        dyn_path = os.path.join(self.temp_dir, f"dyn_{item['index']}.wav")
+        audio_processor.extract_clean_segment(vocals_path, item["start"], item["end"], dyn_path)
+        zcr = measure_zcr(dyn_path)
+
+        if os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25:
+            write_ref_text(dyn_path, item.get("source_text", ""))
+            # Update Last Good Sample
+            last_good_path = os.path.join(self.temp_dir, f"last_good_{spk}.wav")
+            shutil.copy(dyn_path, last_good_path)
+            if os.path.exists(ref_text_path(dyn_path)):
+                shutil.copy(ref_text_path(dyn_path), ref_text_path(last_good_path))
+            elif os.path.exists(ref_text_path(last_good_path)):
+                os.remove(ref_text_path(last_good_path))
+            self.last_good_samples[spk] = last_good_path
+            return dyn_path
+
+        if os.path.exists(dyn_path):
+            os.remove(dyn_path)
+        return None

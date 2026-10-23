@@ -32,6 +32,9 @@ print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
 WHISPER_MODEL = "large-v3-turbo"
 
+# Speech synthesis backend: "omnivoice" (default) or "xtts"
+TTS_BACKEND = os.environ.get("TTS_BACKEND", "omnivoice").lower()
+
 
 # Safe logging setup
 def setup_logging():

@@ -64,4 +64,4 @@ def health():
 if __name__ == "__main__":
     load_tts()
     # Run on a local port
-    app.run(host="127.0.0.1", port=5050)
+    app.run(host="127.0.0.1", port=int(os.environ.get("TTS_PORT", 5050)))
