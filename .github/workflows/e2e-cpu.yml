@@ -26,6 +26,9 @@ on:
     paths:
       - ".github/workflows/e2e-cpu.yml"
       - "scripts/e2e_test.py"
+      - "src/**"
+      - "Dockerfile"
+      - "pyproject.toml"
 
 concurrency:
   group: e2e-cpu-${{ github.ref }}

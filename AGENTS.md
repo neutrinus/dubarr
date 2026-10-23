@@ -89,7 +89,7 @@ and tags.
 `.github/workflows/e2e-cpu.yml` runs `scripts/e2e_test.py`: it cuts a 60 s public-domain clip (NASA), dubs it with the
 real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 1.5B GGUF, XTTS v2 on CPU), and checks the
 muxed tracks (count, tags, duration, not silent). It runs nightly, on push to `main`, on manual dispatch, and on PRs that
-touch the workflow or the script. Without the `HF_TOKEN` secret, diarization is replaced by a single speaker. It tests
+touch `src/`, dependencies, the workflow or the script. Without the `HF_TOKEN` secret, diarization is replaced by a single speaker. It tests
 plumbing, not translation quality.
 
 Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 4 GB each for Whisper and XTTS),
