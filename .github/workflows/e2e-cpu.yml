@@ -73,7 +73,7 @@ jobs:
           uv pip install --python .venv_app/bin/python3 \
             --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/cpu \
             "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio" \
-            "pyannote.audio==4.0.4" "faster-whisper" "demucs" "diffq" \
+            "pyannote.audio==4.0.4" "faster-whisper" "av>=15" "demucs" "diffq" \
             "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
             "fastapi" "uvicorn[standard]" "websockets" "jinja2" "python-multipart"
           uv pip install --python .venv_app/bin/python3 llama-cpp-python \
