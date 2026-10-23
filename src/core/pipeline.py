@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from typing import List, Optional
 
-from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR
+from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_GUARD
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.monitor import ResourceMonitor
 from core.audio import prep_audio, analyze_audio, mix_audio
@@ -100,6 +100,9 @@ class DubbingPipeline:
 
         script = []
         for i, s in enumerate(merged):
+            # Silence until the next speech (any speaker) can absorb a slightly longer translation
+            gap_after = merged[i + 1]["start"] - s["end"] if i + 1 < len(merged) else SLACK_AFTER_MAX + SLACK_GUARD
+            slack_after = min(max(gap_after - SLACK_GUARD, 0.0), SLACK_AFTER_MAX)
             script.append(
                 {
                     **s,
@@ -107,6 +110,7 @@ class DubbingPipeline:
                     "text_en": s["text"].strip(),
                     "avg_logprob": s.get("avg_logprob", 0),
                     "index": i,
+                    "max_end": s["end"] + slack_after,
                 }
             )
         return script
@@ -569,6 +573,7 @@ class DubbingPipeline:
                             # Restore metadata for mixing
                             seg_result["start"] = script[idx]["start"]
                             seg_result["end"] = script[idx]["end"]
+                            seg_result["max_end"] = script[idx].get("max_end", script[idx]["end"])
                             seg_result["speaker"] = script[idx]["speaker"]
                             seg_result["index"] = idx
                             sync_results_by_lang[lang].append(seg_result)
@@ -623,7 +628,7 @@ class DubbingPipeline:
                 final_path = os.path.join(self.temp_dir, f"final_{lang}_{item['index']}.wav")
                 audio_processor.trim_and_pad_silence(path, dur)
 
-                target_dur = item["end"] - item["start"]
+                target_dur = item.get("max_end", item["end"]) - item["start"]
                 speed_factor = 1.0
                 if dur > target_dur + 0.2:
                     speed_factor = min(dur / target_dur, 1.20)
