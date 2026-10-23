@@ -139,9 +139,9 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
 
 - `config.py` runs at import time: it prints debug paths, reads env vars, and calls `sys.exit(1)` if `HF_TOKEN` is
   missing and `MOCK_MODE` is off. Set `MOCK_MODE=1` before importing anything from `src/` in tests or scripts.
-- `TEMP_DIR` is shared between tasks and file names inside it (`orig.wav`, `vocals.mp3`, `raw_<idx>.wav`,
-  `attempt_<idx>_<n>.wav`, ...) are not namespaced by task or language. Keep this in mind when touching caching,
-  resume or multi-language code.
+- `TEMP_DIR` is shared between tasks and its file names (`orig.wav`, `vocals.mp3`, `mono.wav`, ...) are not
+  namespaced by task. Per-segment files carry the language (`raw_<lang>_<idx>.wav`, `attempt_<lang>_<idx>_<n>.wav`);
+  keep it that way, because target languages run concurrently and share segment indices.
 - Cached step results are JSON in SQLite. `_run_step` only re-runs a step when a cached path no longer exists, so a
   cached result can point at a file that was since overwritten by another task.
 - Prompts in `prompts.py` are raw completion prompts (no chat template is applied by llama-cpp here).
