@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git cmake python3-pip libsndfile1 && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /bin/uv
 ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv-python
 
 WORKDIR /build
@@ -21,7 +21,7 @@ RUN uv python install 3.12 3.10 && \
     uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
     --index-strategy unsafe-best-match \
     "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio" \
-    "pyannote.audio==4.0.4" "faster-whisper" "av<19" "demucs" "diffq" \
+    "pyannote.audio==4.0.7" "faster-whisper" "av<19" "demucs>=4.1.0" "diffq" \
     "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
     "fastapi" "uvicorn[standard]" "websockets" "jinja2" "python-multipart" && \
     uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \

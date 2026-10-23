@@ -81,7 +81,7 @@ jobs:
           TORCH_PIN=$(.venv_app/bin/python3 -c "import torch; print(torch.__version__.split('+')[0])")
           uv pip install --python .venv_app/bin/python3 \
             "numpy==2.2.2" "torch==$TORCH_PIN" "torchvision" "torchaudio" \
-            "pyannote.audio==4.0.4" "faster-whisper" "av>=15,<19" "demucs" "diffq" \
+            "pyannote.audio==4.0.7" "faster-whisper" "av>=15,<19" "demucs>=4.1.0" "diffq" \
             "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
             "fastapi" "uvicorn[standard]" "websockets" "jinja2" "python-multipart"
           uv pip install --python .venv_app/bin/python3 llama-cpp-python \

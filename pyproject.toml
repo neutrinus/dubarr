@@ -32,15 +32,19 @@ dev = [
 ]
 runtime = [
     "hf_transfer",
-    "demucs",
+    "demucs>=4.1.0",
     "huggingface-hub>=0.28.1",
-    "pyannote.audio==4.0.4",
+    "pyannote.audio==4.0.7",
     "diffq",
     "faster-whisper",
     "av<19",  # av 19 dropped open(metadata_errors=...), which faster-whisper 1.2.1 uses
-    "transformers>=4.57",
-    "coqui-tts @ git+https://github.com/idiap/coqui-ai-TTS.git@dev",
+    "transformers>=4.57,<5",
+    "coqui-tts==0.28.0",
 ]
+
+[tool.uv]
+# dubarr runs on Linux (Docker); demucs 4.1 caps torch on Intel macOS below what pyannote 4.0.7 needs
+environments = ["sys_platform == 'linux'"]
 
 [tool.pytest.ini_options]
 norecursedirs = ["scripts"]
