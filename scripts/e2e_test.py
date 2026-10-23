@@ -176,7 +176,10 @@ def main():
             ("segments in fallback", r"_FALLBACK: Selection"),
             ("segments failed", r"failed completely|TIMED OUT|All synthesis attempts failed"),
         ]:
-            report.append(f"{label}: {len(re.findall(pattern, log))}")
+            count = len(re.findall(pattern, log))
+            report.append(f"{label}: {count}")
+            if label == "segments failed" and count:
+                errors.append(f"{count} segment(s) failed, see processing.log")
 
     summary = ["## dubarr E2E (CPU)", "", *[f"- {line}" for line in report], ""]
     summary += ["**Result: PASS**"] if not errors else ["**Result: FAIL**", *[f"- {e}" for e in errors]]
