@@ -1,7 +1,7 @@
 import logging
 import threading
 import gc
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from config import WHISPER_MODEL, MOCK_MODE
 from core.gpu_manager import GPUManager
 
@@ -16,6 +16,17 @@ except ImportError:
     WhisperModel = None
 
 logger = logging.getLogger(__name__)
+
+
+def _word_bounds(segment) -> Tuple[float, float]:
+    """Returns (start, end) of a segment tightened to its first and last word, if available."""
+    words = getattr(segment, "words", None) or []
+    if not words:
+        return segment.start, segment.end
+    start, end = words[0].start, words[-1].end
+    if end <= start:
+        return segment.start, segment.end
+    return start, end
 
 
 class WhisperManager:
@@ -80,15 +91,20 @@ class WhisperManager:
             return self._run_transcribe(audio_path)
 
     def _run_transcribe(self, audio_path: str) -> List[Dict]:
-        ts, info = self.model.transcribe(audio_path)
+        # word_timestamps: cross-attention DTW alignment (same idea as whisper.cpp --dtw),
+        # used to snap segment boundaries to the first/last spoken word instead of the
+        # coarse segment timestamp tokens, which often include leading/trailing silence.
+        # vad_filter: skip non-speech so Whisper does not hallucinate text/timestamps in silence.
+        ts, info = self.model.transcribe(audio_path, word_timestamps=True, vad_filter=True)
         logger.info(f"Whisper: Starting transcription of {info.duration:.2f}s audio (Language: {info.language})")
 
         res = []
         for x in ts:
             if x.avg_logprob >= -1.0:
+                start, end = _word_bounds(x)
                 segment = {
-                    "start": x.start,
-                    "end": x.end,
+                    "start": start,
+                    "end": end,
                     "text": x.text.strip(),
                     "avg_logprob": x.avg_logprob,
                     "no_speech_prob": x.no_speech_prob,

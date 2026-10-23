@@ -32,6 +32,11 @@ print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
 WHISPER_MODEL = "large-v3-turbo"
 
+# Dubbed speech may run into the silence after a segment (never the silence before it).
+# Cap on how much trailing silence a segment may borrow, and the gap kept before the next speech.
+SLACK_AFTER_MAX = float(os.environ.get("SLACK_AFTER_MAX", "1.0"))
+SLACK_GUARD = 0.15
+
 
 # Safe logging setup
 def setup_logging():
