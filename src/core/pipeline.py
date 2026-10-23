@@ -64,10 +64,20 @@ class DubbingPipeline:
             os.makedirs(d, exist_ok=True)
         return d
 
+    @staticmethod
+    def _dominant_speaker(diar, start, end):
+        """Speaker with the largest total overlap with [start, end], or 'unknown'."""
+        overlap = {}
+        for d in diar:
+            o = min(end, d["end"]) - max(start, d["start"])
+            if o > 0:
+                overlap[d["speaker"]] = overlap.get(d["speaker"], 0.0) + o
+        return max(overlap, key=overlap.get) if overlap else "unknown"
+
     def _create_script(self, diar, trans):
         raw_script = []
         for t in trans:
-            spk = next((d["speaker"] for d in diar if max(t["start"], d["start"]) < min(t["end"], d["end"])), "unknown")
+            spk = self._dominant_speaker(diar, t["start"], t["end"])
             raw_script.append({**t, "speaker": spk})
 
         if not raw_script:

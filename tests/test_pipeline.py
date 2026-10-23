@@ -40,6 +40,19 @@ class TestDubbingPipeline(unittest.TestCase):
         self.assertEqual(script[0]["speaker"], "A")
         self.assertEqual(script[1]["speaker"], "B")
 
+    def test_create_script_dominant_speaker(self):
+        # Segment touches A briefly but is mostly spoken by B
+        diar = [{"speaker": "A", "start": 0.0, "end": 1.2}, {"speaker": "B", "start": 1.2, "end": 5.0}]
+        trans = [{"start": 1.0, "end": 4.0, "text": "Mostly B"}]
+        script = self.pipeline._create_script(diar, trans)
+        self.assertEqual(script[0]["speaker"], "B")
+
+    def test_create_script_no_overlap(self):
+        diar = [{"speaker": "A", "start": 10.0, "end": 12.0}]
+        trans = [{"start": 0.0, "end": 1.0, "text": "Nobody"}]
+        script = self.pipeline._create_script(diar, trans)
+        self.assertEqual(script[0]["speaker"], "unknown")
+
     def test_cleanup_debug(self):
         with patch("shutil.rmtree") as mock_rm, patch("os.path.exists", return_value=True), patch("os.makedirs") as mock_mk:
             res = self.pipeline._cleanup_debug("test.mp4")
