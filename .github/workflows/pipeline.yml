@@ -26,6 +26,7 @@ jobs:
         run: uv python install 3.10
       - name: Install dependencies
         run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
           uv sync --group dev --python 3.10
       - name: Syntax check
         run: |
@@ -44,7 +45,7 @@ jobs:
           MOCK_MODE: "1"
         run: |
           export PYTHONPATH=$PYTHONPATH:.:src
-          uv run pytest tests/
+          uv run pytest tests/ --cov=src --cov-report=term --cov-fail-under=60
 
   build:
     name: Build and Publish Docker Image
