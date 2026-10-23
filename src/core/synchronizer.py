@@ -37,6 +37,7 @@ class SegmentSynchronizer:
             tts_item = {
                 "index": idx,
                 "text": current_text,
+                "source_text": original_text,
                 "speaker": speaker,
                 "start": segment["start"],
                 "end": segment["end"],

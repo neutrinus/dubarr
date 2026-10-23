@@ -76,6 +76,7 @@ services:
       - PGID=1000
       - HF_TOKEN=your_token_here
       - TARGET_LANGS=pl
+      - TTS_BACKEND=omnivoice # Optional: speech synthesis backend, "omnivoice" (default) or "xtts"
       - DATA_DIR=/app/data # Mount point for all app data (DB, logs, models, caches)
       - API_USER=dubarr # Optional: Custom API username
       - API_PASS=dubarr # Optional: Custom API password
@@ -117,7 +118,7 @@ The system processes each video through 7 major stages:
 5.  **Stage 5: Production (Parallel)**:
     *   **Duration-Aware Translation**: Adapts text for dubbing using a strict duration-matching algorithm (audio <= original window) with up to 5 refinement attempts.
     *   **Resource Management (RPC)**: Uses an internal RPC layer to parallelize production across multiple target languages while serializing GPU access via priority queues.
-    *   **Synthesis (XTTS v2)**: Generates the new audio track with cloned voices and real-time artifact guards (ZCR checking).
+    *   **Synthesis (OmniVoice or XTTS v2)**: Generates the new audio track with cloned voices and real-time artifact guards (ZCR checking). OmniVoice (default) clones from 3-10 s clips of each line, so the dub keeps the scene's emotion, and squeezes over-long lines into their slot (at most 1.25x faster). XTTS v2 stays available with `TTS_BACKEND=xtts`.
 6.  **Stage 6: Final Mix**: Aggressive sidechain ducking (12:1 ratio) and Ambient Ghosting (low-pass original audio) for a rich, cinematic audio field.
 7.  **Stage 7: Muxing**: Assembles the final video with all new tracks named "AI - [Language]".
 

@@ -9,6 +9,7 @@ from typing import List, Optional
 
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_GUARD
 from infrastructure.ffmpeg import FFmpegWrapper
+from infrastructure.tts_client import write_ref_text
 from infrastructure.monitor import ResourceMonitor
 from core.audio import prep_audio, analyze_audio, mix_audio
 from utils import clean_srt, measure_zcr, run_cmd
@@ -148,6 +149,7 @@ class DubbingPipeline:
 
     def _extract_refs(self, script, vocals_path, ddir):
         logger.info("Extracting Smart Weighted Normalized voice references (v2 - Scored 0-100)")
+        self.speaker_refs = {}
         ref_debug = os.path.join(ddir, "refs") if self.debug_mode else None
         if ref_debug:
             os.makedirs(ref_debug, exist_ok=True)
@@ -259,6 +261,7 @@ class DubbingPipeline:
                     best_seg, best_score, wav_path = final_choice
                     out = os.path.join(self.temp_dir, f"ref_{spk}.wav")
                     shutil.move(wav_path, out)
+                    write_ref_text(out, best_seg["text_en"])
                     best_per_speaker[spk] = (best_seg, best_score)
                     self.speaker_refs[spk] = out
                     logger.info(
@@ -275,6 +278,8 @@ class DubbingPipeline:
                 logger.warning(f"  [Speaker {spk}] No candidates found. Voice cloning might fail.")
             elif my_best[1] < 65:
                 logger.warning(f"  [Speaker {spk}] Low Score {my_best[1]}. Using best available candidate.")
+
+        return self.speaker_refs
 
     def _apply_mastering_and_speed(self, r, f, spk, speed):
         p = self.speaker_pans.get(spk)
@@ -401,7 +406,9 @@ class DubbingPipeline:
         self.global_context = analysis_results["context"]
         self.speaker_info = analysis_results["speakers"]
 
-        self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
+        refs = self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
+        self.speaker_refs = refs or {}
+        self.tts_manager.set_speaker_refs(self.speaker_refs)
 
         # 5. Production (Per Language / Global Task Pool)
         # Initialize GPU RPC Services

@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from infrastructure.tts_client import XTTSClient, XTTSWrapper
+import os
+import tempfile
+from infrastructure.tts_client import OmniVoiceClient, TTSWrapper, XTTSClient, XTTSWrapper, write_ref_text
 import requests
 
 
@@ -67,3 +69,47 @@ class TestXTTSWrapper(unittest.TestCase):
         wrapper = XTTSWrapper(gpu_id=1)
         mock_start.assert_called_once()
         self.assertEqual(wrapper.client.gpu_id, 1)
+
+
+class TestOmniVoiceClient(unittest.TestCase):
+    def setUp(self):
+        self.mock_mode_patcher = patch("infrastructure.tts_client.MOCK_MODE", False)
+        self.mock_mode_patcher.start()
+        self.client = OmniVoiceClient(gpu_id=0)
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        self.mock_mode_patcher.stop()
+        import shutil
+
+        shutil.rmtree(self.tmp)
+
+    @patch("requests.post")
+    def test_payload_has_duration_and_ref_text(self, mock_post):
+        mock_post.return_value.status_code = 200
+        ref = os.path.join(self.tmp, "ref_A.wav")
+        write_ref_text(ref, "  Hello there.  ")
+        self.client.synthesize("Cześć", ref, "out.wav", "pl", max_duration=2.5)
+        payload = mock_post.call_args[1]["json"]
+        self.assertEqual(self.client.port, 5051)
+        self.assertEqual(payload["max_duration"], 2.5)
+        self.assertEqual(payload["ref_text"], "Hello there.")
+        self.assertEqual(payload["language"], "pl")
+
+    @patch("requests.post")
+    def test_payload_without_transcript(self, mock_post):
+        mock_post.return_value.status_code = 200
+        self.client.synthesize("Cześć", os.path.join(self.tmp, "none.wav"), "out.wav", "pl")
+        self.assertIsNone(mock_post.call_args[1]["json"]["ref_text"])
+
+    def test_unknown_backend(self):
+        with self.assertRaises(ValueError):
+            TTSWrapper(backend="nope")
+
+    @patch("requests.post")
+    def test_xtts_ignores_duration(self, mock_post):
+        mock_post.return_value.status_code = 200
+        XTTSClient().synthesize("text", "ref.wav", "out.wav", "sv", max_duration=2.0)
+        payload = mock_post.call_args[1]["json"]
+        self.assertNotIn("max_duration", payload)
+        self.assertEqual(payload["language"], "en")

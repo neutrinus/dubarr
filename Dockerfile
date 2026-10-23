@@ -34,6 +34,13 @@ RUN uv venv /app/.venv_tts --python 3.10 && \
     "flask" "git+https://github.com/idiap/coqui-ai-TTS.git@dev" && \
     uv cache clean
 
+# OmniVoice (default TTS backend) needs transformers>=5.3, so it gets its own venv too
+RUN uv venv /app/.venv_omnivoice --python 3.12 && \
+    uv pip install --no-cache-dir --python /app/.venv_omnivoice/bin/python3 \
+    --index-strategy unsafe-best-match \
+    "torch==2.8.0" "torchaudio==2.8.0" "omnivoice==0.2.1" "flask" "soundfile" && \
+    uv cache clean
+
 # Fix the transformers breaking change in XTTS
 RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py ]; then \
     sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(elements, test_elements, *args, **kwargs):\n    return torch.isin(elements, test_elements)/' \
@@ -59,6 +66,7 @@ WORKDIR /app
 COPY --from=builder /usr/local/uv-python /usr/local/uv-python
 COPY --from=builder /app/.venv_app /app/.venv_app
 COPY --from=builder /app/.venv_tts /app/.venv_tts
+COPY --from=builder /app/.venv_omnivoice /app/.venv_omnivoice
 
 # Copy the project files
 COPY . .

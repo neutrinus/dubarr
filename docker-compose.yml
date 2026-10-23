@@ -27,6 +27,7 @@ services:
       - PGID=${PGID:-1000}
       - HF_TOKEN=${HF_TOKEN}
       - TARGET_LANGS=${TARGET_LANGS:-pl}
+      - TTS_BACKEND=${TTS_BACKEND:-omnivoice}
       - DEBUG=${DEBUG:-0}
       - VERBOSE=${VERBOSE:-0}
       - API_USER=${API_USER:-dubarr}
