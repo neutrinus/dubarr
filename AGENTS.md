@@ -23,12 +23,13 @@ src/
   prompts.py               LLM prompt templates (analysis, ASR editor, translation, duration refinement).
   utils.py                 JSON parsing, SRT cleaning, ZCR, syllable counting, output cleaning.
   tts_server.py            Flask XTTS v2 server. Runs in a SEPARATE Python 3.10 venv on 127.0.0.1:5050.
+  omnivoice_server.py      Flask OmniVoice server (default TTS backend). Own Python 3.12 venv, 127.0.0.1:5051.
   verify_output.py         Manual QA helper (faster-whisper re-transcription of generated segments).
   core/
     pipeline.py            DubbingPipeline: stages 1-7, step caching, Stage 5 checkpointing, final mix/mux.
     synchronizer.py        Per-segment loop: TTS -> measure duration -> ask LLM to shorten -> retry (max 3).
     llm_engine.py          LLMManager (llama-cpp-python, Gemma 3 12B GGUF): analysis, ASR correction, drafts, refinement.
-    tts_manager.py         TTSManager: voice reference selection (dynamic / last good / golden) + XTTS calls.
+    tts_manager.py         TTSManager: voice reference selection (dynamic / golden / last good) + TTS calls.
     whisper_engine.py      WhisperManager (faster-whisper, large-v3-turbo).
     diarization_engine.py  DiarizationManager (pyannote speaker-diarization-community-1, needs HF_TOKEN).
     audio.py               Demucs separation, analysis orchestration, ffmpeg mixing (ducking, ambient ghost).
@@ -38,7 +39,7 @@ src/
   infrastructure/
     database.py            SQLite: `tasks` queue + `job_steps` (cached JSON results per stage).
     ffmpeg.py              FFmpegWrapper: ffprobe metadata, extract/convert, mux.
-    tts_client.py          XTTSClient: starts/restarts tts_server.py subprocess, HTTP calls to it.
+    tts_client.py          TTS server clients (XTTS, OmniVoice): start/restart the server subprocess, HTTP calls.
     monitor.py             Periodic CPU/RAM/GPU/queue logging thread.
   templates/index.html     Dashboard.
 tests/                     pytest unit tests (everything heavy is mocked).
@@ -110,7 +111,8 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
 | `PUID` / `PGID` | `1000` | Container user, handled by `entrypoint.sh`. |
 | `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |
-| `TTS_PYTHON` | `/app/.venv_tts/bin/python3` | Interpreter used to start `tts_server.py`. |
+| `TTS_BACKEND` | `omnivoice` | Speech synthesis backend: `omnivoice` or `xtts`. |
+| `TTS_PYTHON` / `OMNIVOICE_PYTHON` | `/app/.venv_tts/...`, `/app/.venv_omnivoice/...` | Interpreters for the TTS servers. |
 | `TTS_TIMEOUT` | `60` | Seconds per XTTS request (raise it on CPU). |
 
 ## Conventions
