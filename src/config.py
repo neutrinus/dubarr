@@ -25,6 +25,12 @@ TEMP_DIR = os.path.join(DATA_DIR, "temp")
 LLM_MODEL_REPO = os.environ.get("LLM_MODEL_REPO", "bartowski/google_gemma-3-12b-it-GGUF")
 LLM_MODEL_FILE = os.environ.get("LLM_MODEL_FILE", "google_gemma-3-12b-it-Q4_K_M.gguf")
 MODEL_PATH = os.path.join(DATA_DIR, "models", LLM_MODEL_FILE)
+# Optional external OpenAI-compatible server (e.g. llama.cpp's llama-server). When set, no model is loaded in-process.
+LLM_API_URL = os.environ.get("LLM_API_URL", "")
+LLM_API_MODEL = os.environ.get("LLM_API_MODEL", "")
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "600"))
+LLM_N_CTX = int(os.environ.get("LLM_N_CTX", "8192"))
 
 print(f"DEBUG: config.BASE_DIR={BASE_DIR}", flush=True)
 print(f"DEBUG: config.DATA_DIR={DATA_DIR}", flush=True)

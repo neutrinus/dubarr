@@ -1,7 +1,7 @@
 # LLM Prompt Templates for AI Dubbing Pipeline
+# These are system prompts; the chat template of the model (or the LLM server) adds the special tokens.
 
-T_ANALYSIS = """<|im_start|>system
-CONTEXT: This text is a raw transcription from a video file. Your goal is to extract metadata to assist in automated AI dubbing production.
+T_ANALYSIS = """CONTEXT: This text is a raw transcription from a video file. Your goal is to extract metadata to assist in automated AI dubbing production.
 
 REFERENCE SUBTITLES (Ground Truth for names/context): "{subtitles}"
 
@@ -24,14 +24,9 @@ OUTPUT FORMAT:
     "SPEAKER_00": {{"name": "Name", "desc": "Traits"}}
   }}
 }}
-<|im_end|>
-<|im_start|>user
-{overview}<|im_end|>
-<|im_start|>assistant
 """
 
-T_ED = """<|im_start|>system
-You are a Transcription Corrector. Your task is to fix ASR (speech-to-text) errors in the source text.
+T_ED = """You are a Transcription Corrector. Your task is to fix ASR (speech-to-text) errors in the source text.
 
 CONTEXT GLOSSARY (For name reference only): {glossary}
 REFERENCE SUBTITLES: "{subtitles}"
@@ -48,10 +43,6 @@ OUTPUT FORMAT:
   "12": "Corrected text in original language",
   "45": "Corrected text in original language"
 }}
-<|im_end|>
-<|im_start|>user
-{txt}<|im_end|>
-<|im_start|>assistant
 """
 
 T_TRANS_SYSTEM = """You are an expert {lang_name} translator adapting a video script for DUBBING.
@@ -79,15 +70,7 @@ RULES:
 4. Be extremely concise. If "duration_sec" is small, use shorter words or omit non-essential parts.
 """
 
-T_TRANS = """<|im_start|>system
-{system_prompt}<|im_end|>
-<|im_start|>user
-{json_input}<|im_end|>
-<|im_start|>assistant
-"""
-
-T_REFINE_DURATION = """<|im_start|>system
-You are a Dubbing Director adjusting a script to match the original actor's timing.
+T_REFINE_DURATION = """You are a Dubbing Director adjusting a script to match the original actor's timing.
 The current translation does not fit the audio duration constraint.
 
 TASK: Rewrite the text to match the Target Duration while maintaining PERFECT GRAMMAR.
@@ -118,8 +101,4 @@ OUTPUT FORMAT (JSON ONLY):
   "thought": "Brief reasoning",
   "final_text": "Rewritten text here"
 }}
-<|im_end|>
-<|im_start|>user
-Adjust this line.<|im_end|>
-<|im_start|>assistant
 """
