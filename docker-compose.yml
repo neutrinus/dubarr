@@ -28,6 +28,8 @@ services:
       - HF_TOKEN=${HF_TOKEN}
       - TARGET_LANGS=${TARGET_LANGS:-pl}
       - TTS_BACKEND=${TTS_BACKEND:-omnivoice}
+      # Use an existing llama.cpp server instead of loading an LLM here, e.g. http://llama:8080/v1
+      - LLM_API_URL=${LLM_API_URL:-}
       - DEBUG=${DEBUG:-0}
       - VERBOSE=${VERBOSE:-0}
       - API_USER=${API_USER:-dubarr}

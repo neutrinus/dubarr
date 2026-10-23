@@ -41,7 +41,6 @@ Configuration is managed strictly through **Environment Variables**. This follow
 ### 2.1 Core Settings
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `OPENAI_API_KEY` | **Required.** Key for OpenAI API (LLM). | - |
 | `HF_TOKEN` | **Required.** Hugging Face token for downloading Pyannote/Whisper models. | - |
 | `API_USER` | Username for Basic Auth. | `admin` |
 | `API_PASS` | Password for Basic Auth. | `admin` |
@@ -56,6 +55,10 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `DEVICE` | Computation device (`cuda`, `cpu`, `mps`). Auto-detected if unset. | `cuda` |
 | `MOCK_MODE` | If `true`, bypasses ML models and returns dummy data. For testing/dev. | `false` |
 | `GPU_TTS` | Specific GPU ID (integer) for the TTS microservice. | `0` |
+| `LLM_API_URL` | Base URL of an OpenAI-compatible server (e.g. llama.cpp `llama-server`, `http://host:8080/v1`). When set, no LLM is loaded in-process and its VRAM stays free. | - |
+| `LLM_API_MODEL` / `LLM_API_KEY` | Model name and key sent to that server (llama-server ignores both). | - |
+| `LLM_TIMEOUT` | Seconds per request to the LLM server. | `600` |
+| `LLM_N_CTX` | Context size of the in-process model. | `8192` |
 
 ### 2.3 GPU Resource Management
 The system includes an **Intelligent GPU Manager** that orchestrates VRAM usage using a **Lazy Loading** and **Memory Rotation** strategy.
@@ -64,6 +67,7 @@ The system includes an **Intelligent GPU Manager** that orchestrates VRAM usage 
 -   **Behavior:**
     -   Models (LLM, TTS, Whisper, Diarization) are loaded into memory only when their specific stage is active.
     -   Whisper and Diarization models are explicitly unloaded immediately after use to free space for synthesis.
+    -   **LLM:** All LLM calls are chat completions with JSON output, so the model's own chat template is used. With `LLM_API_URL` the LLM runs in an external server (e.g. an existing llama.cpp container) and dubarr loads no LLM itself.
     -   **Parallel Slots:** LLM (Gemma 3 12B) utilizes parallel inference slots when sufficient VRAM is available. However, due to stability requirements with `llama-cpp-python` CUDA bindings, the `LLMService` is restricted to **1 worker thread** to prevent memory corruption.
     -   **RPC Serialization:** Access to GPU resources is serialized via an Internal RPC layer with priority-based queuing.
 

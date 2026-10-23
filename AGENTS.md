@@ -28,7 +28,7 @@ src/
   core/
     pipeline.py            DubbingPipeline: stages 1-7, step caching, Stage 5 checkpointing, final mix/mux.
     synchronizer.py        Per-segment loop: TTS -> measure duration -> ask LLM to shorten -> retry (max 3).
-    llm_engine.py          LLMManager (llama-cpp-python, Gemma 3 12B GGUF): analysis, ASR correction, drafts, refinement.
+    llm_engine.py          LLMManager (llama-cpp-python Gemma 3 12B GGUF, or an external server): analysis, ASR fix, drafts, refinement.
     tts_manager.py         TTSManager: voice reference selection (dynamic / golden / last good) + TTS calls.
     whisper_engine.py      WhisperManager (faster-whisper, large-v3-turbo).
     diarization_engine.py  DiarizationManager (pyannote speaker-diarization-community-1, needs HF_TOKEN).
@@ -40,6 +40,7 @@ src/
     database.py            SQLite: `tasks` queue + `job_steps` (cached JSON results per stage).
     ffmpeg.py              FFmpegWrapper: ffprobe metadata, extract/convert, mux.
     tts_client.py          TTS server clients (XTTS, OmniVoice): start/restart the server subprocess, HTTP calls.
+    llm_client.py          OpenAI-compatible chat completions client (used when LLM_API_URL is set).
     monitor.py             Periodic CPU/RAM/GPU/queue logging thread.
   templates/index.html     Dashboard.
 tests/                     pytest unit tests (everything heavy is mocked).
@@ -111,6 +112,9 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
 | `PUID` / `PGID` | `1000` | Container user, handled by `entrypoint.sh`. |
 | `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |
+| `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |
+| `LLM_API_MODEL` / `LLM_API_KEY` / `LLM_TIMEOUT` | none / none / `600` | Model name, key and per-request timeout for that server. |
+| `LLM_N_CTX` | `8192` | Context size of the in-process model. |
 | `TTS_BACKEND` | `omnivoice` | Speech synthesis backend: `omnivoice` or `xtts`. |
 | `TTS_PYTHON` / `OMNIVOICE_PYTHON` | `/app/.venv_tts/...`, `/app/.venv_omnivoice/...` | Interpreters for the TTS servers. |
 | `TTS_TIMEOUT` | `60` | Seconds per XTTS request (raise it on CPU). |
@@ -144,7 +148,8 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
   keep it that way, because target languages run concurrently and share segment indices.
 - Cached step results are JSON in SQLite. `_run_step` only re-runs a step when a cached path no longer exists, so a
   cached result can point at a file that was since overwritten by another task.
-- Prompts in `prompts.py` are raw completion prompts (no chat template is applied by llama-cpp here).
+- Prompts in `prompts.py` are system prompts sent as chat messages with `response_format=json_object`; the model's chat
+  template (applied by llama-cpp-python or the server) adds the special tokens. Don't put ChatML tokens in them.
 - The XTTS server is restarted automatically on most HTTP 500s; "size of tensor ... must match" errors are treated as
   input errors and retried with a different reference instead.
 - The Dockerfile patches Coqui's `autoregressive.py` with `sed` for a transformers incompatibility. If you bump Coqui
