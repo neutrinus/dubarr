@@ -234,6 +234,7 @@ class LLMManager:
         # 2. ASR Correction
         logging.info("LLM: Starting ASR Correction (Editor)")
         chunk_sz = 100
+        script_fixes = {}
         glossary_str = json.dumps(global_context.get("glossary", {}))
         for i in range(0, len(script), chunk_sz):
             chunk = script[i : i + chunk_sz]
@@ -258,6 +259,7 @@ class LLMManager:
                                 if script[idx]["text_en"] != new_text and self.debug_mode:
                                     logging.info(f"ASR Fix L_{idx}: '{script[idx]['text_en']}' -> '{new_text}'")
                                 script[idx]["text_en"] = new_text
+                                script_fixes[str(idx)] = new_text
                         except ValueError:
                             continue
             except Exception as e:
@@ -266,7 +268,8 @@ class LLMManager:
         if self.debug_mode:
             self._dump_debug(ddir, global_context, speaker_info, script)
 
-        return {"context": global_context, "speakers": speaker_info}
+        # The corrections are returned too, so a resumed job can re-apply them from the step cache
+        return {"context": global_context, "speakers": speaker_info, "script_fixes": script_fixes}
 
     def generate_drafts(
         self,

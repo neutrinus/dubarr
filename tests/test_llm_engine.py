@@ -74,3 +74,4 @@ class TestLLMManager(unittest.TestCase):
         self.assertEqual(res["context"]["summary"], "Greeting")
         self.assertEqual(res["speakers"]["A"]["name"], "Alice")
         self.assertEqual(script[0]["text_en"], "Hello, world!")
+        self.assertEqual(res["script_fixes"], {"0": "Hello, world!"})

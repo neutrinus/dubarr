@@ -405,6 +405,10 @@ class DubbingPipeline:
         )
         self.global_context = analysis_results["context"]
         self.speaker_info = analysis_results["speakers"]
+        # analyze_script corrects the script in place; on a cached run only its returned fixes carry them over
+        for idx_str, text in analysis_results.get("script_fixes", {}).items():
+            if 0 <= int(idx_str) < len(script):
+                script[int(idx_str)]["text_en"] = text
 
         refs = self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
         self.speaker_refs = refs or {}
