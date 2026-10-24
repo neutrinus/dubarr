@@ -48,3 +48,25 @@ class TestAudio(unittest.TestCase):
             args = mock_run.call_args[0][0]
             self.assertIn("10.0", args)
             self.assertIn("5.0", args)  # duration
+
+
+class TestMixAudio(unittest.TestCase):
+    def test_speech_past_the_end_does_not_lengthen_the_track(self):
+        import os
+        import subprocess
+        import tempfile
+
+        from config import TEMP_DIR
+        from core.audio import mix_audio
+        from infrastructure.ffmpeg import FFmpegWrapper
+
+        os.makedirs(TEMP_DIR, exist_ok=True)
+        with tempfile.TemporaryDirectory() as d:
+            bg, speech, out = (os.path.join(d, n) for n in ("bg.wav", "speech.wav", "out.ac3"))
+            for path, seconds in ((bg, 4), (speech, 3)):
+                subprocess.run(
+                    ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"sine=f=300:d={seconds}", "-ac", "2", path, "-y"],
+                    check=True,
+                )
+            mix_audio(bg, [(speech, 3.0, 3.0)], out)  # speech ends at 6 s, background at 4 s
+            self.assertAlmostEqual(FFmpegWrapper.get_duration(out), 4.0, delta=0.2)

@@ -64,7 +64,8 @@ class SegmentSynchronizer:
             is_acceptable = actual_dur <= (target_dur + 0.05)
 
             # Save attempt
-            attempt_path = os.path.join(self.temp_dir, f"attempt_{idx}_{attempt}.wav")
+            # The accepted attempt is mixed much later, so it must not be shared between languages
+            attempt_path = os.path.join(self.temp_dir, f"attempt_{lang}_{idx}_{attempt}.wav")
             shutil.copy(raw_audio_path, attempt_path)
 
             attempts.append(

@@ -161,13 +161,16 @@ def mix_audio(bg: str, clips: List, out: str):
     master_filter_path = os.path.join(TEMP_DIR, "master_mix_filter.txt")
 
     # [0:a] is background, [1:a] is combined speech
+    bg_duration = FFmpegWrapper.get_duration(bg)
+    # Speech pushed past the end must not make the track longer than the video
+    trim = f",atrim=end={bg_duration:.3f}" if bg_duration > 0 else ""
     master_filters = [
         "[1:a]asplit=2[speech_out][trigger]",
         "[0:a]asplit=2[bg_main][bg_ghost_raw]",
         "[bg_main]aformat=sample_rates=48000:channel_layouts=stereo,loudnorm=I=-24:TP=-2:LRA=7,acompressor=threshold=-20dB:ratio=2:attack=20:release=200[bg_fixed]",
         "[bg_ghost_raw]aformat=sample_rates=48000:channel_layouts=stereo,lowpass=f=400,volume=0.05[bg_ghost]",
         "[bg_fixed][trigger]sidechaincompress=threshold=0.005:ratio=12:attack=30:release=600[bg_ducked]",
-        "[bg_ducked][bg_ghost][speech_out]amix=inputs=3:weights=1 1 1:normalize=0,alimiter=limit=0.95[out]",
+        f"[bg_ducked][bg_ghost][speech_out]amix=inputs=3:weights=1 1 1:normalize=0,alimiter=limit=0.95{trim}[out]",
     ]
 
     with open(master_filter_path, "w") as f_master:

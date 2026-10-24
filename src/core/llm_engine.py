@@ -6,9 +6,10 @@ import threading
 import gc
 from typing import List, Dict, Optional, Any
 from utils import parse_json, clean_output
-from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_TRANS, T_REFINE_DURATION
-from config import LANG_MAP, MOCK_MODE
+from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_REFINE_DURATION
+from config import LANG_MAP, MOCK_MODE, LLM_MODEL_REPO, LLM_API_URL, LLM_API_MODEL, LLM_API_KEY, LLM_TIMEOUT, LLM_N_CTX
 from core.gpu_manager import GPUManager
+from infrastructure.llm_client import OpenAICompatibleClient
 
 try:
     import torch
@@ -48,17 +49,23 @@ class LLMManager:
         self._load_lock = threading.Lock()
         self._inference_thread_lock = threading.Lock()
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
+        # With LLM_API_URL set, inference goes to an external server and nothing is loaded here
+        self.client = (
+            OpenAICompatibleClient(LLM_API_URL, LLM_API_MODEL, LLM_API_KEY, LLM_TIMEOUT)
+            if LLM_API_URL and not MOCK_MODE
+            else None
+        )
 
     def ensure_model_downloaded(self):
         """Ensures the model file exists locally. Downloads if missing. Does NOT load to VRAM."""
-        if MOCK_MODE:
+        if MOCK_MODE or self.client:
             return
 
         if not os.path.exists(self.model_path):
             logging.info(f"LLM: Model not found at {self.model_path}. Starting automatic download...")
             from huggingface_hub import hf_hub_download
 
-            repo_id = "bartowski/google_gemma-3-12b-it-GGUF"
+            repo_id = LLM_MODEL_REPO
             filename = os.path.basename(self.model_path)
             os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
             hf_hub_download(
@@ -82,6 +89,12 @@ class LLMManager:
             self.status = "LOADING"
         if MOCK_MODE:
             logging.info("LLM: MOCK_MODE enabled. Skipping model load.")
+            self.status = "READY"
+            self.ready_event.set()
+            return
+
+        if self.client:
+            logging.info(f"LLM: Using external server at {LLM_API_URL}")
             self.status = "READY"
             self.ready_event.set()
             return
@@ -113,7 +126,7 @@ class LLMManager:
                 model_path=self.model_path,
                 n_gpu_layers=n_gpu_layers,
                 main_gpu=main_gpu,
-                n_ctx=4096,
+                n_ctx=LLM_N_CTX,
                 n_batch=512,
                 n_threads=8,
                 flash_attn=(n_gpu_layers > 0),  # Flash Attn only works with CUDA
@@ -140,65 +153,74 @@ class LLMManager:
                 torch.cuda.empty_cache()
             logging.info("LLM: Unloaded.")
 
-    def _run_inference(self, prompt, priority=10, **kwargs):
-        """Wrapper for LLM inference that respects the global lock or uses the RPC service."""
+    def _run_inference(self, messages, priority=10, **kwargs):
+        """Runs a chat completion (in-process model or external server) and returns
+        {"choices": [{"text": ...}], "usage": {...}}. Respects the global lock or uses the RPC service."""
         if MOCK_MODE:
-            # Mock responses based on prompt type
-            if "Analyze the movie script" in prompt:
-                return {
-                    "choices": [
-                        {
-                            "text": json.dumps(
-                                {
-                                    "summary": "Mock summary",
-                                    "glossary": {"test": "test"},
-                                    "speakers": {"SPEAKER_00": {"name": "Mock", "desc": "Male voice"}},
-                                }
-                            )
-                        }
-                    ]
-                }
-            if "Transcription Corrector" in prompt:
-                return {"choices": [{"text": json.dumps({"0": "Mocked source correction"})}]}
-            if "adapt" in prompt:
-                return {
-                    "choices": [
-                        {
-                            "text": json.dumps(
-                                {"thought": "Mock thought", "translations": [{"id": 0, "text": "To jest mockowe tłumaczenie"}]}
-                            )
-                        }
-                    ]
-                }
-            return {"choices": [{"text": "{}"}]}
+            return self._mock_response("\n".join(m["content"] for m in messages))
 
-        # RPC Service Path
         if not self.llm:
             self.load_model()
 
         if self.service:
 
-            def _direct_call(p, **kw):
-                if not self.llm:
-                    raise RuntimeError("LLM failed to load!")
+            def _direct_call(m, **kw):
                 with self._inference_thread_lock:
                     try:
-                        return self.llm(p, **kw)
+                        return self._chat(m, **kw)
                     except Exception as e:
                         logging.error(f"LLM Internal Error during inference: {e}", exc_info=True)
                         raise
 
-            future = self.service.submit(_direct_call, prompt, priority=priority, **kwargs)
+            future = self.service.submit(_direct_call, messages, priority=priority, **kwargs)
             return future.result()
-
-        if not self.llm:
-            raise RuntimeError("LLM model not loaded!")
 
         if self.inference_lock:
             with self.inference_lock:
-                return self.llm(prompt, **kwargs)
+                return self._chat(messages, **kwargs)
+        return self._chat(messages, **kwargs)
+
+    def _chat(self, messages, **kwargs):
+        # The model's own chat template is applied (by llama.cpp here or by the server); JSON output is enforced
+        kwargs.setdefault("response_format", {"type": "json_object"})
+        if self.client:
+            res = self.client.chat(messages, **kwargs)
+        elif self.llm:
+            res = self.llm.create_chat_completion(messages=messages, **kwargs)
         else:
-            return self.llm(prompt, **kwargs)
+            raise RuntimeError("LLM failed to load!")
+        return {"choices": [{"text": res["choices"][0]["message"]["content"] or ""}], "usage": res.get("usage") or {}}
+
+    @staticmethod
+    def _mock_response(prompt):
+        """Canned responses by prompt type for MOCK_MODE."""
+        if "Analyze the movie script" in prompt:
+            return {
+                "choices": [
+                    {
+                        "text": json.dumps(
+                            {
+                                "summary": "Mock summary",
+                                "glossary": {"test": "test"},
+                                "speakers": {"SPEAKER_00": {"name": "Mock", "desc": "Male voice"}},
+                            }
+                        )
+                    }
+                ]
+            }
+        if "Transcription Corrector" in prompt:
+            return {"choices": [{"text": json.dumps({"0": "Mocked source correction"})}]}
+        if "adapt" in prompt:
+            return {
+                "choices": [
+                    {
+                        "text": json.dumps(
+                            {"thought": "Mock thought", "translations": [{"id": 0, "text": "To jest mockowe tłumaczenie"}]}
+                        )
+                    }
+                ]
+            }
+        return {"choices": [{"text": "{}"}]}
 
     def analyze_script(self, script: List[Dict], ddir: str, subtitles: str = "") -> Dict:
         """Phase 1: Global Analysis & Phase 2: Speaker Profiling & Phase 3: ASR Correction."""
@@ -220,10 +242,12 @@ class LLMManager:
         t0 = time.perf_counter()
         # Global Analysis is Priority 2
         res = self._run_inference(
-            T_ANALYSIS.format(overview=ov, langs=", ".join(lang_names), subtitles=subtitles),
+            [
+                {"role": "system", "content": T_ANALYSIS.format(langs=", ".join(lang_names), subtitles=subtitles)},
+                {"role": "user", "content": ov},
+            ],
             priority=2,
             max_tokens=2000,
-            stop=["<|im_end|>"],
         )
         self._update_stats(res, time.perf_counter() - t0)
 
@@ -234,17 +258,20 @@ class LLMManager:
         # 2. ASR Correction
         logging.info("LLM: Starting ASR Correction (Editor)")
         chunk_sz = 100
+        script_fixes = {}
         glossary_str = json.dumps(global_context.get("glossary", {}))
         for i in range(0, len(script), chunk_sz):
             chunk = script[i : i + chunk_sz]
             txt = "\n".join([f"L_{i + j}: {s['text_en']}" for j, s in enumerate(chunk)])
             t0 = time.perf_counter()
             res = self._run_inference(
-                T_ED.format(glossary=glossary_str, subtitles=subtitles, txt=txt),
+                [
+                    {"role": "system", "content": T_ED.format(glossary=glossary_str, subtitles=subtitles)},
+                    {"role": "user", "content": txt},
+                ],
                 priority=2,
                 max_tokens=2000,
                 temperature=0.0,
-                stop=["<|im_end|>"],
             )
             self._update_stats(res, time.perf_counter() - t0)
 
@@ -258,6 +285,7 @@ class LLMManager:
                                 if script[idx]["text_en"] != new_text and self.debug_mode:
                                     logging.info(f"ASR Fix L_{idx}: '{script[idx]['text_en']}' -> '{new_text}'")
                                 script[idx]["text_en"] = new_text
+                                script_fixes[str(idx)] = new_text
                         except ValueError:
                             continue
             except Exception as e:
@@ -266,7 +294,8 @@ class LLMManager:
         if self.debug_mode:
             self._dump_debug(ddir, global_context, speaker_info, script)
 
-        return {"context": global_context, "speakers": speaker_info}
+        # The corrections are returned too, so a resumed job can re-apply them from the step cache
+        return {"context": global_context, "speakers": speaker_info, "script_fixes": script_fixes}
 
     def generate_drafts(
         self,
@@ -303,15 +332,18 @@ class LLMManager:
                 for idx in batch_indices
             ]
 
-            trans_prompt = T_TRANS.format(
-                system_prompt=T_TRANS_SYSTEM.format(lang_name=lang_name, glossary=json.dumps(glossary, ensure_ascii=False)),
-                json_input=json.dumps(json_batch, indent=2),
-            )
+            trans_messages = [
+                {
+                    "role": "system",
+                    "content": T_TRANS_SYSTEM.format(lang_name=lang_name, glossary=json.dumps(glossary, ensure_ascii=False)),
+                },
+                {"role": "user", "content": json.dumps(json_batch, indent=2, ensure_ascii=False)},
+            ]
 
             t0 = time.perf_counter()
             try:
                 # Draft generation is Priority 2
-                res = self._run_inference(trans_prompt, priority=2, max_tokens=2000, temperature=0.1, stop=["<|im_end|>"])
+                res = self._run_inference(trans_messages, priority=2, max_tokens=2000, temperature=0.1)
                 self._update_stats(res, time.perf_counter() - t0)
 
                 parsed_trans = parse_json(res["choices"][0]["text"])
@@ -321,6 +353,9 @@ class LLMManager:
                     if "id" in item
                 }
 
+                missing = [idx for idx in batch_indices if idx not in trans_map]
+                if missing:
+                    logging.warning(f"LLM: No {lang_name} translation for lines {missing}, keeping the original text")
                 for idx in batch_indices:
                     txt = trans_map.get(idx, script[idx]["text_en"])  # Fallback to original
                     drafts.append(
@@ -371,7 +406,7 @@ class LLMManager:
 
         logging.info(f"LLM: Refining '{current_text}' ({status}: {actual_dur:.2f}s vs {target_dur:.2f}s)")
 
-        prompt = T_REFINE_DURATION.format(
+        system_prompt = T_REFINE_DURATION.format(
             original_text=original_text,
             current_text=current_text,
             actual_duration=round(actual_dur, 2),
@@ -386,7 +421,8 @@ class LLMManager:
         t0 = time.perf_counter()
         # Refinement is Priority 1 (High)
         # Using temperature 0.3 for more stable/grammatical results
-        res = self._run_inference(prompt, priority=1, max_tokens=200, temperature=0.3, stop=["<|im_end|>"])
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": "Adjust this line."}]
+        res = self._run_inference(messages, priority=1, max_tokens=200, temperature=0.3)
         self._update_stats(res, time.perf_counter() - t0)
 
         try:

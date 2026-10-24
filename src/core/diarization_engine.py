@@ -12,6 +12,11 @@ except ImportError:
     torch = None
 
 try:
+    import soundfile
+except ImportError:
+    soundfile = None
+
+try:
     from pyannote.audio import Pipeline
 except ImportError:
     Pipeline = None
@@ -81,8 +86,14 @@ class DiarizationManager:
         else:
             return self._run_diarize(audio_path)
 
+    @staticmethod
+    def _load_waveform(audio_path: str) -> Dict:
+        """Loads audio in memory for pyannote, so it doesn't need torchcodec (fragile across torch/ffmpeg versions)."""
+        data, sample_rate = soundfile.read(audio_path, dtype="float32", always_2d=True)
+        return {"waveform": torch.from_numpy(data.T.copy()), "sample_rate": sample_rate}
+
     def _run_diarize(self, audio_path: str) -> List[Dict]:
-        res = self.pipeline(audio_path)
+        res = self.pipeline(self._load_waveform(audio_path))
         # Handle different return types from pyannote
         annotation = getattr(res, "speaker_diarization", getattr(res, "diarization", getattr(res, "annotation", res)))
         diar_result = [

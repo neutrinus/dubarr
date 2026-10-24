@@ -405,6 +405,10 @@ class DubbingPipeline:
         )
         self.global_context = analysis_results["context"]
         self.speaker_info = analysis_results["speakers"]
+        # analyze_script corrects the script in place; on a cached run only its returned fixes carry them over
+        for idx_str, text in analysis_results.get("script_fixes", {}).items():
+            if 0 <= int(idx_str) < len(script):
+                script[int(idx_str)]["text_en"] = text
 
         refs = self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
         self.speaker_refs = refs or {}
@@ -513,6 +517,11 @@ class DubbingPipeline:
 
         # 3. Global Concurrent Execution (Flattened)
         self._run_concurrent_sync(all_sync_tasks, sync_results_by_lang, vocals, script, checkpoint_path)
+
+        # Without any dubbed line the "dubbed" track would only be the ducked original, so fail the task instead
+        silent_langs = [lang for lang, drafts in all_drafts_by_lang.items() if drafts and not sync_results_by_lang[lang]]
+        if silent_langs:
+            raise RuntimeError(f"No segment could be synthesized for: {', '.join(silent_langs)}")
 
         # 4. Mastering & Mixing (Per Language)
         all_audio_tracks = self._finalize_all_languages(sync_results_by_lang, a_stereo, t_start_sync_all)
