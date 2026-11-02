@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+import wave
 from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
 
@@ -118,8 +119,15 @@ class SegmentSynchronizer:
         # 4. Final Selection: Closest to target BUT NOT LONGER
         if not attempts:
             logger.error(f"[ID: {idx}] All synthesis attempts failed. Using silent fallback.")
+            fallback_path = os.path.join(self.temp_dir, f"silent_{lang}_{idx}.wav")
+            sample_rate = 24000
+            with wave.open(fallback_path, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(sample_rate)
+                wav.writeframes(b"\x00\x00" * max(1, round(target_dur * sample_rate)))
             return {
-                "audio_path": vocals_path,  # Better than nothing, will be silent in mix if empty
+                "audio_path": fallback_path,
                 "final_text": segment.get("text_en", "..."),
                 "duration": target_dur,
                 "status": "FAILED_FALLBACK",

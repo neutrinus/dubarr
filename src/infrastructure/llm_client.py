@@ -15,6 +15,10 @@ class OpenAICompatibleClient:
     def chat(self, messages, **kwargs) -> dict:
         """Returns the raw response: {"choices": [{"message": {"content": ...}}], "usage": {...}}."""
         payload = {"messages": messages, **kwargs}
+        # Reasoning models can otherwise spend the whole token budget before emitting the requested JSON.
+        template_kwargs = dict(payload.get("chat_template_kwargs") or {})
+        template_kwargs.setdefault("enable_thinking", False)
+        payload["chat_template_kwargs"] = template_kwargs
         if self.model:
             payload["model"] = self.model
         resp = requests.post(self.url, json=payload, headers=self.headers, timeout=self.timeout)

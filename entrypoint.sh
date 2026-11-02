@@ -60,9 +60,17 @@ echo "Creating directories..."
 mkdir -p /app/output /app/videos /app/data /app/src/templates /data/cache/temp /data/cache/logs /data/cache/models
 chmod 777 /data/cache/temp
 
-# Fix permissions for the volumes and cache
+# Fix permissions for the volumes and cache.
+# Media libraries can hold hundreds of thousands of files, so by default only the mount point itself is
+# chowned. Set FIX_MEDIA_PERMISSIONS=1 to rewrite the whole tree (slow on big libraries, but needed when
+# the library is not world-readable).
 echo "Fixing permissions for $USER_NAME:$GROUP_NAME..."
-chown -R "$USER_NAME":"$GROUP_NAME" /app/output /app/videos /app/data /app/src /data/cache
+chown -R "$USER_NAME":"$GROUP_NAME" /app/output /app/data /app/src /data/cache
+chown "$USER_NAME":"$GROUP_NAME" /app/videos 2>/dev/null || true
+if [ "${FIX_MEDIA_PERMISSIONS:-0}" = "1" ]; then
+    echo "Fixing media library permissions recursively (FIX_MEDIA_PERMISSIONS=1)..."
+    chown -R "$USER_NAME":"$GROUP_NAME" /app/videos
+fi
 
 # Run the command as the user
 echo "Executing command as $USER_NAME: $@"

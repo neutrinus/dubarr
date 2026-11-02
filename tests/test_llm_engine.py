@@ -110,6 +110,32 @@ class TestLLMManager(unittest.TestCase):
         self.assertEqual(script[0]["text_en"], "Hello, world!")
         self.assertEqual(res["script_fixes"], {"0": "Hello, world!"})
 
+    def test_retries_truncated_answer_with_double_budget(self):
+        truncated = reply("")
+        truncated["choices"][0]["finish_reason"] = "length"
+        complete = reply(json.dumps({"final_text": "Krótko"}))
+        complete["choices"][0]["finish_reason"] = "stop"
+        self.chat.side_effect = [truncated, complete]
+
+        res = self.manager.refine_translation_by_duration("Long line", "Długa linia", 10.0, 5.0, {})
+
+        self.assertEqual(res, "Krótko")
+        self.assertEqual(self.chat.call_count, 2)
+        first, second = self.chat.call_args_list
+        self.assertEqual(second.kwargs["max_tokens"], first.kwargs["max_tokens"] * 2)
+
+    def test_drafts_use_the_configured_budget(self):
+        self.chat.return_value = reply(json.dumps({"translations": [{"id": 0, "text": "Cześć"}]}))
+        self.manager.generate_drafts([{"speaker": "A", "text_en": "Hello", "start": 0, "end": 2}], "pl", {}, {})
+
+        self.assertEqual(self.chat.call_args.kwargs["max_tokens"], self.manager_max_tokens())
+
+    @staticmethod
+    def manager_max_tokens():
+        from core.llm_engine import LLM_MAX_TOKENS
+
+        return LLM_MAX_TOKENS
+
     def test_sends_chat_messages_with_json_output(self):
         self.chat.return_value = reply(json.dumps({"translations": [{"id": 0, "text": "Cześć"}]}))
         self.manager.generate_drafts([{"speaker": "A", "text_en": "Hello", "start": 0, "end": 2}], "pl", {}, {})
@@ -146,4 +172,5 @@ class TestExternalServer(unittest.TestCase):
         self.assertEqual(url, "http://llama:8080/v1/chat/completions")
         self.assertEqual(body["model"], "gemma-4")
         self.assertEqual(body["messages"][0]["role"], "system")
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
         self.assertEqual(self.manager.llm_stats["tokens"], 5)

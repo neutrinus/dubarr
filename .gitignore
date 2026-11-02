@@ -48,3 +48,6 @@ TOKEN
 .idea/
 .DS_Store
 e2e_out/
+
+# Local sshfs mounts of media libraries (terabytes; never commit)
+skladus2/

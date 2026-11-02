@@ -102,7 +102,9 @@ class TestOmniVoiceClient(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     @patch("requests.post")
-    def test_payload_has_duration_and_ref_text(self, mock_post):
+    def test_payload_has_duration_and_sends_no_transcript_by_default(self, mock_post):
+        # The reference clip is in the source language; its transcript would make OmniVoice use that
+        # language's pronunciation for the target text ("walka" -> "łalka"), so it is left out.
         mock_post.return_value.status_code = 200
         ref = os.path.join(self.tmp, "ref_A.wav")
         write_ref_text(ref, "  Hello there.  ")
@@ -110,11 +112,20 @@ class TestOmniVoiceClient(unittest.TestCase):
         payload = mock_post.call_args[1]["json"]
         self.assertEqual(self.client.port, 5051)
         self.assertEqual(payload["max_duration"], 2.5)
-        self.assertEqual(payload["ref_text"], "Hello there.")
+        self.assertEqual(payload["ref_text"], "")
         self.assertEqual(payload["language"], "pl")
+
+    @patch("requests.post")
+    def test_payload_sends_transcript_when_requested(self, mock_post):
+        mock_post.return_value.status_code = 200
+        ref = os.path.join(self.tmp, "ref_A.wav")
+        write_ref_text(ref, "  Hello there.  ")
+        with patch("infrastructure.tts_client.TTS_REF_TEXT", "auto"):
+            self.client.synthesize("Cześć", ref, "out.wav", "pl", max_duration=2.5)
+        self.assertEqual(mock_post.call_args[1]["json"]["ref_text"], "Hello there.")
 
     @patch("requests.post")
     def test_payload_without_transcript(self, mock_post):
         mock_post.return_value.status_code = 200
         self.client.synthesize("Cześć", os.path.join(self.tmp, "none.wav"), "out.wav", "pl")
-        self.assertIsNone(mock_post.call_args[1]["json"]["ref_text"])
+        self.assertEqual(mock_post.call_args[1]["json"]["ref_text"], "")

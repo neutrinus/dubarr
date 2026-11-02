@@ -61,6 +61,15 @@ Measured on a 3060 12GB + 3070 8GB pair, dubbing one 10-minute episode (720p, on
 > `--tensor-split 28,2` with more `--n-cpu-moe` layers) instead of shrinking its context. The peak also grows with
 > the length of a single line, which is why long lines are synthesized in ~10s chunks.
 
+> [!TIP]
+> Sharing a card with another service (a household `llama-server`, Jellyfin transcoding, ...)? Keep about
+> **5 GB free** for OmniVoice (≈2 GB for XTTS v2). Dubarr puts the TTS server on the card with the most free
+> VRAM, so if the LLM hogs the small card, give it a smaller share of that card (e.g. llama.cpp
+> `--tensor-split 27,3` plus a few more `--n-cpu-moe` layers) instead of shrinking the context.
+>
+> With no headroom at all, set `TTS_DEVICE=cpu`: dubbing then runs on the CPU, the GPUs stay with the LLM,
+> and synthesis takes roughly 10-30x longer than on a GPU.
+
 ---
 
 ## ⚡ Performance & Speed
@@ -89,8 +98,9 @@ services:
     ports:
       - 8000:8000
     environment:
-      - PUID=1000
+      - PUID=1000        # container runs as this UID/GID, never as root
       - PGID=1000
+      # - FIX_MEDIA_PERMISSIONS=1  # recursively chown the media library (slow; only if it is not readable)
       - HF_TOKEN=your_token_here
       - TARGET_LANGS=pl
       - METADATA_LOOKUP=on # Optional: look up the show/movie (synopsis, cast) for the translator: "on", "local" (.nfo only), "off"

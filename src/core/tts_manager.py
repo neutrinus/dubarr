@@ -1,14 +1,15 @@
 import os
 import logging
+import re
 import time
 import shutil
 import threading
 import gc
 import subprocess
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
 from utils import measure_zcr, count_syllables
-from config import MOCK_MODE
+from config import MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
 
@@ -16,6 +17,72 @@ try:
     import torch
 except ImportError:
     torch = None
+
+# Rough speaking pace used only to size synthesis chunks (Polish reads ~15 characters per second)
+CHARS_PER_SECOND = 15.0
+# Where an over-long sentence may be broken, in order of preference (words are the last resort)
+CLAUSE_BREAK = re.compile(r"(?<=[,;:—–])\s+")
+
+
+def _split_words(text: str, max_chars: int) -> List[str]:
+    chunks, part = [], []
+    for word in text.split():
+        if part and len(" ".join(part + [word])) > max_chars:
+            chunks.append(" ".join(part))
+            part = []
+        part.append(word)
+    if part:
+        chunks.append(" ".join(part))
+    return chunks
+
+
+def _fit_piece(piece: str, max_chars: int) -> List[str]:
+    """Breaks one sentence into pieces that fit, on commas/semicolons first and on words only if unavoidable."""
+    if len(piece) <= max_chars:
+        return [piece]
+    clauses = [p.strip() for p in CLAUSE_BREAK.split(piece) if p.strip()]
+    if len(clauses) > 1:
+        fitted: List[str] = []
+        for clause in clauses:
+            fitted.extend(_fit_piece(clause, max_chars))
+        return fitted
+    return _split_words(piece, max_chars)
+
+
+def split_for_tts(text: str, slot_dur: float, max_chunk: float = TTS_MAX_CHUNK_SECONDS) -> List[Tuple[str, float]]:
+    """Splits a long line into chunks that each fit in ``max_chunk`` seconds of speech.
+
+    One synthesis call per sentence group keeps the dub aligned with the original pauses and caps the VRAM
+    peak, which grows with the length of generated audio. Chunks break at sentence ends first, then at
+    commas/semicolons, and only then mid-sentence. Short lines are returned unchanged.
+    """
+    text = (text or "").strip()
+    if not text or slot_dur <= max_chunk:
+        return [(text, slot_dur)]
+
+    sentences = [p.strip() for p in re.split(r"(?<=[.!?…])\s+", text) if p.strip()]
+    if len(sentences) < 2:
+        sentences = [text]
+
+    max_chars = max(int(max_chunk * CHARS_PER_SECOND), 20)
+    chunks: List[str] = []
+    current = ""
+    for sentence in sentences:
+        for piece in _fit_piece(sentence, max_chars):
+            if current and len(current) + 1 + len(piece) > max_chars:
+                chunks.append(current)
+                current = piece
+            else:
+                current = f"{current} {piece}".strip()
+    if current:
+        chunks.append(current)
+
+    if len(chunks) < 2:
+        return [(text, slot_dur)]
+
+    total_chars = sum(len(c) for c in chunks)
+    return [(c, max(0.8, slot_dur * len(c) / total_chars)) for c in chunks]
+
 
 # OmniVoice clones well from 3-10 s; a clip of the line itself carries that scene's emotion
 LINE_REF_RANGE = (3.0, 10.0)
@@ -57,13 +124,18 @@ class TTSManager:
 
             self.status = "LOADING"
             try:
-                # Dynamic GPU allocation
-                # OmniVoice (fp16) needs approx 4GB
-                self.device = GPUManager.get_best_gpu(needed_mb=4000, purpose="TTS (OmniVoice)")
-
-                gpu_id = 0
-                if "cuda" in self.device:
-                    gpu_id = int(self.device.split(":")[-1])
+                if TTS_DEVICE == "cpu":
+                    # Keeps every GPU free for other work (e.g. a shared LLM); synthesis is many times slower
+                    logging.info("TTS: TTS_DEVICE=cpu, synthesizing on the CPU.")
+                    self.device = "cpu"
+                    gpu_id = -1
+                else:
+                    # Dynamic GPU allocation
+                    # OmniVoice (fp16) needs approx 4GB
+                    self.device = GPUManager.get_best_gpu(needed_mb=4000, purpose="TTS (OmniVoice)")
+                    gpu_id = 0
+                    if "cuda" in self.device:
+                        gpu_id = int(self.device.split(":")[-1])
 
                 self.engine = TTSWrapper(gpu_id=gpu_id)
                 self.status = "READY"
@@ -128,6 +200,41 @@ class TTSManager:
         else:
             return self.engine.synthesize(*args, **kwargs)
 
+    def _synthesize_chunked(self, text: str, ref_audio: str, out_path: str, lang: str, slot_dur: float, idx: int):
+        """Synthesizes a line, splitting long ones so no single call generates a very long clip."""
+        chunks = split_for_tts(text, slot_dur)
+        if len(chunks) < 2:
+            self._run_synthesis(text, ref_audio, out_path, language=lang, max_duration=slot_dur)
+            return
+
+        logging.info(f"TTS: [ID: {idx}] {slot_dur:.1f}s line split into {len(chunks)} chunks")
+        chunk_paths = []
+        for i, (chunk_text, chunk_dur) in enumerate(chunks):
+            chunk_path = os.path.join(self.temp_dir, f"chunk_{lang}_{idx}_{i}.wav")
+            self._run_synthesis(chunk_text, ref_audio, chunk_path, language=lang, max_duration=chunk_dur)
+            chunk_paths.append(chunk_path)
+
+        try:
+            self._concat_wavs(chunk_paths, out_path)
+        finally:
+            for path in chunk_paths:
+                if os.path.exists(path):
+                    os.remove(path)
+
+    @staticmethod
+    def _concat_wavs(paths: List[str], out_path: str):
+        list_file = out_path + ".concat.txt"
+        with open(list_file, "w", encoding="utf-8") as f_list:
+            for path in paths:
+                f_list.write(f"file '{path}'\n")
+        result = subprocess.run(
+            ["ffmpeg", "-v", "error", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", out_path, "-y"],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg could not join {len(paths)} synthesis chunks: {result.stderr[-300:]!r}")
+        os.remove(list_file)
+
     def _synthesize_item(self, item: Dict, lang: str, vocals_path: str, script: List[Dict]) -> Dict:
         """Internal method to handle a single line synthesis with all fallbacks."""
         spk = item["speaker"]
@@ -152,7 +259,7 @@ class TTSManager:
                 return None
 
             t0 = time.perf_counter()
-            self._run_synthesis(clean_text, chosen_ref, raw_path, language=lang, max_duration=slot_dur)
+            self._synthesize_chunked(clean_text, chosen_ref, raw_path, lang, slot_dur, idx)
 
             dt = time.perf_counter() - t0
 

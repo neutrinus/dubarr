@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, ...) working in this repository.
-Human contributors may find it useful too. `GEMINI.md` holds older, Gemini-specific notes; where the two differ, this file wins.
+Human contributors may find it useful too.
 
 ## What this project is
 
@@ -11,6 +11,21 @@ runs the dubbing pipeline, and the result is muxed back into the original contai
 `<file>.bak`).
 
 Everything runs locally on the GPU(s) inside one Docker container. No cloud APIs.
+
+## Technology stack
+
+Python 3.12, FastAPI + SQLite + FFmpeg; AI: faster-whisper (ASR), pyannote (diarization), Demucs (separation),
+OmniVoice (speech synthesis), llama.cpp / any OpenAI-compatible server (LLM). Everything runs in Docker Compose,
+configured only through environment variables.
+
+## Workflow for behaviour changes
+
+1. Read the matching spec in `specification/specs/` (and `specification/ARCHITECTURE.md` for layering).
+2. Update the spec first when a request changes behaviour, and get it accepted before writing the code.
+3. Implement, with tests, following the conventions below.
+4. Run the checks (below) and, for pipeline changes, the E2E script.
+
+Small bug fixes that do not change intended behaviour (typos, crashes) need no spec change, but must not regress one.
 
 ## Repository map
 
@@ -121,8 +136,21 @@ why the image used to need separate venvs.
 | `METADATA_LOOKUP` | `on` | Show/movie context for the LLM: `on` (.nfo, then TVmaze / TMDB), `local` (.nfo only), `off`. No network in `MOCK_MODE`. |
 | `TMDB_API_KEY` / `METADATA_TIMEOUT` | none / `10` | Optional TMDB key (movies; v3 key or v4 token) and per-request timeout. |
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |
+| `LLM_MAX_TOKENS` | `4096` | Completion budget for the bulk calls (analysis, editor, drafts); a truncated answer is retried once with double the budget. |
+| `MERGE_MAX_GAP` / `MERGE_MAX_DURATION` | `0.3` / `10` | Consecutive lines of one speaker are merged only across this pause and up to this length, so the dub stays aligned with the original pauses. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
+| `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
+| `TTS_CPU_THREADS` | all cores | Threads used when synthesis runs on the CPU. |
+| `TTS_MAX_CHUNK_SECONDS` | `10` | Lines longer than this are synthesized in chunks at sentence boundaries (keeps sync and caps the VRAM peak). |
+| `TTS_REF_TEXT` | `off` | Send the reference clip's transcript to OmniVoice. `off` avoids English pronunciation leaking into the target language. |
 | `TTS_TIMEOUT` | `60` | Seconds per TTS request (raise it on CPU). |
+
+## Development utilities
+
+- `python src/main.py` (with `PYTHONPATH=.:src`) processes everything in `videos/` without the API or the DB worker —
+  handy for debugging one file.
+- `src/verify_output.py` re-transcribes generated segments with faster-whisper to check audio integrity by ear-free QA.
+- `scripts/e2e_test.py` dubs a short clip end to end and verifies the muxed tracks (used by `.github/workflows/e2e-cpu.yml`).
 
 ## Conventions
 
@@ -143,6 +171,9 @@ why the image used to need separate venvs.
   in small, focused commits.
 - Tests live in `tests/test_<module>.py`, use `unittest.mock` heavily, and must not need a GPU, network or model files.
   Add or update tests together with logic changes.
+- **Commits:** small, logically cohesive changes with `feat:` / `fix:` / `refactor:` / `docs:` / `test:` / `ux:`
+  prefixes. Do not mix unrelated features, fixes and docs in one commit. Push to the working branch and confirm CI
+  (lint, unit tests, smoke test, nightly E2E) went green.
 
 ## Gotchas
 
@@ -156,3 +187,22 @@ why the image used to need separate venvs.
 - Prompts in `prompts.py` are system prompts sent as chat messages with `response_format=json_object`; the model's chat
   template (applied by llama-cpp-python or the server) adds the special tokens. Don't put ChatML tokens in them.
 - The OmniVoice server is restarted automatically on HTTP 500s and connection errors, then the request is retried once.
+- `omnivoice_server.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before importing torch. It usually
+  runs next to another GPU process (a shared `llama-server`), where the default allocator dies on 20 MB
+  allocations even with memory free.
+- Long lines are synthesized in ~`TTS_MAX_CHUNK_SECONDS` chunks split at sentence ends (then commas/semicolons, words
+  only as a last resort). OmniVoice's VRAM peak grows with the length of the generated clip, and one long block also
+  drifts out of sync with the original pauses.
+
+## External compute node (glowonog)
+
+Heavy work can be offloaded to the `glowonog` machine (10.252.1.122) over an OpenAI-compatible API:
+
+| Service | Endpoint | Model | Notes |
+| --- | --- | --- | --- |
+| LLM (llama.cpp) | `http://10.252.1.122:8080/v1` | `gemma` | Gemma 4 26B A4B MoE, system prompts, JSON mode. No auth needed. |
+
+Set `LLM_API_URL=http://10.252.1.122:8080/v1` and `LLM_API_MODEL=gemma` to use it instead of the in-process model.
+There is no separate STT service there: transcription runs in-process with faster-whisper.
+The node runs two GPUs (RTX 3060 12GB + RTX 3070 8GB) and usually hosts a long-context llama-server for the whole
+house, so leave ~6GB free on the card that runs speech synthesis (see the hardware notes in `README.md`).

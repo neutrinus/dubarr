@@ -1,7 +1,10 @@
+import os
+import shutil
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
+
 from core.tts_manager import TTSManager
-import os
 
 
 class TestTTSManager(unittest.TestCase):
@@ -148,3 +151,115 @@ class TestTTSManager(unittest.TestCase):
             res = self.manager.synthesize_sync(item, "en", "vocals.wav", [])
             self.assertEqual(res["audio_path"], "out.wav")
             self.assertEqual(res["voice_type"], "GOLDEN")
+
+
+class TestTTSDeviceSelection(unittest.TestCase):
+    def _manager(self):
+        return TTSManager(
+            inference_lock=None,
+            temp_dir="/tmp/tts_test",
+            speaker_refs={},
+            abort_event=MagicMock(),
+        )
+
+    def test_cpu_device_keeps_the_gpu_free(self):
+        manager = self._manager()
+        with (
+            patch("core.tts_manager.MOCK_MODE", False),
+            patch("core.tts_manager.TTS_DEVICE", "cpu"),
+            patch("core.tts_manager.GPUManager") as gpu_manager,
+            patch("core.tts_manager.TTSWrapper") as wrapper,
+        ):
+            manager.load_engine()
+
+        gpu_manager.get_best_gpu.assert_not_called()
+        self.assertEqual(wrapper.call_args.kwargs["gpu_id"], -1)
+        self.assertEqual(manager.device, "cpu")
+
+    def test_auto_device_uses_the_gpu_manager(self):
+        manager = self._manager()
+        with (
+            patch("core.tts_manager.MOCK_MODE", False),
+            patch("core.tts_manager.TTS_DEVICE", "auto"),
+            patch("core.tts_manager.GPUManager") as gpu_manager,
+            patch("core.tts_manager.TTSWrapper") as wrapper,
+        ):
+            gpu_manager.get_best_gpu.return_value = "cuda:1"
+            manager.load_engine()
+
+        gpu_manager.get_best_gpu.assert_called_once()
+        self.assertEqual(wrapper.call_args.kwargs["gpu_id"], 1)
+        self.assertEqual(manager.device, "cuda:1")
+
+
+class TestChunkedSynthesis(unittest.TestCase):
+    def test_short_line_is_one_chunk(self):
+        from core.tts_manager import split_for_tts
+
+        self.assertEqual(split_for_tts("Krótka kwestia.", 3.0), [("Krótka kwestia.", 3.0)])
+
+    def test_long_line_is_split_at_sentences(self):
+        from core.tts_manager import split_for_tts
+
+        text = "Pierwsze zdanie jest naprawdę długie i opowiada o tym, jak zawodnicy przygotowywali swoje maszyny przez wiele miesięcy. Drugie zdanie również jest długie i wyjaśnia, dlaczego ta walka jest tak ważna dla wszystkich obecnych na arenie. Trzecie zdanie zamyka wypowiedź i zapowiada kolejne starcie."
+        chunks = split_for_tts(text, 26.0, max_chunk=10.0)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertEqual(" ".join(c[0] for c in chunks), text)
+        self.assertAlmostEqual(sum(c[1] for c in chunks), 26.0, places=1)
+
+    def test_single_long_sentence_is_cut_on_commas_or_words(self):
+        from core.tts_manager import split_for_tts
+
+        text = "To jedno bardzo długie zdanie bez kropek, ale z przecinkami, które trzeba pociąć na kawałki."
+        chunks = split_for_tts(text, 20.0, max_chunk=5.0)
+
+        self.assertGreater(len(chunks), 1)
+        for chunk_text, _ in chunks:
+            self.assertLessEqual(len(chunk_text), 80)
+
+    def test_long_sentence_breaks_on_commas(self):
+        from core.tts_manager import split_for_tts
+
+        text = (
+            "Pierwsza część zdania mówi o jednym, druga część zdania mówi o drugim, "
+            "trzecia część zdania mówi o trzecim, czwarta część zdania mówi o czwartym."
+        )
+        chunks = split_for_tts(text, 20.0, max_chunk=4.0)
+
+        self.assertGreater(len(chunks), 1)
+        for chunk_text, _ in chunks[:-1]:
+            self.assertTrue(chunk_text.endswith((",", ";", ":", ".")), chunk_text)
+
+    def test_chunks_are_synthesized_separately_and_joined(self):
+        manager = TTSManager(
+            inference_lock=None,
+            temp_dir=tempfile.mkdtemp(),
+            speaker_refs={},
+            abort_event=MagicMock(),
+        )
+        self.addCleanup(shutil.rmtree, manager.temp_dir, ignore_errors=True)
+        calls = []
+
+        def fake_synthesis(text, ref, out_path, language=None, max_duration=None):
+            calls.append((text, max_duration))
+            with open(out_path, "wb") as f:
+                f.write(b"RIFF")
+
+        with (
+            patch.object(manager, "_run_synthesis", side_effect=fake_synthesis),
+            patch.object(manager, "_concat_wavs") as concat,
+        ):
+            manager._synthesize_chunked(
+                "Pierwsze zdanie jest naprawdę długie i opowiada o tym, jak zawodnicy przygotowywali swoje maszyny przez wiele miesięcy. Drugie zdanie również jest długie i wyjaśnia, dlaczego ta walka jest tak ważna dla wszystkich obecnych na arenie. Trzecie zdanie zamyka wypowiedź i zapowiada kolejne starcie.",
+                "ref.wav",
+                os.path.join(manager.temp_dir, "out.wav"),
+                "pl",
+                26.0,
+                7,
+            )
+
+        self.assertEqual(len(calls), len(concat.call_args.args[0]))
+        self.assertGreater(len(calls), 1)
+        for _, max_duration in calls:
+            self.assertLess(max_duration, 26.0)

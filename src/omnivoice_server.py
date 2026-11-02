@@ -2,16 +2,22 @@ import os
 import logging
 from collections import OrderedDict
 
-import soundfile as sf
-import torch
-from flask import Flask, request, jsonify
-from omnivoice import OmniVoice
+# Must be set before torch initialises CUDA: TTS often runs next to another process (e.g. a shared
+# llama-server) and the default allocator then fails on tiny allocations despite free memory.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+import soundfile as sf  # noqa: E402
+import torch  # noqa: E402
+from flask import Flask, request, jsonify  # noqa: E402
+from omnivoice import OmniVoice  # noqa: E402
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 model = None
+# Negative means CPU (TTS_DEVICE=cpu in dubarr); the GPUs then stay free for other processes.
 gpu_id = int(os.environ.get("GPU_TTS", 0))
+CPU_THREADS = int(os.environ.get("TTS_CPU_THREADS", "0")) or (os.cpu_count() or 1)
 
 # OmniVoice pads every clip with this much silence per side (OmniVoiceGenerationConfig.pad_duration)
 PAD_DURATION = 0.1
@@ -23,9 +29,10 @@ _prompt_cache = OrderedDict()
 
 def load_model():
     global model
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and gpu_id >= 0:
         device, dtype = f"cuda:{gpu_id}", torch.float16
     else:
+        torch.set_num_threads(CPU_THREADS)
         device, dtype = "cpu", torch.float32
     logging.info(f"OmniVoice: Loading model on {device}...")
     model = OmniVoice.from_pretrained("k2-fsa/OmniVoice", device_map=device, dtype=dtype)
@@ -37,7 +44,7 @@ def get_voice_prompt(ref_audio, ref_text):
     key = (ref_audio, os.path.getmtime(ref_audio), ref_text)
     prompt = _prompt_cache.get(key)
     if prompt is None:
-        if not ref_text:
+        if ref_text is None:
             logging.warning(f"OmniVoice: No transcript for {ref_audio}, the model will transcribe it with Whisper.")
         prompt = model.create_voice_clone_prompt(ref_audio=ref_audio, ref_text=ref_text)
         _prompt_cache[key] = prompt

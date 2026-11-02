@@ -35,7 +35,10 @@ FROM nvidia/cuda:13.1.1-devel-ubuntu24.04
 
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
+# Don't enable hf_transfer here: OmniVoice's venv doesn't ship it, and huggingface_hub 2.x uses hf_xet anyway.
 ENV HF_HOME=/app/hf_cache
+# CTranslate2/faster-whisper loads CUDA 12 cuBLAS; the pinned OmniVoice torch ships it.
+ENV LD_LIBRARY_PATH="/app/.venv/lib/python3.12/site-packages/nvidia/cublas/lib:${LD_LIBRARY_PATH}"
 
 # Install only runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

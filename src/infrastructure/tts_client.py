@@ -6,7 +6,7 @@ import logging
 import signal
 import threading
 
-from config import MOCK_MODE, OMNIVOICE_PYTHON, TTS_TIMEOUT
+from config import MOCK_MODE, OMNIVOICE_PYTHON, TTS_TIMEOUT, TTS_REF_TEXT
 
 
 class TTSServerClient:
@@ -231,7 +231,10 @@ class OmniVoiceClient(TTSServerClient):
     def _build_payload(self, text, ref_audio, output_path, language, max_duration):
         payload = super()._build_payload(text, ref_audio, output_path, language, max_duration)
         payload["max_duration"] = max_duration
-        payload["ref_text"] = read_ref_text(ref_audio)
+        # Cross-lingual cloning: the reference clip is in the source language, and sending its transcript makes
+        # OmniVoice apply that language's pronunciation to the target text ("walka" heard as "łalka").
+        # An empty string means "no transcript" and keeps the target language's phonetics.
+        payload["ref_text"] = read_ref_text(ref_audio) if TTS_REF_TEXT == "auto" else ""
         return payload
 
 

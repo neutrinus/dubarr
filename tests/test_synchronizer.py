@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+import wave
 from unittest.mock import MagicMock, patch
 from core.synchronizer import SegmentSynchronizer
 
@@ -94,3 +96,17 @@ class TestSynchronizer(unittest.TestCase):
         self.assertEqual(res["status"], "FORCED_SHORT_FALLBACK")
         self.assertEqual(res["duration"], 7.0)  # Should pick Attempt 2 (shortest)
         self.assertEqual(res["final_text"], "Text 2")
+
+    def test_failed_synthesis_returns_silent_segment_not_source(self):
+        segment = {"index": 7, "text_en": "Hello", "start": 2, "end": 4.5, "speaker": "A"}
+        self.mock_tts.synthesize_sync.return_value = None
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sync = SegmentSynchronizer(self.mock_llm, self.mock_tts, temp_dir)
+            res = sync.process_segment(segment, "pl", "voc.wav", [], {})
+
+            self.assertEqual(res["status"], "FAILED_FALLBACK")
+            self.assertNotEqual(res["audio_path"], "voc.wav")
+            with wave.open(res["audio_path"], "rb") as wav:
+                self.assertEqual(wav.getframerate(), 24000)
+                self.assertEqual(wav.getnframes(), 60000)

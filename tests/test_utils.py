@@ -4,7 +4,7 @@ import wave
 import struct
 import pytest
 import subprocess
-from utils import parse_json, clean_srt, count_syllables, clean_output, run_cmd, measure_zcr
+from utils import clean_output, clean_srt, count_syllables, measure_zcr, parse_json, run_cmd
 
 
 def test_parse_json_valid():
