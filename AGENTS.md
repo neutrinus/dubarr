@@ -35,12 +35,14 @@ src/
     audio.py               Demucs separation, analysis orchestration, ffmpeg mixing (ducking, ambient ghost).
     gpu_services.py        LLMService / TTSService: priority-queue worker threads that serialize GPU access.
     gpu_manager.py         Picks a CUDA device by free VRAM (maps nvidia-smi -> torch index by name+memory).
+    media_context.py       Parses Sonarr/Radarr/scene file names, gathers show/episode or movie info, formats it for prompts.
     worker.py              JobWorker: polls SQLite for QUEUED tasks and runs a fresh pipeline per task.
   infrastructure/
     database.py            SQLite: `tasks` queue + `job_steps` (cached JSON results per stage).
     ffmpeg.py              FFmpegWrapper: ffprobe metadata, extract/convert, mux.
     tts_client.py          TTS server clients (XTTS, OmniVoice): start/restart the server subprocess, HTTP calls.
     llm_client.py          OpenAI-compatible chat completions client (used when LLM_API_URL is set).
+    metadata_client.py     .nfo parser, TVmaze (no key) and TMDB (optional key) clients for show/movie metadata.
     monitor.py             Periodic CPU/RAM/GPU/queue logging thread.
   templates/index.html     Dashboard.
 tests/                     pytest unit tests (everything heavy is mocked).
@@ -53,6 +55,8 @@ specification/             ARCHITECTURE.md + numbered feature specs (the intende
 1. **Separation**: ffmpeg extracts stereo, Demucs `htdemucs_ft` isolates vocals.
 2. **Analysis**: pyannote diarization, then faster-whisper transcription (models are loaded and unloaded one at a time).
    `DubbingPipeline._create_script` assigns speakers to Whisper segments and merges short same-speaker lines.
+2b. **Media metadata**: `core/media_context.py` identifies the show/episode or movie from the path (Sonarr/Radarr naming)
+   and fetches synopsis and cast (character, actor, gender) from `.nfo` files, TVmaze or TMDB. Failures only log.
 3. **Global analysis**: the LLM writes a summary, a phonetic glossary and speaker profiles, then corrects ASR errors in
    chunks (reference subtitles from `<video>.srt` or the first embedded subtitle stream are used as ground truth).
 4. **Voice references**: picks a "golden" reference clip per speaker (scored, ZCR-checked). Despite the step name
@@ -114,6 +118,8 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |
 | `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |
 | `LLM_API_MODEL` / `LLM_API_KEY` / `LLM_TIMEOUT` | none / none / `600` | Model name, key and per-request timeout for that server. |
+| `METADATA_LOOKUP` | `on` | Show/movie context for the LLM: `on` (.nfo, then TVmaze / TMDB), `local` (.nfo only), `off`. No network in `MOCK_MODE`. |
+| `TMDB_API_KEY` / `METADATA_TIMEOUT` | none / `10` | Optional TMDB key (movies; v3 key or v4 token) and per-request timeout. |
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |
 | `TTS_BACKEND` | `omnivoice` | Speech synthesis backend: `omnivoice` or `xtts`. |
 | `TTS_PYTHON` / `OMNIVOICE_PYTHON` | `/app/.venv_tts/...`, `/app/.venv_omnivoice/...` | Interpreters for the TTS servers. |

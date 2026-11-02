@@ -4,10 +4,12 @@ import logging
 import time
 import humanfriendly
 import shutil
+import glob
 import subprocess
 from typing import List, Optional
 
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_GUARD
+from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
 from infrastructure.monitor import ResourceMonitor
@@ -16,9 +18,23 @@ from utils import clean_srt, measure_zcr, run_cmd
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
 from core.gpu_services import LLMService, TTSService
+from core.media_context import lookup_media_info, format_media_context, format_short_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
+
+ISO_639_2 = {
+    "pl": "pol",
+    "en": "eng",
+    "de": "ger",
+    "es": "spa",
+    "fr": "fra",
+    "it": "ita",
+    "ru": "rus",
+    "ja": "jpn",
+    "zh": "chi",
+    "ko": "kor",
+}
 
 
 class DubbingPipeline:
@@ -116,11 +132,33 @@ class DubbingPipeline:
             )
         return script
 
-    def _extract_subtitles(self, vpath):
+    def _find_external_subtitles(self, vpath) -> Optional[str]:
+        """Picks a sidecar .srt in the source language: `<video>.srt`, `<video>.en.srt`, `<video>.en.hi.srt`, ...
+
+        Subtitles in a target language and forced (partial) subtitles are skipped; English and full ones are preferred.
+        """
         base_path = os.path.splitext(vpath)[0]
-        srt_path = base_path + ".srt"
+        targets = {lang.lower() for lang in self.target_langs} | {
+            ISO_639_2.get(lang.lower(), "") for lang in self.target_langs
+        }
+        candidates = []
+        for path in glob.glob(glob.escape(base_path) + "*.srt"):
+            tags = [t.lower() for t in path[len(base_path) : -len(".srt")].split(".") if t]
+            if path[len(base_path) : len(base_path) + 1] not in ("", ".") or "forced" in tags:
+                continue
+            if any(t in targets for t in tags):
+                continue
+            rank = (
+                0 if not tags else 1 if tags[0] in ("en", "eng") else 2,
+                1 if any(t in ("hi", "sdh", "cc") for t in tags) else 0,
+            )
+            candidates.append((rank, path))
+        return min(candidates)[1] if candidates else None
+
+    def _extract_subtitles(self, vpath):
+        srt_path = self._find_external_subtitles(vpath)
         content = ""
-        if os.path.exists(srt_path):
+        if srt_path:
             logger.info(f"Found external subtitles: {srt_path}")
             try:
                 with open(srt_path, "r", encoding="utf-8") as f:
@@ -146,6 +184,13 @@ class DubbingPipeline:
             return cleaned
         logger.info("No reference subtitles found.")
         return ""
+
+    @staticmethod
+    def _lookup_media_info(vpath):
+        if METADATA_LOOKUP == "off":
+            return {}
+        online = METADATA_LOOKUP == "on" and not MOCK_MODE
+        return lookup_media_info(vpath, online=online, tmdb_api_key=TMDB_API_KEY, timeout=METADATA_TIMEOUT)
 
     def _extract_refs(self, script, vocals_path, ddir):
         logger.info("Extracting Smart Weighted Normalized voice references (v2 - Scored 0-100)")
@@ -345,18 +390,7 @@ class DubbingPipeline:
 
         # 0. Early check for existing languages
         existing_langs = audio_processor.get_audio_languages(vpath)
-        iso_map = {
-            "pl": "pol",
-            "en": "eng",
-            "de": "ger",
-            "es": "spa",
-            "fr": "fra",
-            "it": "ita",
-            "ru": "rus",
-            "ja": "jpn",
-            "zh": "chi",
-            "ko": "kor",
-        }
+        iso_map = ISO_639_2
 
         active_langs = []
         for lang in self.target_langs:
@@ -400,10 +434,24 @@ class DubbingPipeline:
             return
         ref_subs = self._extract_subtitles(vpath)
 
+        # What is this video? (show/episode or movie, synopsis, cast) - context for the analysis and the translator
+        media_info = self._run_step("Stage 2b: Media Metadata", self._lookup_media_info, task_id, vpath)
+        if self.debug_mode and media_info:
+            with open(os.path.join(ddir, "media_info.json"), "w") as f_dbg:
+                json.dump(media_info, f_dbg, indent=2, ensure_ascii=False)
+
         analysis_results = self._run_step(
-            "Stage 3: Global Analysis", self.llm_manager.analyze_script, task_id, script, ddir, ref_subs
+            "Stage 3: Global Analysis",
+            self.llm_manager.analyze_script,
+            task_id,
+            script,
+            ddir,
+            ref_subs,
+            format_media_context(media_info),
         )
         self.global_context = analysis_results["context"]
+        if media_info:
+            self.global_context["media"] = format_short_context(media_info)
         self.speaker_info = analysis_results["speakers"]
         # analyze_script corrects the script in place; on a cached run only its returned fixes carry them over
         for idx_str, text in analysis_results.get("script_fixes", {}).items():

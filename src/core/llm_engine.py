@@ -4,6 +4,7 @@ import logging
 import time
 import threading
 import gc
+import re
 from typing import List, Dict, Optional, Any
 from utils import parse_json, clean_output
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_REFINE_DURATION
@@ -24,6 +25,33 @@ except (ImportError, RuntimeError, OSError):
 
     def llama_supports_gpu_offload():
         return False
+
+
+def speaker_name(speaker_info: Dict, speaker_id: str) -> str:
+    info = speaker_info.get(speaker_id)
+    return info.get("name") or speaker_id if isinstance(info, dict) else speaker_id
+
+
+def speaker_gender(speaker_info: Dict, speaker_id: str) -> str:
+    """'male'/'female' from the analysis (explicit field, else guessed from the free-text profile), or ''."""
+    info = speaker_info.get(speaker_id)
+    if not isinstance(info, dict):
+        return ""
+    gender = str(info.get("gender", "")).strip().lower()
+    if gender in ("male", "female"):
+        return gender
+    desc = str(info.get("desc", "")).lower()
+    if re.search(r"\b(female|woman|girl|lady)\b", desc):
+        return "female"
+    if re.search(r"\b(male|man|boy|guy)\b", desc):
+        return "male"
+    return ""
+
+
+def speaker_label(speaker_info: Dict, speaker_id: str) -> str:
+    """'Name (female)' for the per-line prompts."""
+    gender = speaker_gender(speaker_info, speaker_id)
+    return speaker_name(speaker_info, speaker_id) + (f" ({gender})" if gender else "")
 
 
 class LLMManager:
@@ -222,7 +250,7 @@ class LLMManager:
             }
         return {"choices": [{"text": "{}"}]}
 
-    def analyze_script(self, script: List[Dict], ddir: str, subtitles: str = "") -> Dict:
+    def analyze_script(self, script: List[Dict], ddir: str, subtitles: str = "", media_info: str = "") -> Dict:
         """Phase 1: Global Analysis & Phase 2: Speaker Profiling & Phase 3: ASR Correction."""
         self.load_model()
 
@@ -243,7 +271,12 @@ class LLMManager:
         # Global Analysis is Priority 2
         res = self._run_inference(
             [
-                {"role": "system", "content": T_ANALYSIS.format(langs=", ".join(lang_names), subtitles=subtitles)},
+                {
+                    "role": "system",
+                    "content": T_ANALYSIS.format(
+                        langs=", ".join(lang_names), subtitles=subtitles, media_info=media_info or "(nothing known)"
+                    ),
+                },
                 {"role": "user", "content": ov},
             ],
             priority=2,
@@ -308,6 +341,10 @@ class LLMManager:
         drafts = []
         glossary = global_context.get("glossary", {})
         lang_name = LANG_MAP.get(lang, lang)
+        about = (
+            "\n".join(x for x in (global_context.get("media", ""), str(global_context.get("summary", "") or "")) if x)
+            or "(unknown)"
+        )
 
         valid_indices = [
             idx
@@ -322,20 +359,25 @@ class LLMManager:
                 break
 
             batch_indices = valid_indices[b_start : b_start + batch_size]
-            json_batch = [
-                {
+            json_batch = []
+            for idx in batch_indices:
+                item = {
                     "id": idx,
-                    "speaker": speaker_info.get(script[idx]["speaker"], {}).get("name", script[idx]["speaker"]),
+                    "speaker": speaker_name(speaker_info, script[idx]["speaker"]),
                     "text": script[idx]["text_en"],
                     "duration_sec": round(script[idx]["end"] - script[idx]["start"], 2),
                 }
-                for idx in batch_indices
-            ]
+                gender = speaker_gender(speaker_info, script[idx]["speaker"])
+                if gender:
+                    item["speaker_gender"] = gender
+                json_batch.append(item)
 
             trans_messages = [
                 {
                     "role": "system",
-                    "content": T_TRANS_SYSTEM.format(lang_name=lang_name, glossary=json.dumps(glossary, ensure_ascii=False)),
+                    "content": T_TRANS_SYSTEM.format(
+                        lang_name=lang_name, context=about, glossary=json.dumps(glossary, ensure_ascii=False)
+                    ),
                 },
                 {"role": "user", "content": json.dumps(json_batch, indent=2, ensure_ascii=False)},
             ]
@@ -366,6 +408,7 @@ class LLMManager:
                             "start": script[idx]["start"],
                             "end": script[idx]["end"],
                             "text_en": script[idx]["text_en"],  # Keep original for reference
+                            "speaker_label": speaker_label(speaker_info, script[idx]["speaker"]),
                         }
                     )
 
@@ -381,6 +424,7 @@ class LLMManager:
                             "start": script[idx]["start"],
                             "end": script[idx]["end"],
                             "text_en": script[idx]["text_en"],
+                            "speaker_label": speaker_label(speaker_info, script[idx]["speaker"]),
                         }
                     )
 
@@ -395,6 +439,8 @@ class LLMManager:
         glossary: Dict,
         context_before: str = "",
         context_after: str = "",
+        speaker: str = "",
+        media: str = "",
     ) -> str:
         """Refines text based on actual audio duration feedback."""
         delta = actual_dur - target_dur
@@ -416,6 +462,8 @@ class LLMManager:
             glossary=json.dumps(glossary, ensure_ascii=False),
             context_before=context_before,
             context_after=context_after,
+            speaker=speaker or "unknown",
+            media=media or "unknown",
         )
 
         t0 = time.perf_counter()

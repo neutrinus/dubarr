@@ -27,11 +27,27 @@ The system verifies model presence and downloads missing files. To maximize avai
     *   `diarization.json` (Time ranges mapped to speakers).
     *   `transcription.json` (Text segments with timestamps).
 
-### 2.3 Stage 3: Global Context Analysis
-*   **Input:** Transcription script.
+### 2.2b Stage 2b: Media Metadata
+*   **Input:** Path of the video.
 *   **Action:**
-    1.  LLM analyzes the full script to understand context, tone, and relationships between speakers.
-    2.  Generates a glossary or style guide for translation.
+    1.  Parses the path (Sonarr/Radarr naming such as `Show/Season 2/Show - S02E02 - Title WEBDL-1080p.mkv`, scene names,
+        `{tvdb-…}`/`{imdb-…}`/`{tmdb-…}` ids, `Movie (2010)`) into title, year, season and episode.
+    2.  Reads Kodi-style `.nfo` files next to the video (`<video>.nfo`, `tvshow.nfo`, `movie.nfo`) when present.
+    3.  Fills the gaps online (`METADATA_LOOKUP=on`): TVmaze for episodes (no account; show synopsis, episode title and
+        synopsis, main and guest cast with gender), TMDB for movies (only with `TMDB_API_KEY`).
+    4.  Any failure is logged and the job continues; at worst the title guessed from the file name is used.
+*   **Output:** `media_info.json` (cached step result; written to the debug folder in debug mode).
+
+### 2.3 Stage 3: Global Context Analysis
+*   **Input:** Transcription script, reference subtitles, media metadata.
+*   **Action:**
+    1.  LLM analyzes the full script to understand context, tone, and relationships between speakers, using the
+        media metadata (synopsis, cast list) to name speakers after characters and to tell their gender.
+    2.  Generates a glossary or style guide for translation (including the character names).
+    3.  The translator gets the show/episode, the synopsis and each line's speaker gender, so gendered forms
+        (e.g. Polish past tense) match the speaker; the per-line duration refinement gets the speaker and title too.
+*   **Reference subtitles:** `<video>.srt`, else `<video>.<lang>[.hi|.sdh].srt` in a non-target language (English and full
+    subtitles preferred, forced subtitles skipped), else the first embedded subtitle stream.
 *   **Output:**
     *   `context.json` (Global context for translation).
     *   `speakers.json` (Speaker profiles: age, gender, role).

@@ -77,6 +77,8 @@ services:
       - HF_TOKEN=your_token_here
       - TARGET_LANGS=pl
       - TTS_BACKEND=omnivoice # Optional: speech synthesis backend, "omnivoice" (default) or "xtts"
+      - METADATA_LOOKUP=on # Optional: look up the show/movie (synopsis, cast) for the translator: "on", "local" (.nfo only), "off"
+      - TMDB_API_KEY= # Optional: TMDB key for movie metadata (episodes use TVmaze, no key needed)
       - DATA_DIR=/app/data # Mount point for all app data (DB, logs, models, caches)
       - API_USER=dubarr # Optional: Custom API username
       - API_PASS=dubarr # Optional: Custom API password

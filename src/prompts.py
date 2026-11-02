@@ -5,23 +5,29 @@ T_ANALYSIS = """CONTEXT: This text is a raw transcription from a video file. You
 
 REFERENCE SUBTITLES (Ground Truth for names/context): "{subtitles}"
 
+KNOWN MEDIA INFO (from the file name and a metadata database; may be empty or slightly off):
+{media_info}
+
 Analyze the movie script provided by the user. Return A SINGLE JSON object containing:
-1. 'summary': A concise summary of the plot and context.
+1. 'summary': A concise summary of the plot and context of THIS video (episode), in English.
 2. 'glossary': A dictionary of proper nouns, names, and specific terms.
    - For names and brands that should keep their original sound,
      provide a PHONETIC SPELLING in the target language(s) ({langs}).
    - Example (for Polish): 'James' -> 'Dżejms', 'MythBusters' -> 'Mif-basters', 'Hyneman' -> 'Hajneman'.
    - This is crucial for the TTS engine to pronounce them correctly.
 3. 'speakers': A dictionary where keys are speaker IDs (e.g. SPEAKER_00) and values are objects with:
-   - 'name': The inferred real name of the character/person.
+   - 'name': The inferred real name of the character/person. Prefer the character names from KNOWN MEDIA INFO
+     (identify speakers by how they are addressed and what they talk about).
+   - 'gender': "male", "female" or "unknown". Use the cast list of KNOWN MEDIA INFO when the speaker matches a character.
    - 'desc': A brief profile including GENDER, age, and VOICE traits. Focus on details useful for selecting a TTS model.
+   Put the character names from KNOWN MEDIA INFO that appear in the script into the 'glossary' as well.
 
 OUTPUT FORMAT:
 {{
   "summary": "...",
   "glossary": {{"OriginalTerm": "PhoneticTranslation"}},
   "speakers": {{
-    "SPEAKER_00": {{"name": "Name", "desc": "Traits"}}
+    "SPEAKER_00": {{"name": "Name", "gender": "male", "desc": "Traits"}}
   }}
 }}
 """
@@ -51,6 +57,9 @@ TASK: Translate the provided list of lines to {lang_name}.
 Each line has a "duration_sec". Your translation MUST be speakable within that time.
 Average speaking rate is 3-4 syllables per second.
 
+ABOUT THE VIDEO:
+{context}
+
 GLOSSARY:
 {glossary}
 
@@ -68,6 +77,9 @@ RULES:
 2. Follow the GLOSSARY strictly.
 3. UNIT CONVERSION: Convert Imperial units (miles, pounds, feet, etc.) to Metric units (kilometers, kilograms, meters, etc.) appropriate for the target language. Use natural-sounding rounded values if exact ones are too long to speak.
 4. Be extremely concise. If "duration_sec" is small, use shorter words or omit non-essential parts.
+5. Each line has the "speaker" and, when known, the "speaker_gender". Use grammatical forms that match the speaker's
+   gender (e.g. Polish past tense: "zrobiłem" for a man, "zrobiłam" for a woman). Keep the tone, register and
+   terminology of the show (its genre and setting); keep established in-universe names and terms consistent.
 """
 
 T_REFINE_DURATION = """You are a Dubbing Director adjusting a script to match the original actor's timing.
@@ -78,6 +90,8 @@ TASK: Rewrite the text to match the Target Duration while maintaining PERFECT GR
 - If current duration < target: Expand the text (add natural fillers, adjectives, rephrase).
 
 CONTEXT:
+- Video: {media}
+- Speaker: {speaker}
 - Previous line: "{context_before}"
 - Next line: "{context_after}"
 
@@ -86,7 +100,7 @@ GLOSSARY (Use strict phonetic spelling for names):
 
 CRITICAL RULES:
 1. DO NOT SACRIFICE GRAMMAR FOR BREVITY. (Example: "na rampa" is WRONG, "na rampę" is RIGHT).
-2. Maintain the tone and flow of the surrounding context.
+2. Maintain the tone and flow of the surrounding context, and grammatical forms matching the speaker's gender.
 3. Ensure the text is natural and easy to speak.
 
 INPUT DATA:

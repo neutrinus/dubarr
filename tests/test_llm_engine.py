@@ -62,6 +62,35 @@ class TestLLMManager(unittest.TestCase):
         self.assertEqual(drafts[0]["text"], "Cześć")
         self.assertEqual(drafts[0]["index"], 0)
 
+    def test_generate_drafts_passes_show_context_and_speaker_gender(self):
+        script = [{"index": 0, "speaker": "S0", "text_en": "I did it", "start": 0, "end": 2}]
+        speakers = {"S0": {"name": "Una", "gender": "female", "desc": "Commander"}}
+        context = {"media": 'Star Trek (2022), S03E03 "Shuttle"', "summary": "A crash.", "glossary": {}}
+        self.chat.return_value = reply(json.dumps({"translations": [{"id": 0, "text": "Zrobiłam to"}]}))
+
+        drafts = self.manager.generate_drafts(script, "pl", speakers, context)
+
+        messages = self.chat.call_args.kwargs["messages"]
+        self.assertIn('Star Trek (2022), S03E03 "Shuttle"\nA crash.', messages[0]["content"])
+        batch = json.loads(messages[1]["content"])
+        self.assertEqual(batch[0]["speaker"], "Una")
+        self.assertEqual(batch[0]["speaker_gender"], "female")
+        self.assertEqual(drafts[0]["speaker_label"], "Una (female)")
+
+    def test_speaker_gender_falls_back_to_profile(self):
+        from core.llm_engine import speaker_gender
+
+        self.assertEqual(speaker_gender({"A": {"desc": "Middle-aged man, deep voice"}}, "A"), "male")
+        self.assertEqual(speaker_gender({"A": {"gender": "unknown", "desc": "Female, 30s"}}, "A"), "female")
+        self.assertEqual(speaker_gender({"A": {"desc": "Narrator"}}, "A"), "")
+        self.assertEqual(speaker_gender({}, "A"), "")
+
+    def test_analyze_script_includes_media_info(self):
+        self.chat.side_effect = [reply(json.dumps({"summary": "s", "glossary": {}, "speakers": {}})), reply("{}")]
+        self.manager.analyze_script([{"speaker": "A", "text_en": "Hi"}], "d", "", "TV series: Star Trek")
+        self.assertIn("KNOWN MEDIA INFO", self.chat.call_args_list[0].kwargs["messages"][0]["content"])
+        self.assertIn("TV series: Star Trek", self.chat.call_args_list[0].kwargs["messages"][0]["content"])
+
     def test_analyze_script(self):
         script = [{"speaker": "A", "text_en": "Hello world"}]
         # Mock analysis response

@@ -30,6 +30,9 @@ services:
       - TTS_BACKEND=${TTS_BACKEND:-omnivoice}
       # Use an existing llama.cpp server instead of loading an LLM here, e.g. http://llama:8080/v1
       - LLM_API_URL=${LLM_API_URL:-}
+      # Show/movie context for the translator: "on" (.nfo + TVmaze/TMDB), "local" (.nfo only) or "off"
+      - METADATA_LOOKUP=${METADATA_LOOKUP:-on}
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
       - DEBUG=${DEBUG:-0}
       - VERBOSE=${VERBOSE:-0}
       - API_USER=${API_USER:-dubarr}
