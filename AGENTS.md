@@ -22,8 +22,7 @@ src/
   config.py                Env-var config, paths, LANG_MAP. Has import-time side effects (see Gotchas).
   prompts.py               LLM prompt templates (analysis, ASR editor, translation, duration refinement).
   utils.py                 JSON parsing, SRT cleaning, ZCR, syllable counting, output cleaning.
-  tts_server.py            Flask XTTS v2 server. Runs in a SEPARATE Python 3.10 venv on 127.0.0.1:5050.
-  omnivoice_server.py      Flask OmniVoice server (default TTS backend). Own Python 3.12 venv, 127.0.0.1:5051.
+  omnivoice_server.py      Flask OmniVoice TTS server. Separate process on the app's interpreter, 127.0.0.1:5051.
   verify_output.py         Manual QA helper (faster-whisper re-transcription of generated segments).
   core/
     pipeline.py            DubbingPipeline: stages 1-7, step caching, Stage 5 checkpointing, final mix/mux.
@@ -40,7 +39,7 @@ src/
   infrastructure/
     database.py            SQLite: `tasks` queue + `job_steps` (cached JSON results per stage).
     ffmpeg.py              FFmpegWrapper: ffprobe metadata, extract/convert, mux.
-    tts_client.py          TTS server clients (XTTS, OmniVoice): start/restart the server subprocess, HTTP calls.
+    tts_client.py          OmniVoice server client: start/restart the server subprocess, HTTP calls.
     llm_client.py          OpenAI-compatible chat completions client (used when LLM_API_URL is set).
     metadata_client.py     .nfo parser, TVmaze (no key) and TMDB (optional key) clients for show/movie metadata.
     monitor.py             Periodic CPU/RAM/GPU/queue logging thread.
@@ -72,7 +71,7 @@ Stages run through `DubbingPipeline._run_step`, which caches each result in `job
 ## Setting up and running checks
 
 Requires [uv](https://docs.astral.sh/uv/) and `ffmpeg` on PATH. The lightweight dev environment does **not** install
-torch, llama-cpp, pyannote, faster-whisper or Coqui; those imports are optional and the code falls back to mocks.
+torch, llama-cpp, pyannote, faster-whisper or OmniVoice; those imports are optional and the code falls back to mocks.
 
 ```bash
 uv sync --group dev --python 3.10
@@ -92,15 +91,16 @@ CI (`.github/workflows/pipeline.yml`) runs the same lint + tests on Python 3.10,
 and tags.
 
 `.github/workflows/e2e-cpu.yml` runs `scripts/e2e_test.py`: it cuts a 60 s public-domain clip (NASA), dubs it with the
-real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 3B GGUF, XTTS v2 on CPU), and checks the
+real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 3B GGUF, OmniVoice on CPU), and checks the
 muxed tracks (count, tags, duration, not silent). It runs nightly, on push to `main`, on manual dispatch, and on PRs that
 touch `src/`, dependencies, the workflow or the script. Without the `HF_TOKEN` secret, diarization is replaced by a single speaker. It tests
 plumbing, not translation quality.
 
-Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 4 GB each for Whisper and XTTS),
-`HF_TOKEN` with access to the pyannote models, and the Docker image (two venvs: `.venv_app` on Python 3.12 and
-`.venv_tts` on Python 3.10 for Coqui). Use `docker compose up --build`. Outside Docker you must start
-`src/tts_server.py` yourself from a Python 3.10 venv with Coqui installed.
+Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 4 GB each for Whisper and the TTS),
+`HF_TOKEN` with access to the pyannote models, and the Docker image. The image has a single Python 3.12 venv
+(`/app/.venv`) with everything, OmniVoice included; the TTS server is started as a subprocess on that same interpreter.
+Use `docker compose up --build`. XTTS (Coqui) was removed in favour of OmniVoice; it pinned `transformers<5`, which is
+why the image used to need separate venvs.
 
 ## Configuration (environment variables)
 
@@ -121,9 +121,8 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
 | `METADATA_LOOKUP` | `on` | Show/movie context for the LLM: `on` (.nfo, then TVmaze / TMDB), `local` (.nfo only), `off`. No network in `MOCK_MODE`. |
 | `TMDB_API_KEY` / `METADATA_TIMEOUT` | none / `10` | Optional TMDB key (movies; v3 key or v4 token) and per-request timeout. |
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |
-| `TTS_BACKEND` | `omnivoice` | Speech synthesis backend: `omnivoice` or `xtts`. |
-| `TTS_PYTHON` / `OMNIVOICE_PYTHON` | `/app/.venv_tts/...`, `/app/.venv_omnivoice/...` | Interpreters for the TTS servers. |
-| `TTS_TIMEOUT` | `60` | Seconds per XTTS request (raise it on CPU). |
+| `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
+| `TTS_TIMEOUT` | `60` | Seconds per TTS request (raise it on CPU). |
 
 ## Conventions
 
@@ -156,7 +155,4 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
   cached result can point at a file that was since overwritten by another task.
 - Prompts in `prompts.py` are system prompts sent as chat messages with `response_format=json_object`; the model's chat
   template (applied by llama-cpp-python or the server) adds the special tokens. Don't put ChatML tokens in them.
-- The XTTS server is restarted automatically on most HTTP 500s; "size of tensor ... must match" errors are treated as
-  input errors and retried with a different reference instead.
-- The Dockerfile patches Coqui's `autoregressive.py` with `sed` for a transformers incompatibility. If you bump Coqui
-  or transformers, check that patch still applies.
+- The OmniVoice server is restarted automatically on HTTP 500s and connection errors, then the request is retried once.

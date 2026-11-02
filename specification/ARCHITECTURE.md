@@ -35,10 +35,10 @@ The system is designed as a **Modular Monolith** with a clear separation between
     - `monitor.py`: Resource usage monitoring.
 
 ### 2.4. Internal Microservices
--   **TTS Server (`src/tts_server.py`):**
-    -   **Responsibility:** Hosts the Coqui-TTS (XTTS v2) engine.
-    -   **Architecture:** Runs as a separate Flask process on `localhost:5050` within a dedicated Python 3.10 virtual environment (`.venv_tts`).
-    -   **Reason:** Isolation of conflicting dependencies (Python 3.10 vs 3.12, CUDA versions) required by Coqui-TTS.
+-   **TTS Server (`src/omnivoice_server.py`):**
+    -   **Responsibility:** Hosts the OmniVoice speech synthesis engine.
+    -   **Architecture:** Runs as a separate Flask process on `localhost:5051`, on the app's own interpreter.
+    -   **Reason:** A separate process can be restarted after a CUDA error without killing the worker.
     -   **Lifecycle:** The main application (`src/infrastructure/tts_client.py`) manages the startup and shutdown of this subprocess.
 
 ## 3. Data Flow
@@ -61,9 +61,8 @@ The system is designed as a **Modular Monolith** with a clear separation between
 
 ## 4. Key Technical Decisions
 
--   **Dual-Python Environments:** The Docker container utilizes two distinct virtual environments:
-    -   `.venv_app` (Python 3.12): Main application, API, Whisper, Pyannote.
-    -   `.venv_tts` (Python 3.10): Dedicated environment for Coqui-TTS to resolve dependency conflicts.
+-   **Single Python Environment:** The Docker image has one Python 3.12 venv (`.venv`) for the app, Whisper, Pyannote,
+    Demucs, llama-cpp and OmniVoice.
 -   **Step Caching:** The pipeline checks `job_steps` in the DB before running a stage. If a result exists, it's skipped. This allows resuming failed jobs without re-processing expensive steps.
 -   **Internal RPC (GPU Services):** Resource-heavy tasks (LLM, TTS) are offloaded to dedicated service threads with priority queues.
     -   **LLM Stability:** Due to thread-safety limitations in `llama-cpp-python` (CUDA), the `LLMService` is restricted to **1 worker thread** to prevent Segmentation Faults.

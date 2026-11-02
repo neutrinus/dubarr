@@ -17,7 +17,6 @@ class TestTTSManager(unittest.TestCase):
             temp_dir=self.temp_dir,
             speaker_refs={"SPK1": "golden.wav"},
             abort_event=MagicMock(),
-            backend="xtts",
         )
         self.manager.engine = MagicMock()
         self.manager.status = "READY"
@@ -29,13 +28,14 @@ class TestTTSManager(unittest.TestCase):
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
-    def test_select_reference_prefers_golden_over_dynamic(self):
+    def test_select_reference_uses_golden_for_long_line(self):
+        # Lines longer than LINE_REF_RANGE are not used as their own reference
         with (
             patch("core.tts_manager.audio_processor.extract_clean_segment") as mock_extract,
             patch("os.path.exists", side_effect=lambda p: p == "golden.wav"),
         ):
             ref, voice_type = self.manager._select_reference(
-                {"speaker": "SPK1", "index": 0, "start": 0, "end": 8}, "vocals.wav"
+                {"speaker": "SPK1", "index": 0, "start": 0, "end": 12}, "vocals.wav"
             )
             self.assertEqual(voice_type, "GOLDEN")
             self.assertEqual(ref, "golden.wav")
@@ -82,8 +82,7 @@ class TestTTSManager(unittest.TestCase):
             self.assertEqual(ref, "golden.wav")
             mock_extract.assert_not_called()
 
-    def test_omnivoice_prefers_clean_line_clip(self):
-        self.manager.backend = "omnivoice"
+    def test_prefers_clean_line_clip(self):
         dyn_path = os.path.join(self.temp_dir, "dyn__0.wav")
         item = {"speaker": "SPK1", "index": 0, "start": 0, "end": 5, "source_text": "Get out of here!"}
         with (
@@ -99,8 +98,7 @@ class TestTTSManager(unittest.TestCase):
         with open(os.path.join(self.temp_dir, "dyn__0.txt"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "Get out of here!")
 
-    def test_omnivoice_uses_golden_for_short_line(self):
-        self.manager.backend = "omnivoice"
+    def test_uses_golden_for_short_line(self):
         with (
             patch("core.tts_manager.audio_processor.extract_clean_segment") as mock_extract,
             patch("os.path.exists", side_effect=lambda p: p == "golden.wav"),

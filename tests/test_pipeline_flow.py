@@ -172,7 +172,7 @@ class TestProductionPool(unittest.TestCase):
         self.pipeline.temp_dir = self.workdir
         self.pipeline.llm_manager.generate_drafts = MagicMock(side_effect=lambda script, *a: [dict(s) for s in script])
         self.pipeline.synchronizer = MagicMock()
-        self.pipeline.synchronizer.process_segment.side_effect = RuntimeError("XTTS Server died during startup.")
+        self.pipeline.synchronizer.process_segment.side_effect = RuntimeError("OmniVoice Server died during startup.")
 
         with patch.object(self.pipeline, "_finalize_all_languages") as finalize:
             with self.assertRaisesRegex(RuntimeError, "pl, de"):

@@ -15,44 +15,26 @@ ENV UV_PYTHON_INSTALL_DIR=/usr/local/uv-python
 
 WORKDIR /build
 
-# 1. Install Python versions and setup Venvs
-RUN uv python install 3.12 3.10 && \
-    uv venv /app/.venv_app --python 3.12 && \
-    uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
+# One Python 3.12 venv for everything: API, Whisper, pyannote, Demucs, llama-cpp and the OmniVoice TTS server
+# (the TTS server still runs as its own process, but on this same interpreter).
+RUN uv python install 3.12 && \
+    uv venv /app/.venv --python 3.12 && \
+    uv pip install --no-cache-dir --python /app/.venv/bin/python3 \
     --index-strategy unsafe-best-match \
-    "numpy==2.2.2" "torch>=2.5.0" "torchvision" "torchaudio" \
+    "numpy==2.2.2" "torch==2.8.0" "torchvision" "torchaudio==2.8.0" \
     "pyannote.audio==4.0.7" "faster-whisper" "av<19" "demucs>=4.1.0" "diffq" \
-    "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
+    "omnivoice==0.2.1" "flask" \
+    "huggingface_hub" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
     "fastapi" "uvicorn[standard]" "websockets" "jinja2" "python-multipart" && \
-    uv pip install --no-cache-dir --python /app/.venv_app/bin/python3 \
-    llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
-
-RUN uv venv /app/.venv_tts --python 3.10 && \
-    uv pip install --no-cache-dir --python /app/.venv_tts/bin/python3 \
-    --index-strategy unsafe-best-match \
-    "numpy>=1.26.0" "torch==2.8.0" "torchaudio==2.8.0" "transformers>=4.57,<5" \
-    "flask" "coqui-tts==0.28.0" && \
+    uv pip install --no-cache-dir --python /app/.venv/bin/python3 \
+    llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 && \
     uv cache clean
-
-# OmniVoice (default TTS backend) needs transformers>=5.3, so it gets its own venv too
-RUN uv venv /app/.venv_omnivoice --python 3.12 && \
-    uv pip install --no-cache-dir --python /app/.venv_omnivoice/bin/python3 \
-    --index-strategy unsafe-best-match \
-    "torch==2.8.0" "torchaudio==2.8.0" "omnivoice==0.2.1" "flask" "soundfile" && \
-    uv cache clean
-
-# Fix the transformers breaking change in XTTS
-RUN if [ -f /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py ]; then \
-    sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(elements, test_elements, *args, **kwargs):\n    return torch.isin(elements, test_elements)/' \
-    /app/.venv_tts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py; \
-    fi
 
 # Stage 2: Final
 FROM nvidia/cuda:13.1.1-devel-ubuntu24.04
 
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
-ENV HF_HUB_ENABLE_HF_TRANSFER=1
 ENV HF_HOME=/app/hf_cache
 
 # Install only runtime dependencies
@@ -64,15 +46,13 @@ WORKDIR /app
 
 # Copy Python installations and built venvs from builder
 COPY --from=builder /usr/local/uv-python /usr/local/uv-python
-COPY --from=builder /app/.venv_app /app/.venv_app
-COPY --from=builder /app/.venv_tts /app/.venv_tts
-COPY --from=builder /app/.venv_omnivoice /app/.venv_omnivoice
+COPY --from=builder /app/.venv /app/.venv
 
 # Copy the project files
 COPY . .
 
 # Environment setup
-ENV PATH="/app/.venv_app/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app:/app/src"
 
 WORKDIR /app/src

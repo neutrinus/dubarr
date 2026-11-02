@@ -145,9 +145,9 @@ async def dashboard(request: Request):
             sys_status = "Engine Error"
 
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "tasks": tasks,
             "worker_alive": True,
             "system_status": sys_status,

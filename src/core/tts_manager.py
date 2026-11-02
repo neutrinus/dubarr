@@ -8,7 +8,7 @@ import subprocess
 from typing import List, Dict, Optional, Any
 from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
 from utils import measure_zcr, count_syllables
-from config import MOCK_MODE, TTS_BACKEND
+from config import MOCK_MODE
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
 
@@ -17,8 +17,6 @@ try:
 except ImportError:
     torch = None
 
-# Zero-shot cloning from shorter clips sounds noticeably off (XTTS wants ~6s of clean speech)
-MIN_DYNAMIC_REF_DUR = 4.0
 # OmniVoice clones well from 3-10 s; a clip of the line itself carries that scene's emotion
 LINE_REF_RANGE = (3.0, 10.0)
 
@@ -31,7 +29,6 @@ class TTSManager:
         speaker_refs: Dict,
         abort_event: threading.Event,
         service: Optional[Any] = None,  # TTSService
-        backend: str = TTS_BACKEND,
     ):
         self.device = "cpu"
         self.inference_lock = inference_lock
@@ -39,7 +36,6 @@ class TTSManager:
         self.speaker_refs = speaker_refs  # Golden samples
         self.abort_event = abort_event
         self.service = service
-        self.backend = backend
         self.last_good_samples = {}
         self.engine = None
         self._engine_lock = threading.Lock()
@@ -62,15 +58,14 @@ class TTSManager:
             self.status = "LOADING"
             try:
                 # Dynamic GPU allocation
-                # XTTS v2 and OmniVoice (fp16) need approx 4GB
-                self.device = GPUManager.get_best_gpu(needed_mb=4000, purpose=self.backend)
+                # OmniVoice (fp16) needs approx 4GB
+                self.device = GPUManager.get_best_gpu(needed_mb=4000, purpose="TTS (OmniVoice)")
 
                 gpu_id = 0
                 if "cuda" in self.device:
                     gpu_id = int(self.device.split(":")[-1])
 
-                logging.info(f"TTS: Using backend '{self.backend}'")
-                self.engine = TTSWrapper(gpu_id=gpu_id, backend=self.backend)
+                self.engine = TTSWrapper(gpu_id=gpu_id)
                 self.status = "READY"
 
             except Exception as e:
@@ -157,31 +152,7 @@ class TTSManager:
                 return None
 
             t0 = time.perf_counter()
-            try:
-                self._run_synthesis(clean_text, chosen_ref, raw_path, language=lang, max_duration=slot_dur)
-            except ValueError as ve:
-                if "XTTS Tensor Error" in str(ve):
-                    logging.warning(f"TTS: [ID: {idx}] Tensor Error with ref {chosen_ref}. Trying global fallback...")
-                    # Try with first available golden ref that is NOT the current one (if possible)
-                    fallback_ref = None
-                    for p in self.speaker_refs.values():
-                        if os.path.exists(p) and p != chosen_ref:
-                            fallback_ref = p
-                            break
-
-                    if not fallback_ref:
-                        for p in self.last_good_samples.values():
-                            if os.path.exists(p) and p != chosen_ref:
-                                fallback_ref = p
-                                break
-
-                    if fallback_ref:
-                        self._run_synthesis(clean_text, fallback_ref, raw_path, language=lang, max_duration=slot_dur)
-                        voice_type = "TENSOR_FALLBACK"
-                    else:
-                        raise ve  # Re-raise if no other fallback
-                else:
-                    raise ve
+            self._run_synthesis(clean_text, chosen_ref, raw_path, language=lang, max_duration=slot_dur)
 
             dt = time.perf_counter() - t0
 
@@ -213,10 +184,9 @@ class TTSManager:
     def _select_reference(self, item: Dict, vocals_path: str, lang: str = ""):
         """Implements the Voice Migration Strategy hierarchy.
 
-        With XTTS the golden reference (a long, clean, scored sample of the speaker) comes first:
-        it needs several seconds of clean speech, and a single reference keeps the voice consistent.
-        OmniVoice clones well from 3-10 s, so a clean clip of the line itself is tried first there:
-        it carries the emotion of the scene. Short lines always use the golden reference.
+        OmniVoice clones well from 3-10 s, so a clean clip of the line itself is tried first:
+        it carries the emotion of the scene. Shorter and longer lines use the golden reference
+        (a long, clean, scored sample of the speaker).
         """
         spk = item["speaker"]
         idx = item["index"]
@@ -224,10 +194,7 @@ class TTSManager:
         golden_ref = self.speaker_refs.get(spk)
         has_golden = bool(golden_ref and os.path.exists(golden_ref))
 
-        if self.backend == "omnivoice":
-            use_line = LINE_REF_RANGE[0] <= dur <= LINE_REF_RANGE[1]
-        else:
-            use_line = not has_golden and dur >= MIN_DYNAMIC_REF_DUR
+        use_line = LINE_REF_RANGE[0] <= dur <= LINE_REF_RANGE[1]
 
         # 1. Dynamic extraction from the line itself
         if use_line:

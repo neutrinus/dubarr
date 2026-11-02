@@ -91,7 +91,7 @@ class LLMService(GPUService):
 
 
 class TTSService(GPUService):
-    """Dedicated service for TTS synthesis. Sequential preferred for XTTS stability."""
+    """Dedicated service for TTS synthesis. Sequential: one model instance on one GPU."""
 
     def __init__(self):
         super().__init__("TTS", num_workers=1)

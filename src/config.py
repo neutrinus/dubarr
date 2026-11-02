@@ -40,13 +40,13 @@ print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 
-# XTTS server: interpreter of the dedicated Python 3.10 venv and per-request timeout (CPU synthesis is slow)
-TTS_PYTHON = os.environ.get("TTS_PYTHON", "/app/.venv_tts/bin/python3")
+# Seconds per TTS request (raise it on CPU, synthesis is slow there)
 TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))
 
-# Speech synthesis backend: "omnivoice" (default) or "xtts", and the interpreter of the OmniVoice venv
-TTS_BACKEND = os.environ.get("TTS_BACKEND", "omnivoice").lower()
-OMNIVOICE_PYTHON = os.environ.get("OMNIVOICE_PYTHON", "/app/.venv_omnivoice/bin/python3")
+# Speech synthesis is OmniVoice. Its server runs as a separate process, on the app's own interpreter by default.
+if os.environ.get("TTS_BACKEND", "omnivoice").lower() != "omnivoice":
+    print("WARNING: TTS_BACKEND is no longer used, XTTS was removed; OmniVoice is the only TTS backend.", flush=True)
+OMNIVOICE_PYTHON = os.environ.get("OMNIVOICE_PYTHON", sys.executable)
 
 # Media metadata (show/episode or movie, synopsis, cast) as context for the translator.
 # "on": .nfo files next to the video, then TVmaze (episodes, no account) / TMDB (movies, needs TMDB_API_KEY);

@@ -27,7 +27,6 @@ services:
       - PGID=${PGID:-1000}
       - HF_TOKEN=${HF_TOKEN}
       - TARGET_LANGS=${TARGET_LANGS:-pl}
-      - TTS_BACKEND=${TTS_BACKEND:-omnivoice}
       # Use an existing llama.cpp server instead of loading an LLM here, e.g. http://llama:8080/v1
       - LLM_API_URL=${LLM_API_URL:-}
       # Show/movie context for the translator: "on" (.nfo + TVmaze/TMDB), "local" (.nfo only) or "off"
