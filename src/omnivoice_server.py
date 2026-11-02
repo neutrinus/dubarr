@@ -19,6 +19,7 @@ PAD_DURATION = 0.1
 MAX_SPEEDUP = 1.25
 PROMPT_CACHE_SIZE = 64
 _prompt_cache = OrderedDict()
+_logged_peak_mb = 0
 
 
 def load_model():
@@ -30,6 +31,8 @@ def load_model():
     logging.info(f"OmniVoice: Loading model on {device}...")
     model = OmniVoice.from_pretrained("k2-fsa/OmniVoice", device_map=device, dtype=dtype)
     logging.info("OmniVoice: Model loaded.")
+    if torch.cuda.is_available():
+        log_peak_vram()
 
 
 def get_voice_prompt(ref_audio, ref_text):
@@ -89,7 +92,17 @@ def synthesize():
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         if torch.cuda.is_available():
+            log_peak_vram()
             torch.cuda.empty_cache()
+
+
+def log_peak_vram():
+    """Logs each new VRAM high-water mark, so TTS_VRAM_MB can be set from a real number."""
+    global _logged_peak_mb
+    peak_mb = torch.cuda.max_memory_reserved(f"cuda:{gpu_id}") // (1024 * 1024)
+    if peak_mb > _logged_peak_mb + 100:
+        _logged_peak_mb = peak_mb
+        logging.info(f"OmniVoice: peak VRAM so far {peak_mb} MB")
 
 
 @app.route("/health", methods=["GET"])
