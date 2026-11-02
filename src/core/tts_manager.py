@@ -8,7 +8,7 @@ import subprocess
 from typing import List, Dict, Optional, Any
 from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
 from utils import measure_zcr, count_syllables
-from config import MOCK_MODE, TTS_BACKEND
+from config import MOCK_MODE, TTS_BACKEND, TTS_VRAM_MB
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
 
@@ -62,8 +62,8 @@ class TTSManager:
             self.status = "LOADING"
             try:
                 # Dynamic GPU allocation
-                # XTTS v2 and OmniVoice (fp16) need approx 4GB
-                self.device = GPUManager.get_best_gpu(needed_mb=4000, purpose=self.backend)
+                # XTTS v2 and OmniVoice (fp16) need approx 4GB by default (TTS_VRAM_MB)
+                self.device = GPUManager.get_best_gpu(needed_mb=TTS_VRAM_MB, purpose=self.backend)
 
                 gpu_id = 0
                 if "cuda" in self.device:

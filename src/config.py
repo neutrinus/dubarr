@@ -47,6 +47,8 @@ TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))
 # Speech synthesis backend: "omnivoice" (default) or "xtts", and the interpreter of the OmniVoice venv
 TTS_BACKEND = os.environ.get("TTS_BACKEND", "omnivoice").lower()
 OMNIVOICE_PYTHON = os.environ.get("OMNIVOICE_PYTHON", "/app/.venv_omnivoice/bin/python3")
+# Free VRAM (MB) the TTS server waits for before it loads; lower it when the GPU is shared with other models
+TTS_VRAM_MB = int(os.environ.get("TTS_VRAM_MB", "4000"))
 
 # Dubbed speech may run into the silence after a segment (never the silence before it).
 # Cap on how much trailing silence a segment may borrow, and the gap kept before the next speech.

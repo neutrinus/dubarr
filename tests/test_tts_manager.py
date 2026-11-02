@@ -29,6 +29,17 @@ class TestTTSManager(unittest.TestCase):
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir)
 
+    def test_load_engine_waits_for_configured_vram(self):
+        self.manager.status = "IDLE"
+        with (
+            patch("core.tts_manager.TTS_VRAM_MB", 2500),
+            patch("core.tts_manager.GPUManager.get_best_gpu", return_value="cuda:1") as best_gpu,
+            patch("core.tts_manager.TTSWrapper") as wrapper,
+        ):
+            self.manager.load_engine()
+        best_gpu.assert_called_once_with(needed_mb=2500, purpose="xtts")
+        wrapper.assert_called_once_with(gpu_id=1, backend="xtts")
+
     def test_select_reference_prefers_golden_over_dynamic(self):
         with (
             patch("core.tts_manager.audio_processor.extract_clean_segment") as mock_extract,

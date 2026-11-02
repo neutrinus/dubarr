@@ -59,6 +59,7 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `LLM_API_MODEL` / `LLM_API_KEY` | Model name and key sent to that server (llama-server ignores both). | - |
 | `LLM_TIMEOUT` | Seconds per request to the LLM server. | `600` |
 | `LLM_N_CTX` | Context size of the in-process model. | `8192` |
+| `TTS_VRAM_MB` | Free VRAM (MB) the TTS server waits for before it loads. Lower it when the GPU is shared, e.g. with a llama.cpp server. | `4000` |
 
 ### 2.3 GPU Resource Management
 The system includes an **Intelligent GPU Manager** that orchestrates VRAM usage using a **Lazy Loading** and **Memory Rotation** strategy.

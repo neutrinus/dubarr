@@ -118,6 +118,7 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
 | `TTS_BACKEND` | `omnivoice` | Speech synthesis backend: `omnivoice` or `xtts`. |
 | `TTS_PYTHON` / `OMNIVOICE_PYTHON` | `/app/.venv_tts/...`, `/app/.venv_omnivoice/...` | Interpreters for the TTS servers. |
 | `TTS_TIMEOUT` | `60` | Seconds per XTTS request (raise it on CPU). |
+| `TTS_VRAM_MB` | `4000` | Free VRAM the TTS server waits for before loading; lower it on a GPU shared with an LLM server. |
 
 ## Conventions
 
