@@ -66,9 +66,11 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `METADATA_TIMEOUT` | Seconds per metadata request. | `10` |
 | `LLM_N_CTX` | Context size of the in-process model. | `8192` |
 | `LLM_MAX_TOKENS` | Completion budget for the bulk calls (analysis, ASR editor, draft translations). An answer cut off by that limit is retried once with double the budget. | `4096` |
-| `SERIES_CONTEXT` | Series/episode hint for the analysis and translation prompts. Overrides the value parsed from the file name. | parsed from the file name |
 | `TTS_DEVICE` | `auto` = GPU with the most free VRAM, `cpu` = synthesize on the CPU and keep the GPUs free for other services. | `auto` |
 | `TTS_CPU_THREADS` | Threads for CPU synthesis. | all cores |
+| `TTS_MAX_CHUNK_SECONDS` | Lines longer than this are synthesized in chunks, breaking at sentence ends first, then at commas/semicolons. Keeps the dub in sync with the original pauses and caps the VRAM peak. | `10` |
+| `TTS_REF_TEXT` | Send the reference clip transcript to OmniVoice. `off` keeps the source language's phonetics from leaking into the target text. | `off` |
+| `MERGE_MAX_GAP` / `MERGE_MAX_DURATION` | Same-speaker Whisper lines are merged only across this pause and up to this length. | `0.3` / `10` |
 
 ### 2.3 GPU Resource Management
 The system includes an **Intelligent GPU Manager** that orchestrates VRAM usage using a **Lazy Loading** and **Memory Rotation** strategy.
