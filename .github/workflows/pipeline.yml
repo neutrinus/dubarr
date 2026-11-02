@@ -106,6 +106,18 @@ jobs:
     needs: [qa] # Changed from build to qa to allow testing on PRs
     runs-on: ubuntu-latest
     steps:
+      # The image (CUDA base + three venvs) no longer fits on a stock runner disk
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
       - uses: actions/checkout@v7
       - name: Build local image for testing
         run: |
