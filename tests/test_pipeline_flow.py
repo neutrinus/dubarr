@@ -179,6 +179,21 @@ class TestProductionPool(unittest.TestCase):
                 self.pipeline._execute_production_pool(self.script, "vocals.wav", self.workdir, "orig.wav", None)
         finalize.assert_not_called()
 
+    def test_fails_instead_of_muxing_a_mostly_silent_track(self):
+        self.pipeline.temp_dir = self.workdir
+        self.pipeline.llm_manager.generate_drafts = MagicMock(side_effect=lambda script, *a: [dict(s) for s in script])
+        self.pipeline.synchronizer = MagicMock()
+        self.pipeline.synchronizer.process_segment.side_effect = lambda seg, *a: {
+            "audio_path": f"silent_{seg['index']}.wav",
+            "duration": 1.0,
+            "status": "FAILED_FALLBACK" if seg["index"] != 0 else "ACCEPTED",
+        }
+
+        with patch.object(self.pipeline, "_finalize_all_languages") as finalize:
+            with self.assertRaisesRegex(RuntimeError, "Too many segment synthesis failures: pl"):
+                self.pipeline._execute_production_pool(self.script, "vocals.wav", self.workdir, "orig.wav", None)
+        finalize.assert_not_called()
+
     def test_languages_do_not_share_segment_files(self):
         sync = SegmentSynchronizer(MagicMock(), MagicMock(), self.workdir)
         segment = {"index": 0, "text_en": "Hello", "start": 0, "end": 5, "speaker": "A"}

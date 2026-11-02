@@ -4,7 +4,15 @@ import wave
 import struct
 import pytest
 import subprocess
-from utils import parse_json, clean_srt, count_syllables, clean_output, run_cmd, measure_zcr
+from utils import (
+    clean_output,
+    clean_srt,
+    count_syllables,
+    measure_zcr,
+    parse_json,
+    parse_show_context,
+    run_cmd,
+)
 
 
 def test_parse_json_valid():
@@ -114,3 +122,32 @@ def test_measure_zcr_empty():
 
 def test_measure_zcr_invalid_file():
     assert measure_zcr("non_existent.wav") == 0.0
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        (
+            "BattleBots (2015) - S01E01 - The Battle Begins - Qualifiers (1) HDTV-720p.mp4",
+            'BattleBots (2015), season 1, episode 1, "The Battle Begins - Qualifiers (1)"',
+        ),
+        (
+            "BattleBots (2015) - S03E03 - Everyone Wants to be the Hotshot HDTV-1080p.mkv",
+            'BattleBots (2015), season 3, episode 3, "Everyone Wants to be the Hotshot"',
+        ),
+        ("Show.Name.S01E02.1080p.WEB-DL.x264-GROUP.mkv", "Show Name, season 1, episode 2"),
+        ("Silo - S02E05.mkv", "Silo, season 2, episode 5"),
+        (
+            "Star Trek - Strange New Worlds - S03E01 - Hegemony.mkv",
+            'Star Trek - Strange New Worlds, season 3, episode 1, "Hegemony"',
+        ),
+        (
+            "/media/tv/BattleBots (2015)/Season 1/S01E01 The Battle Begins.mkv",
+            'BattleBots (2015), season 1, episode 1, "The Battle Begins"',
+        ),
+        ("nasa.mkv", ""),
+        ("dummy.mp4", ""),
+    ],
+)
+def test_parse_show_context(name, expected):
+    assert parse_show_context(name) == expected

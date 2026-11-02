@@ -64,3 +64,25 @@ Once a functionality or bug fix is implemented and successfully verified through
     -   Follow the existing commit message style (e.g., `feat:`, `fix:`, `docs:`, `ux:`, `style:`).
 2.  **Push Changes:** Push the committed changes to the remote repository (`main` or the current feature branch) to ensure the codebase remains up to date.
 3.  **Final Status:** Confirm that the push was successful and that the CI/CD pipeline (if applicable) is triggered.
+
+
+
+  > TECHNICAL SPECIFICATION: Glowonog AI Compute Node
+  >
+  > You can offload heavy compute tasks to the glowonog machine (IP: 10.252.1.122) using OpenAI-compatible APIs.
+  >
+  > 1. LLM (Text Analysis / Translation)
+  >    Service:* llama.cpp server
+  >    Endpoint:* http://10.252.1.122:8080/v1
+  >    Model Name:* gemma-4
+  >    Auth:* sk-not-needed (any API key will work)
+  >    Capabilities:* Full Gemma 4 26B A4B MoE. Supports system prompts, multi-turn chat, and JSON mode.
+  >
+  > 2. STT (Transcription / Audio-to-Text)
+  >    Service:* faster-whisper-server (OpenAI protocol)
+  >    Endpoint:* http://10.252.1.122:8000/v1
+  >    Model Name:* small (optimized for speed/accuracy)
+  >    Auth:* sk-not-needed
+  >    Note:* Use the standard OpenAI STT payload for transcription tasks.
+  >
+

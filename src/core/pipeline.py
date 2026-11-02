@@ -7,12 +7,21 @@ import shutil
 import subprocess
 from typing import List, Optional
 
-from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_GUARD
+from config import (
+    LANG_MAP,
+    VIDEO_FOLDER,
+    TEMP_DIR,
+    SLACK_AFTER_MAX,
+    SLACK_GUARD,
+    SERIES_CONTEXT,
+    MERGE_MAX_GAP,
+    MERGE_MAX_DURATION,
+)
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
 from infrastructure.monitor import ResourceMonitor
 from core.audio import prep_audio, analyze_audio, mix_audio
-from utils import clean_srt, measure_zcr, run_cmd
+from utils import clean_srt, measure_zcr, parse_show_context, run_cmd
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
 from core.gpu_services import LLMService, TTSService
@@ -48,6 +57,7 @@ class DubbingPipeline:
         self.speaker_info = {}
         self.speaker_refs = {}
         self.global_context = {}
+        self.show_context = ""
         self.available_pans = [-0.10, 0.10, -0.03, 0.03, -0.17, 0.17]
         self.speaker_pans = {}
         self.abort_event = llm_manager.abort_event
@@ -89,7 +99,13 @@ class DubbingPipeline:
         for i in range(1, len(raw_script)):
             nxt = raw_script[i]
             gap = nxt["start"] - curr["end"]
-            if nxt["speaker"] == curr["speaker"] and 0 <= gap < 1.0 and len(curr["text"]) + len(nxt["text"]) < 400:
+            merged_duration = nxt["end"] - curr["start"]
+            if (
+                nxt["speaker"] == curr["speaker"]
+                and 0 <= gap < MERGE_MAX_GAP
+                and merged_duration <= MERGE_MAX_DURATION
+                and len(curr["text"]) + len(nxt["text"]) < 400
+            ):
                 curr["text"] = curr["text"].strip() + " " + nxt["text"].strip()
                 curr["end"] = nxt["end"]
                 if "avg_logprob" in curr and "avg_logprob" in nxt:
@@ -342,6 +358,10 @@ class DubbingPipeline:
             vpath = os.path.join(VIDEO_FOLDER, vpath)
 
         logger.info(f"=== PROCESSING FILE: {vpath} (Task: {task_id}) ===")
+        # The series/episode from the file name tells the LLM what it is translating
+        self.show_context = SERIES_CONTEXT or parse_show_context(vpath)
+        if self.show_context:
+            logger.info(f"Production context: {self.show_context}")
 
         # 0. Early check for existing languages
         existing_langs = audio_processor.get_audio_languages(vpath)
@@ -401,7 +421,7 @@ class DubbingPipeline:
         ref_subs = self._extract_subtitles(vpath)
 
         analysis_results = self._run_step(
-            "Stage 3: Global Analysis", self.llm_manager.analyze_script, task_id, script, ddir, ref_subs
+            "Stage 3: Global Analysis", self.llm_manager.analyze_script, task_id, script, ddir, ref_subs, self.show_context
         )
         self.global_context = analysis_results["context"]
         self.speaker_info = analysis_results["speakers"]
@@ -494,7 +514,9 @@ class DubbingPipeline:
         for lang in self.target_langs:
             logger.info(f"--- PREPARING DRAFTS FOR LANGUAGE: {lang} ---")
             t_start_draft = time.perf_counter()
-            draft_segments = self.llm_manager.generate_drafts(script, lang, self.speaker_info, self.global_context)
+            draft_segments = self.llm_manager.generate_drafts(
+                script, lang, self.speaker_info, self.global_context, self.show_context
+            )
             self.durations[f"Stage 5a: Draft Translation ({lang})"] = time.perf_counter() - t_start_draft
             all_drafts_by_lang[lang] = draft_segments
 
@@ -522,6 +544,17 @@ class DubbingPipeline:
         silent_langs = [lang for lang, drafts in all_drafts_by_lang.items() if drafts and not sync_results_by_lang[lang]]
         if silent_langs:
             raise RuntimeError(f"No segment could be synthesized for: {', '.join(silent_langs)}")
+
+        # A track where most lines are silent (typically VRAM exhaustion during synthesis) is worse than no
+        # track: fail the task and keep the checkpoint, instead of muxing a broken dub over the original.
+        mostly_silent = []
+        for lang in self.target_langs:
+            results = sync_results_by_lang[lang]
+            failed = sum(1 for r in results if r.get("status") == "FAILED_FALLBACK")
+            if results and failed * 2 > len(results):
+                mostly_silent.append(f"{lang} ({failed}/{len(results)} lines)")
+        if mostly_silent:
+            raise RuntimeError(f"Too many segment synthesis failures: {', '.join(mostly_silent)}")
 
         # 4. Mastering & Mixing (Per Language)
         all_audio_tracks = self._finalize_all_languages(sync_results_by_lang, a_stereo, t_start_sync_all)

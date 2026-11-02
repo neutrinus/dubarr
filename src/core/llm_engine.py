@@ -7,7 +7,17 @@ import gc
 from typing import List, Dict, Optional, Any
 from utils import parse_json, clean_output
 from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_REFINE_DURATION
-from config import LANG_MAP, MOCK_MODE, LLM_MODEL_REPO, LLM_API_URL, LLM_API_MODEL, LLM_API_KEY, LLM_TIMEOUT, LLM_N_CTX
+from config import (
+    LANG_MAP,
+    MOCK_MODE,
+    LLM_MODEL_REPO,
+    LLM_API_URL,
+    LLM_API_MODEL,
+    LLM_API_KEY,
+    LLM_TIMEOUT,
+    LLM_N_CTX,
+    LLM_MAX_TOKENS,
+)
 from core.gpu_manager import GPUManager
 from infrastructure.llm_client import OpenAICompatibleClient
 
@@ -183,13 +193,31 @@ class LLMManager:
     def _chat(self, messages, **kwargs):
         # The model's own chat template is applied (by llama.cpp here or by the server); JSON output is enforced
         kwargs.setdefault("response_format", {"type": "json_object"})
-        if self.client:
-            res = self.client.chat(messages, **kwargs)
-        elif self.llm:
-            res = self.llm.create_chat_completion(messages=messages, **kwargs)
-        else:
-            raise RuntimeError("LLM failed to load!")
-        return {"choices": [{"text": res["choices"][0]["message"]["content"] or ""}], "usage": res.get("usage") or {}}
+        retry_budget = None
+        for attempt in (1, 2):
+            if self.client:
+                res = self.client.chat(messages, **kwargs)
+            elif self.llm:
+                res = self.llm.create_chat_completion(messages=messages, **kwargs)
+            else:
+                raise RuntimeError("LLM failed to load!")
+
+            choice = res["choices"][0]
+            text = choice["message"]["content"] or ""
+            if choice.get("finish_reason") != "length" or attempt == 2:
+                break
+
+            # A truncated answer (a reasoning model can spend the whole budget on reasoning) is retried
+            # once with a bigger budget instead of silently coming back empty.
+            budget = kwargs.get("max_tokens") or LLM_MAX_TOKENS
+            retry_budget = max(budget, retry_budget or 0) * 2
+            logging.warning(f"LLM: answer truncated at {budget} tokens, retrying with {retry_budget}.")
+            kwargs["max_tokens"] = retry_budget
+
+        return {
+            "choices": [{"text": text, "finish_reason": choice.get("finish_reason")}],
+            "usage": res.get("usage") or {},
+        }
 
     @staticmethod
     def _mock_response(prompt):
@@ -222,7 +250,7 @@ class LLMManager:
             }
         return {"choices": [{"text": "{}"}]}
 
-    def analyze_script(self, script: List[Dict], ddir: str, subtitles: str = "") -> Dict:
+    def analyze_script(self, script: List[Dict], ddir: str, subtitles: str = "", show_context: str = "") -> Dict:
         """Phase 1: Global Analysis & Phase 2: Speaker Profiling & Phase 3: ASR Correction."""
         self.load_model()
 
@@ -243,11 +271,18 @@ class LLMManager:
         # Global Analysis is Priority 2
         res = self._run_inference(
             [
-                {"role": "system", "content": T_ANALYSIS.format(langs=", ".join(lang_names), subtitles=subtitles)},
+                {
+                    "role": "system",
+                    "content": T_ANALYSIS.format(
+                        langs=", ".join(lang_names),
+                        subtitles=subtitles,
+                        show_context=show_context or "unknown (infer it from the transcript)",
+                    ),
+                },
                 {"role": "user", "content": ov},
             ],
             priority=2,
-            max_tokens=2000,
+            max_tokens=LLM_MAX_TOKENS,
         )
         self._update_stats(res, time.perf_counter() - t0)
 
@@ -270,7 +305,7 @@ class LLMManager:
                     {"role": "user", "content": txt},
                 ],
                 priority=2,
-                max_tokens=2000,
+                max_tokens=LLM_MAX_TOKENS,
                 temperature=0.0,
             )
             self._update_stats(res, time.perf_counter() - t0)
@@ -303,6 +338,7 @@ class LLMManager:
         lang: str,
         speaker_info: Dict,
         global_context: Dict,
+        show_context: str = "",
     ) -> List[Dict]:
         """Generates initial draft translations for the entire script (batched)."""
         drafts = []
@@ -335,7 +371,11 @@ class LLMManager:
             trans_messages = [
                 {
                     "role": "system",
-                    "content": T_TRANS_SYSTEM.format(lang_name=lang_name, glossary=json.dumps(glossary, ensure_ascii=False)),
+                    "content": T_TRANS_SYSTEM.format(
+                        lang_name=lang_name,
+                        glossary=json.dumps(glossary, ensure_ascii=False),
+                        show_context=show_context or "unknown production",
+                    ),
                 },
                 {"role": "user", "content": json.dumps(json_batch, indent=2, ensure_ascii=False)},
             ]
@@ -343,7 +383,7 @@ class LLMManager:
             t0 = time.perf_counter()
             try:
                 # Draft generation is Priority 2
-                res = self._run_inference(trans_messages, priority=2, max_tokens=2000, temperature=0.1)
+                res = self._run_inference(trans_messages, priority=2, max_tokens=LLM_MAX_TOKENS, temperature=0.1)
                 self._update_stats(res, time.perf_counter() - t0)
 
                 parsed_trans = parse_json(res["choices"][0]["text"])

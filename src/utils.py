@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import wave
 import struct
@@ -23,6 +24,51 @@ def parse_json(txt: str) -> dict:
     except Exception as e:
         logging.warning(f"Failed to parse JSON: {e}")
     return {}
+
+
+# Release tags that follow the episode title in typical *arr file names
+_RELEASE_JUNK = re.compile(
+    r"\b(?:480p|576p|720p|1080p|2160p|4k|uhd|hdtv|web[- ]?dl|webrip|bluray|bdrip|dvdrip|remux|"
+    r"x264|x265|h ?264|h ?265|hevc|avc|xvid|divx|aac|ac3|dts|ddp?5[.\s]?1|truehd|atmos|"
+    r"proper|repack|real|internal|multi|dual)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def parse_show_context(path: str) -> str:
+    """Best-effort series/episode context from a media file name, e.g. for the translation prompts.
+
+    Handles the usual *arr layouts ("Show (2015) - S01E02 - Title HDTV-720p.mkv") and dotted names
+    ("Show.Name.S01E02.1080p.mkv"). Returns an empty string when the name carries no episode info.
+    """
+    stem = os.path.splitext(os.path.basename(path))[0]
+    match = re.search(
+        r"^(?:(?P<show>.+?)[\s._-]+)?s(?P<season>\d{1,2})e(?P<episode>\d{1,3})(?:[\s._-]+(?P<title>.*))?$",
+        stem,
+        re.I,
+    )
+    if not match:
+        return ""
+
+    show = re.sub(r"[._]+", " ", match.group("show") or "").strip(" -")
+    if not show:
+        # "S01E01 Title.mkv" inside ".../Show (2015)/Season 1/": the series name is in the folder
+        for parent in reversed(os.path.dirname(os.path.abspath(path)).split(os.sep)):
+            if not parent or re.fullmatch(r"(?:season|series|s)\s*\d+|specials?", parent, re.I):
+                continue
+            show = parent.strip()
+            break
+
+    episode = int(match.group("episode"))
+    parts = [show] if show else []
+    parts.append(f"season {int(match.group('season'))}, episode {episode}")
+
+    title = re.sub(r"[._]+", " ", match.group("title") or "").strip(" -")
+    title = _RELEASE_JUNK.sub("", title).strip(" -")
+    if title:
+        parts.append(f'"{title}"')
+
+    return ", ".join(parts)
 
 
 def clean_srt(text: str) -> str:

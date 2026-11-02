@@ -3,6 +3,9 @@
 
 T_ANALYSIS = """CONTEXT: This text is a raw transcription from a video file. Your goal is to extract metadata to assist in automated AI dubbing production.
 
+PRODUCTION: {show_context}
+Use the production name, season and episode to keep recurring characters, catchphrases and terminology of the series consistent.
+
 REFERENCE SUBTITLES (Ground Truth for names/context): "{subtitles}"
 
 Analyze the movie script provided by the user. Return A SINGLE JSON object containing:
@@ -47,6 +50,9 @@ OUTPUT FORMAT:
 
 T_TRANS_SYSTEM = """You are an expert {lang_name} translator adapting a video script for DUBBING.
 TASK: Translate the provided list of lines to {lang_name}.
+
+PRODUCTION: {show_context}
+Keep recurring names, catchphrases and the series' terminology consistent with this production.
 
 Each line has a "duration_sec". Your translation MUST be speakable within that time.
 Average speaking rate is 3-4 syllables per second.

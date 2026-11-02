@@ -44,6 +44,15 @@ The system automatically detects your hardware and chooses the best processing s
 | **Single GPU** | < 18GB (e.g. 3060 12GB) | **SEQUENTIAL** | Uses an **Inference Lock** to swap between models, preventing Out-Of-Memory errors. |
 | **CPU Only** | N/A (32GB RAM rec.) | **SEQUENTIAL** | Models run on CPU using 8-bit quantization. Significantly slower (10-20x). |
 
+> [!TIP]
+> Sharing a card with another service (a household `llama-server`, Jellyfin transcoding, ...)? Keep about
+> **5 GB free** for OmniVoice (≈2 GB for XTTS v2). Dubarr puts the TTS server on the card with the most free
+> VRAM, so if the LLM hogs the small card, give it a smaller share of that card (e.g. llama.cpp
+> `--tensor-split 27,3` plus a few more `--n-cpu-moe` layers) instead of shrinking the context.
+>
+> With no headroom at all, set `TTS_DEVICE=cpu`: dubbing then runs on the CPU, the GPUs stay with the LLM,
+> and synthesis takes roughly 10-30x longer than on a GPU.
+
 ---
 
 ## ⚡ Performance & Speed
@@ -72,8 +81,9 @@ services:
     ports:
       - 8000:8000
     environment:
-      - PUID=1000
+      - PUID=1000        # container runs as this UID/GID, never as root
       - PGID=1000
+      # - FIX_MEDIA_PERMISSIONS=1  # recursively chown the media library (slow; only if it is not readable)
       - HF_TOKEN=your_token_here
       - TARGET_LANGS=pl
       - TTS_BACKEND=omnivoice # Optional: speech synthesis backend, "omnivoice" (default) or "xtts"

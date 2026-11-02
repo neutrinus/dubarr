@@ -132,6 +132,10 @@ def main():
         dubber.diar_manager.diarize = lambda _path: [{"start": 0.0, "end": src_duration, "speaker": "SPEAKER_00"}]
         dubber.diar_manager.shutdown = lambda: None
 
+    # The pipeline appends to processing.log, so only the part written by this run is inspected below
+    log_path = os.path.join(os.environ["DATA_DIR"], "logs", "processing.log")
+    log_offset = os.path.getsize(log_path) if os.path.exists(log_path) else 0
+
     t0 = time.perf_counter()
     dubber.process_video(clip)
     elapsed = time.perf_counter() - t0
@@ -171,9 +175,10 @@ def main():
     if abs(out_duration - src_duration) > 1.5:
         errors.append(f"output duration {out_duration:.1f}s differs from source {src_duration:.1f}s")
 
-    log_path = os.path.join(os.environ["DATA_DIR"], "logs", "processing.log")
     if os.path.exists(log_path):
-        log = open(log_path, encoding="utf-8", errors="replace").read()
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            f.seek(log_offset)
+            log = f.read()
         for label, pattern in [
             ("segments accepted", r"\] ACCEPTED"),
             ("segments in fallback", r"_FALLBACK: Selection"),

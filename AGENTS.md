@@ -115,8 +115,12 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
 | `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |
 | `LLM_API_MODEL` / `LLM_API_KEY` / `LLM_TIMEOUT` | none / none / `600` | Model name, key and per-request timeout for that server. |
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |
+| `LLM_MAX_TOKENS` | `4096` | Completion budget for the bulk calls (analysis, editor, drafts); a truncated answer is retried once with double the budget. |
+| `SERIES_CONTEXT` | none | Overrides the series/episode hint parsed from the file name (e.g. `BattleBots (2015), season 1, episode 1`), sent to the analysis and translation prompts. |
 | `TTS_BACKEND` | `omnivoice` | Speech synthesis backend: `omnivoice` or `xtts`. |
 | `TTS_PYTHON` / `OMNIVOICE_PYTHON` | `/app/.venv_tts/...`, `/app/.venv_omnivoice/...` | Interpreters for the TTS servers. |
+| `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
+| `TTS_CPU_THREADS` | all cores | Threads used when synthesis runs on the CPU. |
 | `TTS_TIMEOUT` | `60` | Seconds per XTTS request (raise it on CPU). |
 
 ## Conventions
@@ -150,6 +154,9 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
   cached result can point at a file that was since overwritten by another task.
 - Prompts in `prompts.py` are system prompts sent as chat messages with `response_format=json_object`; the model's chat
   template (applied by llama-cpp-python or the server) adds the special tokens. Don't put ChatML tokens in them.
+- Both TTS servers set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before importing torch. They usually
+  run next to another GPU process (a shared `llama-server`), where the default allocator dies on 20 MB
+  allocations even with memory free.
 - The XTTS server is restarted automatically on most HTTP 500s; "size of tensor ... must match" errors are treated as
   input errors and retried with a different reference instead.
 - The Dockerfile patches Coqui's `autoregressive.py` with `sed` for a transformers incompatibility. If you bump Coqui

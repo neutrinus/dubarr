@@ -22,18 +22,36 @@ class TestDubbingPipeline(unittest.TestCase):
         )
 
     def test_create_script(self):
-        # Scenario: Two segments from same speaker close to each other should be merged
-        diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 2.0}, {"speaker": "SPEAKER_01", "start": 2.5, "end": 4.0}]
-        trans = [{"start": 0.5, "end": 1.5, "text": "Hello"}, {"start": 2.0, "end": 3.5, "text": "World"}]
+        # Two practically continuous lines of the same speaker are merged
+        diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 4.0}]
+        trans = [{"start": 0.5, "end": 1.5, "text": "Hello"}, {"start": 1.6, "end": 3.5, "text": "World"}]
 
         script = self.pipeline._create_script(diar, trans)
 
-        # Merged result: gap is 2.0 - 1.5 = 0.5 < 1.0
+        # Merged result: the pause is only 0.1 s
         self.assertEqual(len(script), 1)
         self.assertEqual(script[0]["text_en"], "Hello World")
         self.assertEqual(script[0]["speaker"], "SPEAKER_01")
         self.assertEqual(script[0]["start"], 0.5)
         self.assertEqual(script[0]["end"], 3.5)
+
+    def test_create_script_does_not_merge_across_a_pause(self):
+        # A 0.5 s pause stays split: speaking over it drifts out of sync with the original
+        diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 4.0}]
+        trans = [{"start": 0.5, "end": 1.5, "text": "Hello"}, {"start": 2.0, "end": 3.5, "text": "World"}]
+
+        script = self.pipeline._create_script(diar, trans)
+
+        self.assertEqual([s["text_en"] for s in script], ["Hello", "World"])
+
+    def test_create_script_does_not_merge_beyond_the_duration_cap(self):
+        # Back-to-back lines are still left separate when the block would get too long to stay in sync
+        diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 16.0}]
+        trans = [{"start": 0.0, "end": 9.0, "text": "First long part"}, {"start": 9.1, "end": 15.0, "text": "Second part"}]
+
+        script = self.pipeline._create_script(diar, trans)
+
+        self.assertEqual(len(script), 2)
 
     def test_create_script_different_speakers(self):
         diar = [{"speaker": "A", "start": 0.0, "end": 2.0}, {"speaker": "B", "start": 2.0, "end": 4.0}]

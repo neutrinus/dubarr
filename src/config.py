@@ -31,6 +31,11 @@ LLM_API_MODEL = os.environ.get("LLM_API_MODEL", "")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "600"))
 LLM_N_CTX = int(os.environ.get("LLM_N_CTX", "8192"))
+# Per-request completion budget for the bulk calls (analysis, ASR editor, drafts). A truncated answer
+# triggers one retry with double the budget, so a reasoning model cannot silently swallow the whole reply.
+LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "4096"))
+# Optional hint about the production, overriding the series/episode parsed from the file name.
+SERIES_CONTEXT = os.environ.get("SERIES_CONTEXT", "")
 
 print(f"DEBUG: config.BASE_DIR={BASE_DIR}", flush=True)
 print(f"DEBUG: config.DATA_DIR={DATA_DIR}", flush=True)
@@ -47,11 +52,26 @@ TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))
 # Speech synthesis backend: "omnivoice" (default) or "xtts", and the interpreter of the OmniVoice venv
 TTS_BACKEND = os.environ.get("TTS_BACKEND", "omnivoice").lower()
 OMNIVOICE_PYTHON = os.environ.get("OMNIVOICE_PYTHON", "/app/.venv_omnivoice/bin/python3")
+# Where speech synthesis runs: "auto" picks the GPU with the most free VRAM, "cpu" keeps the GPUs free for
+# something else (e.g. a shared LLM) and is much slower.
+TTS_DEVICE = os.environ.get("TTS_DEVICE", "auto").lower()
+TTS_CPU_THREADS = int(os.environ.get("TTS_CPU_THREADS", "0")) or (os.cpu_count() or 1)
+# Long lines are synthesized in chunks at sentence boundaries. Short chunks keep the dub in sync and cap
+# the VRAM peak, which grows with the length of the generated audio.
+TTS_MAX_CHUNK_SECONDS = float(os.environ.get("TTS_MAX_CHUNK_SECONDS", "10.0"))
+# Reference-clip transcript sent to OmniVoice: "off" (default) keeps it out of cross-lingual cloning, where an
+# English transcript makes the model apply English pronunciation (e.g. "walka" read as "łalka"). "auto" sends it.
+TTS_REF_TEXT = os.environ.get("TTS_REF_TEXT", "off").lower()
 
 # Dubbed speech may run into the silence after a segment (never the silence before it).
 # Cap on how much trailing silence a segment may borrow, and the gap kept before the next speech.
 SLACK_AFTER_MAX = float(os.environ.get("SLACK_AFTER_MAX", "1.0"))
 SLACK_GUARD = 0.15
+
+# Consecutive lines of the same speaker are merged only across this short a pause and up to this length.
+# Longer blocks would be spoken continuously over the original's pauses, which drifts out of sync.
+MERGE_MAX_GAP = float(os.environ.get("MERGE_MAX_GAP", "0.3"))
+MERGE_MAX_DURATION = float(os.environ.get("MERGE_MAX_DURATION", "10.0"))
 
 
 # Safe logging setup

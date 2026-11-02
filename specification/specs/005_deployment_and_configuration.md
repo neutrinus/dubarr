@@ -45,6 +45,8 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `API_USER` | Username for Basic Auth. | `admin` |
 | `API_PASS` | Password for Basic Auth. | `admin` |
 | `TARGET_LANGS` | Comma-separated list of default target languages. | `pl` |
+| `PUID` / `PGID` | UID/GID the container drops to (via `gosu`) before running the app. | `1000` |
+| `FIX_MEDIA_PERMISSIONS` | `1` makes the entrypoint `chown -R` the whole media mount. Off by default, because large libraries make startup very slow. | `0` |
 
 ### 2.2 Advanced Settings
 | Variable | Description | Default |
@@ -59,6 +61,10 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `LLM_API_MODEL` / `LLM_API_KEY` | Model name and key sent to that server (llama-server ignores both). | - |
 | `LLM_TIMEOUT` | Seconds per request to the LLM server. | `600` |
 | `LLM_N_CTX` | Context size of the in-process model. | `8192` |
+| `LLM_MAX_TOKENS` | Completion budget for the bulk calls (analysis, ASR editor, draft translations). An answer cut off by that limit is retried once with double the budget. | `4096` |
+| `SERIES_CONTEXT` | Series/episode hint for the analysis and translation prompts. Overrides the value parsed from the file name. | parsed from the file name |
+| `TTS_DEVICE` | `auto` = GPU with the most free VRAM, `cpu` = synthesize on the CPU and keep the GPUs free for other services. | `auto` |
+| `TTS_CPU_THREADS` | Threads for CPU synthesis. | all cores |
 
 ### 2.3 GPU Resource Management
 The system includes an **Intelligent GPU Manager** that orchestrates VRAM usage using a **Lazy Loading** and **Memory Rotation** strategy.

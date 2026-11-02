@@ -1,19 +1,28 @@
 import os
 import logging
-import torch
-from flask import Flask, request, jsonify
-from TTS.api import TTS
+
+# Must be set before torch initialises CUDA: TTS often runs next to another process (e.g. a shared
+# llama-server) and the default allocator then fails on tiny allocations despite free memory.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+import torch  # noqa: E402
+from flask import Flask, request, jsonify  # noqa: E402
+from TTS.api import TTS  # noqa: E402
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 tts = None
+# Negative means CPU (TTS_DEVICE=cpu in dubarr); the GPUs then stay free for other processes.
 gpu_id = int(os.environ.get("GPU_TTS", 0))
+CPU_THREADS = int(os.environ.get("TTS_CPU_THREADS", "0")) or (os.cpu_count() or 1)
 
 
 def load_tts():
     global tts
-    device = f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu"
+    device = f"cuda:{gpu_id}" if torch.cuda.is_available() and gpu_id >= 0 else "cpu"
+    if device == "cpu":
+        torch.set_num_threads(CPU_THREADS)
     logging.info(f"XTTS: Loading model on {device}...")
     os.environ["COQUI_TOS_AGREED"] = "1"
     tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
