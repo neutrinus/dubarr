@@ -137,7 +137,7 @@ def main():
     log_offset = os.path.getsize(log_path) if os.path.exists(log_path) else 0
 
     t0 = time.perf_counter()
-    dubber.process_video(clip)
+    pipeline = dubber.process_video(clip)
     elapsed = time.perf_counter() - t0
 
     # --- Verification ---
@@ -191,6 +191,17 @@ def main():
             report.append(f"{label}: {count}")
             if label == "segments failed" and count:
                 errors.append(f"{count} segment(s) failed, see processing.log")
+
+    # Before/after demo for the README (best effort, never fails the test)
+    try:
+        from demo_video import build_demo, pick_window
+
+        placed = (getattr(pipeline, "placed_segments", None) or {}).get(langs[0], [])
+        start, end = pick_window(placed, out_duration)
+        build_demo(clip, os.path.join(args.workdir, "demo.mp4"), start, end, langs, os.path.join(args.workdir, "demo.jpg"))
+        report.append(f"demo: {start:.1f}-{end:.1f}s of the clip, original then dubbed (demo.mp4)")
+    except Exception as e:  # noqa: BLE001
+        print(f"::warning::Could not build the demo video: {e}")
 
     summary = ["## dubarr E2E (CPU)", "", *[f"- {line}" for line in report], ""]
     summary += ["**Result: PASS**"] if not errors else ["**Result: FAIL**", *[f"- {e}" for e in errors]]
