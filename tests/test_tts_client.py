@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
 import os
+import sys
 import tempfile
 from infrastructure.tts_client import OmniVoiceClient, TTSWrapper, XTTSClient, XTTSWrapper, write_ref_text
 import requests
@@ -11,6 +12,7 @@ class TestTTSClient(unittest.TestCase):
         self.mock_mode_patcher = patch("infrastructure.tts_client.MOCK_MODE", False)
         self.mock_mode_patcher.start()
         self.client = XTTSClient(gpu_id=0, port=5050)
+        self.client.PYTHON_PATH = sys.executable
 
     def tearDown(self):
         self.mock_mode_patcher.stop()
@@ -42,6 +44,21 @@ class TestTTSClient(unittest.TestCase):
         res = self.client.start_server()
         self.assertTrue(res)
         mock_popen.assert_called_once()
+        self.assertEqual(mock_popen.call_args[0][0][0], sys.executable)
+
+    @patch("requests.get", side_effect=requests.exceptions.ConnectionError())
+    @patch("subprocess.Popen")
+    def test_start_server_missing_interpreter(self, mock_popen, mock_get):
+        # e.g. TTS_BACKEND=xtts on an image built without WITH_XTTS=1
+        self.client.PYTHON_PATH = "/nonexistent/.venv_xtts/bin/python3"
+        with self.assertRaisesRegex(RuntimeError, "WITH_XTTS=1"):
+            self.client.start_server()
+        mock_popen.assert_not_called()
+
+    def test_omnivoice_runs_on_app_interpreter_by_default(self):
+        if "OMNIVOICE_PYTHON" in os.environ:
+            self.skipTest("OMNIVOICE_PYTHON is set")
+        self.assertEqual(OmniVoiceClient.PYTHON_PATH, sys.executable)
 
     @patch("requests.get")
     @patch("requests.post")

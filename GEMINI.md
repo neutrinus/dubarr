@@ -30,17 +30,13 @@ Before implementing any code changes (features, refactors, or bug fixes that alt
 ## 4. Technology Stack
 -   **Language:** Python 3.10+
 -   **Framework:** FastAPI (API), SQLite (DB), FFmpeg (Media)
--   **AI/ML:** Whisper (ASR), Pyannote (Diarization), XTTS (TTS), Llama.cpp/OpenAI (LLM).
+-   **AI/ML:** Whisper (ASR), Pyannote (Diarization), OmniVoice (TTS), Llama.cpp/OpenAI (LLM).
 -   **Deployment:** Docker Compose.
 
 ## 5. Local Development Caveats
-**Critical:** This project uses a **Dual-Environment Architecture** to support Coqui-TTS (which requires Python 3.10) alongside the main application (Python 3.12).
--   **Docker:** Handles this automatically.
--   **Local Run:** You CANNOT simply run `pip install .` and start the server. You must:
-    1.  Create a Python 3.12 venv for the main app.
-    2.  Create a separate Python 3.10 venv for TTS.
-    3.  Manually run `src/tts_server.py` in the TTS venv (port 5050).
-    4.  Run `src/api/server.py` in the main venv.
+The app, Whisper, Pyannote, Demucs, llama-cpp and OmniVoice (default TTS) share one Python 3.12 venv. The app starts
+`src/omnivoice_server.py` itself as a subprocess on the same interpreter. The legacy XTTS backend (Coqui, Python 3.10,
+`transformers<5`) is optional and needs its own venv (`--build-arg WITH_XTTS=1` in Docker, `TTS_PYTHON` outside it).
 
 ## 6. Hardware & GPU Management
 -   **GPU Index Mismatch:** Indices from `nvidia-smi` (system) do **NOT** necessarily match PyTorch `cuda:X` indices. When selecting a GPU based on system stats (VRAM free), you MUST map the device by its Name/UUID using `torch.cuda.get_device_name(i)` to find the correct PyTorch index. Never use `nvidia-smi` indices directly in application code.

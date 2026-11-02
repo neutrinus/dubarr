@@ -22,8 +22,8 @@ src/
   config.py                Env-var config, paths, LANG_MAP. Has import-time side effects (see Gotchas).
   prompts.py               LLM prompt templates (analysis, ASR editor, translation, duration refinement).
   utils.py                 JSON parsing, SRT cleaning, ZCR, syllable counting, output cleaning.
-  tts_server.py            Flask XTTS v2 server. Runs in a SEPARATE Python 3.10 venv on 127.0.0.1:5050.
-  omnivoice_server.py      Flask OmniVoice server (default TTS backend). Own Python 3.12 venv, 127.0.0.1:5051.
+  tts_server.py            Flask XTTS v2 server (legacy, optional). Needs its own Python 3.10 venv, 127.0.0.1:5050.
+  omnivoice_server.py      Flask OmniVoice server (default TTS backend). Separate process on the app venv, 127.0.0.1:5051.
   verify_output.py         Manual QA helper (faster-whisper re-transcription of generated segments).
   core/
     pipeline.py            DubbingPipeline: stages 1-7, step caching, Stage 5 checkpointing, final mix/mux.
@@ -92,15 +92,16 @@ CI (`.github/workflows/pipeline.yml`) runs the same lint + tests on Python 3.10,
 and tags.
 
 `.github/workflows/e2e-cpu.yml` runs `scripts/e2e_test.py`: it cuts a 60 s public-domain clip (NASA), dubs it with the
-real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 3B GGUF, XTTS v2 on CPU), and checks the
+real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 3B GGUF, OmniVoice on CPU), and checks the
 muxed tracks (count, tags, duration, not silent). It runs nightly, on push to `main`, on manual dispatch, and on PRs that
 touch `src/`, dependencies, the workflow or the script. Without the `HF_TOKEN` secret, diarization is replaced by a single speaker. It tests
 plumbing, not translation quality.
 
-Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 4 GB each for Whisper and XTTS),
-`HF_TOKEN` with access to the pyannote models, and the Docker image (two venvs: `.venv_app` on Python 3.12 and
-`.venv_tts` on Python 3.10 for Coqui). Use `docker compose up --build`. Outside Docker you must start
-`src/tts_server.py` yourself from a Python 3.10 venv with Coqui installed.
+Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 4 GB each for Whisper and the TTS),
+`HF_TOKEN` with access to the pyannote models, and the Docker image. The image has a single Python 3.12 venv
+(`/app/.venv`) with everything, OmniVoice included; the TTS server is started as a subprocess on that same interpreter.
+Use `docker compose up --build`. The legacy XTTS backend needs Coqui, which pins `transformers<5` while OmniVoice needs
+`>=5.3`, so it is only in images built with `--build-arg WITH_XTTS=1` (extra Python 3.10 venv `/app/.venv_xtts`).
 
 ## Configuration (environment variables)
 
@@ -122,8 +123,8 @@ Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 
 | `TMDB_API_KEY` / `METADATA_TIMEOUT` | none / `10` | Optional TMDB key (movies; v3 key or v4 token) and per-request timeout. |
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |
 | `TTS_BACKEND` | `omnivoice` | Speech synthesis backend: `omnivoice` or `xtts`. |
-| `TTS_PYTHON` / `OMNIVOICE_PYTHON` | `/app/.venv_tts/...`, `/app/.venv_omnivoice/...` | Interpreters for the TTS servers. |
-| `TTS_TIMEOUT` | `60` | Seconds per XTTS request (raise it on CPU). |
+| `TTS_PYTHON` / `OMNIVOICE_PYTHON` | `/app/.venv_xtts/bin/python3`, the app's interpreter | Interpreters for the XTTS / OmniVoice servers. |
+| `TTS_TIMEOUT` | `60` | Seconds per TTS request (raise it on CPU). |
 
 ## Conventions
 

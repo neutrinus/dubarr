@@ -31,15 +31,17 @@ dev = [
     "syllables>=1.1.5",
 ]
 runtime = [
-    "hf_transfer",
     "demucs>=4.1.0",
     "huggingface-hub>=0.28.1",
     "pyannote.audio==4.0.7",
     "diffq",
     "faster-whisper",
     "av<19",  # av 19 dropped open(metadata_errors=...), which faster-whisper 1.2.1 uses
-    "transformers>=4.57,<5",
-    "coqui-tts==0.28.0",
+    # OmniVoice (default TTS) needs transformers>=5.3; the legacy XTTS backend (coqui-tts, transformers<5)
+    # is not part of this environment, see the WITH_XTTS build arg in the Dockerfile.
+    "omnivoice==0.2.1",
+    "flask",
+    "soundfile",
 ]
 
 [tool.uv]

@@ -96,6 +96,12 @@ class TTSServerClient:
             env["PYTHONUNBUFFERED"] = "1"
 
             python_path = self.PYTHON_PATH
+            if not os.path.isfile(python_path):
+                raise RuntimeError(
+                    f"{self.NAME}: Python interpreter '{python_path}' not found. "
+                    "XTTS is only in images built with --build-arg WITH_XTTS=1 (or set TTS_PYTHON); "
+                    "the default backend is TTS_BACKEND=omnivoice."
+                )
             server_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), self.SERVER_SCRIPT)
 
             # Capture both stdout and stderr

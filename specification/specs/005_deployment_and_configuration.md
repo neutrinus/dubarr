@@ -5,9 +5,13 @@ Dubarr is designed to run as a containerized application, primarily orchestrated
 
 ### 1.1 Containerization
 -   **Base Image:** Uses a slim Ubuntu-based NVIDIA CUDA image (`nvidia/cuda:13.1.1-devel-ubuntu24.04`) for hardware acceleration.
--   **Dual-Environment Strategy:** The container hosts two distinct Python virtual environments to resolve dependency conflicts:
-    1.  `/app/.venv_app` (Python 3.12): Runs the main API, Whisper, Pyannote, and FFmpeg logic.
-    2.  `/app/.venv_tts` (Python 3.10): Runs the Coqui-TTS engine (XTTS v2) as an internal microservice on port 5050.
+-   **Single Environment:** The container has one Python 3.12 virtual environment, `/app/.venv`, with the API, Whisper,
+    Pyannote, Demucs, llama-cpp and the OmniVoice TTS engine. The TTS engine still runs as an internal microservice
+    (a separate process on port 5051, started by the app on the same interpreter), so a TTS crash or restart does not
+    take the worker down.
+-   **Optional legacy XTTS:** Coqui-TTS (XTTS v2) needs `transformers<5`, which conflicts with OmniVoice. It is only
+    installed when the image is built with `--build-arg WITH_XTTS=1`, into a separate Python 3.10 venv
+    (`/app/.venv_xtts`, port 5050), and selected with `TTS_BACKEND=xtts`.
 -   **Volumes:**
     -   `/app/videos`: Mapped to the host's video storage (Input/Output).
     -   `/app/models`: Mapped to persist large ML models (Whisper, TTS) across restarts.

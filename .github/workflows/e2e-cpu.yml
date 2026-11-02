@@ -1,7 +1,7 @@
 name: E2E (CPU, real models)
 
 # Dubs a short public-domain clip with the real pipeline on a CPU runner, using small models
-# (Whisper small, Qwen2.5 3B, XTTS v2 on CPU). Checks plumbing, not translation quality.
+# (Whisper small, Qwen2.5 3B, OmniVoice on CPU). Checks plumbing, not translation quality.
 on:
   workflow_dispatch:
     inputs:
@@ -44,15 +44,11 @@ jobs:
       DATA_DIR: ${{ github.workspace }}/e2e_out/data
       HF_HOME: ${{ github.workspace }}/.model-cache/hf
       TORCH_HOME: ${{ github.workspace }}/.model-cache/torch
-      TTS_HOME: ${{ github.workspace }}/.model-cache/tts
-      XDG_DATA_HOME: ${{ github.workspace }}/.model-cache/xdg
-      COQUI_TOS_AGREED: "1"
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       WHISPER_MODEL: small
       LLM_MODEL_REPO: Qwen/Qwen2.5-3B-Instruct-GGUF
       LLM_MODEL_FILE: qwen2.5-3b-instruct-q4_k_m.gguf
-      TTS_BACKEND: xtts  # the CPU job installs only the XTTS venv
-      TTS_PYTHON: ${{ github.workspace }}/.venv_tts/bin/python3
+      TTS_BACKEND: omnivoice
       TTS_TIMEOUT: "600"
       TARGET_LANGS: ${{ inputs.langs || 'pl' }}
       E2E_VIDEO_URL: ${{ inputs.video_url }}
@@ -69,37 +65,24 @@ jobs:
           enable-cache: true
           version: "0.13.5"
 
-      # Same split as the Dockerfile: app on Python 3.12, Coqui XTTS in its own Python 3.10 venv. CPU wheels only.
-      - name: Create app venv (Python 3.12)
+      # Same single venv as the Dockerfile (Python 3.12, OmniVoice included), with CPU wheels.
+      - name: Create venv (Python 3.12)
         run: |
-          uv python install 3.12 3.10
-          uv venv .venv_app --python 3.12
+          uv python install 3.12
+          uv venv .venv --python 3.12
           # Torch from the CPU index first, everything else from PyPI only: the CPU index also serves
           # stale builds of unrelated packages.
-          uv pip install --python .venv_app/bin/python3 --index-url https://download.pytorch.org/whl/cpu \
-            "torch>=2.5.0" "torchvision" "torchaudio"
-          TORCH_PIN=$(.venv_app/bin/python3 -c "import torch; print(torch.__version__.split('+')[0])")
-          uv pip install --python .venv_app/bin/python3 \
-            "numpy==2.2.2" "torch==$TORCH_PIN" "torchvision" "torchaudio" \
+          uv pip install --python .venv/bin/python3 --index-url https://download.pytorch.org/whl/cpu \
+            "torch==2.8.0" "torchvision" "torchaudio==2.8.0"
+          TV_PIN=$(.venv/bin/python3 -c "import torchvision; print(torchvision.__version__.split('+')[0])")
+          uv pip install --python .venv/bin/python3 \
+            "numpy==2.2.2" "torch==2.8.0" "torchvision==$TV_PIN" "torchaudio==2.8.0" \
             "pyannote.audio==4.0.7" "faster-whisper" "av>=15,<19" "demucs>=4.1.0" "diffq" \
-            "huggingface_hub[hf_transfer]" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
+            "omnivoice==0.2.1" "flask" \
+            "huggingface_hub" "pydub" "soundfile" "humanfriendly" "psutil" "scipy" "requests" "syllables" \
             "fastapi" "uvicorn[standard]" "websockets" "jinja2" "python-multipart"
-          uv pip install --python .venv_app/bin/python3 llama-cpp-python \
+          uv pip install --python .venv/bin/python3 llama-cpp-python \
             --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
-
-      - name: Create TTS venv (Python 3.10)
-        run: |
-          uv venv .venv_tts --python 3.10
-          uv pip install --python .venv_tts/bin/python3 --index-url https://download.pytorch.org/whl/cpu \
-            "torch==2.8.0" "torchaudio==2.8.0"
-          uv pip install --python .venv_tts/bin/python3 \
-            "numpy>=1.26.0" "torch==2.8.0" "torchaudio==2.8.0" "transformers>=4.57,<5" \
-            "flask" "coqui-tts==0.28.0"
-          # Same transformers compatibility patch as the Dockerfile
-          f=$(.venv_tts/bin/python3 -c "import TTS, os; print(os.path.join(os.path.dirname(TTS.__file__), 'tts/layers/tortoise/autoregressive.py'))")
-          if [ -f "$f" ]; then
-            sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(elements, test_elements, *args, **kwargs):\n    return torch.isin(elements, test_elements)/' "$f"
-          fi
 
       - name: Restore model cache
         uses: actions/cache@v6
@@ -107,7 +90,7 @@ jobs:
           path: |
             .model-cache
             e2e_out/data/models
-          key: e2e-models-v1-${{ env.WHISPER_MODEL }}-${{ env.LLM_MODEL_FILE }}
+          key: e2e-models-v2-omnivoice-${{ env.WHISPER_MODEL }}-${{ env.LLM_MODEL_FILE }}
 
       - name: Note missing HF_TOKEN
         if: env.HF_TOKEN == ''
@@ -115,8 +98,8 @@ jobs:
 
       - name: Run E2E
         run: |
-          export PATH="$GITHUB_WORKSPACE/.venv_app/bin:$PATH"
-          python3 -c "import torch, av, faster_whisper; print('torch', torch.__version__, 'av', av.__version__, 'faster-whisper', faster_whisper.__version__)"
+          export PATH="$GITHUB_WORKSPACE/.venv/bin:$PATH"
+          python3 -c "import torch, av, faster_whisper, transformers; print('torch', torch.__version__, 'av', av.__version__, 'faster-whisper', faster_whisper.__version__, 'transformers', transformers.__version__)"
           python3 scripts/e2e_test.py
 
       - name: Upload result
