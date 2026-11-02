@@ -88,7 +88,7 @@ class TestMixAudio(unittest.TestCase):
 
         os.makedirs(TEMP_DIR, exist_ok=True)
         with tempfile.TemporaryDirectory() as d:
-            bg, speech, out = (os.path.join(d, n) for n in ("bg.wav", "speech.wav", "out.ac3"))
+            bg, speech, out = (os.path.join(d, n) for n in ("bg.wav", "speech.wav", "out.wav"))
             for path, seconds in ((bg, 4), (speech, 3)):
                 subprocess.run(
                     ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"sine=f=300:d={seconds}", "-ac", "2", path, "-y"],

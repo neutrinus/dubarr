@@ -228,12 +228,13 @@ The goal is a complete translation that fits the timing. Run time is secondary.
     3.  Sidechain ducking lowers the original while the dub speaks; a low-passed copy of the original ("ambient ghost")
         keeps the room sound.
 *   **Output:**
-    *   `final_{lang}.ac3` (Mixed audio track).
+    *   `final_{lang}.wav` (Mixed audio track, lossless; it is encoded once, when muxing).
 
 ### 2.7 Stage 7: Muxing
-*   **Input:** Original video, `final_{lang}.ac3`.
+*   **Input:** Original video, `final_{lang}.wav`.
 *   **Action:**
-    1.  FFmpeg replaces the original audio stream with the new dubbed track(s).
+    1.  FFmpeg adds the dubbed track(s) in front of the original audio, encoded with `AUDIO_CODEC` (default AAC,
+        which plays in browsers and on phones; `ac3`/`eac3` for AV receivers). The original audio is copied unchanged.
         2. Preserves video stream (copy codec) to avoid re-encoding quality loss.
     *   **Output:**
         *   `final_muxed.mkv` (Final video file).

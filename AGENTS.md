@@ -86,7 +86,8 @@ specification/             ARCHITECTURE.md + numbered feature specs (the intende
    through `SegmentSynchronizer` on 4 orchestrator threads. LLM and TTS calls go through `LLMService`/`TTSService`.
    Progress is checkpointed to `TEMP_DIR/stage5_checkpoint_<task_id>.json`.
 6. **Mix**: per-language mastering (pan, echo, atempo), then sidechain ducking against the original track.
-7. **Mux**: new AC3 tracks are added in front of the original audio; the source file is swapped in place.
+7. **Mux**: the new tracks (AAC by default, `AUDIO_CODEC`) are added in front of the original audio, which is copied;
+   the source file is swapped in place.
 
 Stages run through `DubbingPipeline._run_step`, which caches each result in `job_steps` and reuses it on retry.
 
@@ -114,7 +115,8 @@ and tags.
 
 `.github/workflows/e2e-cpu.yml` runs `scripts/e2e_test.py`: it cuts a 60 s public-domain clip (NASA), dubs it with the
 real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 3B GGUF, OmniVoice on CPU), and checks the
-muxed tracks (count, tags, duration, not silent). It runs nightly, on push to `main`, on manual dispatch, and on PRs that
+muxed tracks (count, tags, duration, not silent). It also builds `demo.mp4` (one line in English, then dubbed;
+`scripts/demo_video.py`), and on `main` publishes it to the `demo` release that the README links to. It runs nightly, on push to `main`, on manual dispatch, and on PRs that
 touch `src/`, dependencies, the workflow or the script. Without the `HF_TOKEN` secret, diarization is replaced by a single speaker. It tests
 plumbing, not translation quality.
 
@@ -143,6 +145,7 @@ why the image used to need separate venvs.
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |
 | `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |
 | `LLM_API_MODEL` / `LLM_API_KEY` / `LLM_TIMEOUT` | none / none / `600` | Model name, key and per-request timeout for that server. |
+| `AUDIO_CODEC` / `AUDIO_BITRATE` | `aac` / `192k` | Codec of the dubbed tracks (`aac`, `ac3`, `eac3`, `opus`). Original audio is copied, not re-encoded. |
 | `METADATA_LOOKUP` | `on` | Show/movie context for the LLM: `on` (.nfo, then TVmaze / TMDB), `local` (.nfo only), `off`. No network in `MOCK_MODE`. |
 | `TMDB_API_KEY` / `METADATA_TIMEOUT` | none / `10` | Optional TMDB key (movies; v3 key or v4 token) and per-request timeout. |
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |

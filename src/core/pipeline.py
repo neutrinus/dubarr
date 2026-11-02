@@ -142,6 +142,8 @@ class DubbingPipeline:
         self.shout_prints: Dict[str, List[float]] = {}  # speaker -> centroid of its merged shouting cluster
         self.ref_energy: Dict[str, str] = {}  # reference clip -> energy class (Spec 001, 2.4)
         self.voice_matches: Dict[str, str] = {}  # speaker -> person of the voice bank
+        # Where each dubbed line ended up, per language: {"index", "orig_start", "orig_end", "start", "end"}
+        self.placed_segments = {}
         self.available_pans = [-0.10, 0.10, -0.03, 0.03, -0.17, 0.17]
         self.speaker_pans = {}
         self.abort_event = llm_manager.abort_event
@@ -1490,6 +1492,7 @@ class DubbingPipeline:
             res.sort(key=lambda x: x["index"])
 
             final_audio_segments = []
+            self.placed_segments[lang] = []
             last_end_time = 0
 
             for item in res:
@@ -1505,9 +1508,18 @@ class DubbingPipeline:
 
                 self._apply_mastering_and_speed(path, final_path, item["speaker"], speed_factor)
                 final_audio_segments.append((final_path, start, dur / speed_factor))
+                self.placed_segments[lang].append(
+                    {
+                        "index": item["index"],
+                        "orig_start": item["start"],
+                        "orig_end": item["end"],
+                        "start": start,
+                        "end": start + dur / speed_factor,
+                    }
+                )
                 last_end_time = start + (dur / speed_factor)
 
-            final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
+            final_a = os.path.join(self.temp_dir, f"final_{lang}.wav")
             mix_audio(a_stereo, final_audio_segments, final_a, self.temp_dir)
             self.durations[f"Stage 5b: Sync Production ({lang})"] = (time.perf_counter() - t_start_sync_all) / len(
                 self.target_langs

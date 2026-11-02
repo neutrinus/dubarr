@@ -39,3 +39,20 @@ class TestFFmpeg(unittest.TestCase):
         mock_run.return_value.stdout = '{"format": {"duration": "10"}}'
         res = FFmpegWrapper.get_metadata("video.mp4")
         self.assertEqual(res["format"]["duration"], "10")
+
+
+class TestMuxCodecs(unittest.TestCase):
+    @patch("subprocess.run")
+    def test_encodes_only_the_new_tracks(self, mock_run):
+        FFmpegWrapper.mux_video("in.mkv", [("pl.wav", "pl", "Polish"), ("de.wav", "de", "German")], "out.mkv", "ac3", "384k")
+        args = mock_run.call_args[0][0]
+        joined = " ".join(args)
+        self.assertIn("-c:a copy", joined)  # original audio untouched
+        self.assertIn("-c:a:0 ac3 -b:a:0 384k", joined)
+        self.assertIn("-c:a:1 ac3 -b:a:1 384k", joined)
+        self.assertNotIn("-c:a:2", joined)
+
+    def test_unknown_codec_falls_back_to_aac(self):
+        from infrastructure.ffmpeg import audio_codec_args
+
+        self.assertEqual(audio_codec_args("mp3", "192k", ":0"), ["-c:a:0", "aac", "-b:a:0", "192k"])

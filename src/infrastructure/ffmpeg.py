@@ -4,7 +4,18 @@ import logging
 import re
 from typing import List, Dict, Optional, Tuple
 
+from config import AUDIO_BITRATE, AUDIO_CODEC
+
 logger = logging.getLogger(__name__)
+
+# ffmpeg encoder per AUDIO_CODEC value. AAC plays everywhere (browsers, Android, TVs); AC3/E-AC3 suit AV receivers.
+AUDIO_ENCODERS = {"aac": "aac", "ac3": "ac3", "eac3": "eac3", "opus": "libopus"}
+
+
+def audio_codec_args(codec: str, bitrate: str, stream: str = "") -> List[str]:
+    """ffmpeg arguments that encode audio stream(s) `stream` (e.g. ":0") with the configured codec."""
+    encoder = AUDIO_ENCODERS.get(codec.lower(), "aac")
+    return [f"-c:a{stream}", encoder, f"-b:a{stream}", bitrate]
 
 
 class FFmpegWrapper:
@@ -76,8 +87,10 @@ class FFmpegWrapper:
         subprocess.run(cmd, capture_output=True, check=True, timeout=60)
 
     @staticmethod
-    def mux_video(video_path: str, audio_tracks: List[Tuple[str, str, str]], output_path: str):
-        """Muxes multiple audio tracks into a video container."""
+    def mux_video(
+        video_path: str, audio_tracks: List[Tuple[str, str, str]], output_path: str, codec: str = "", bitrate: str = ""
+    ):
+        """Adds the dubbed tracks (encoded once, with `codec`) in front of the original audio, which is copied as is."""
         cmd = ["ffmpeg", "-i", video_path]
         for a_path, _, _ in audio_tracks:
             cmd.extend(["-i", a_path])
@@ -91,7 +104,10 @@ class FFmpegWrapper:
             title = f"AI - {lang_name}"
             cmd.extend([f"-metadata:s:a:{i}", f"language={lang}", f"-metadata:s:a:{i}", f"title={title}"])
 
-        cmd.extend(["-c:v", "copy", "-c:a", "ac3", output_path, "-y"])
+        cmd.extend(["-c:v", "copy", "-c:a", "copy"])
+        for i in range(len(audio_tracks)):
+            cmd.extend(audio_codec_args(codec or AUDIO_CODEC, bitrate or AUDIO_BITRATE, f":{i}"))
+        cmd.extend([output_path, "-y"])
         subprocess.run(cmd, capture_output=True, check=True, timeout=300)
 
     @staticmethod
@@ -100,5 +116,6 @@ class FFmpegWrapper:
         cmd = ["ffmpeg"]
         for inp in inputs:
             cmd.extend(["-i", inp])
-        cmd.extend(["-filter_complex_script", script_path, "-map", "[out]", "-c:a", "ac3", output_path, "-y"])
+        # The output format follows the extension (the final mix is a lossless WAV, encoded once when muxing)
+        cmd.extend(["-filter_complex_script", script_path, "-map", "[out]", output_path, "-y"])
         subprocess.run(cmd, capture_output=True, check=True, timeout=300)
