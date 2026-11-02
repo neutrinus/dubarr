@@ -39,10 +39,27 @@ The system automatically detects your hardware and chooses the best processing s
 
 | Setup | VRAM | Strategy | Description |
 | :--- | :--- | :--- | :--- |
-| **Multi-GPU** | > 18GB (Combined) | **PARALLEL** | LLM and TTS run simultaneously on separate cards. Peak performance. |
-| **Single GPU** | > 18GB (e.g. 3090/4090) | **PARALLEL** | Everything runs on one card simultaneously. |
-| **Single GPU** | < 18GB (e.g. 3060 12GB) | **SEQUENTIAL** | Uses an **Inference Lock** to swap between models, preventing Out-Of-Memory errors. |
-| **CPU Only** | N/A (32GB RAM rec.) | **SEQUENTIAL** | Models run on CPU using 8-bit quantization. Significantly slower (10-20x). |
+| **Multi-GPU** | ~20GB combined (e.g. 12GB + 8GB) | **PARALLEL** | LLM on one card, speech synthesis on the other. Needs ~6GB free on the TTS card for long lines. |
+| **Single GPU** | 20GB+ (e.g. 3090/4090) | **PARALLEL** | Everything runs on one card simultaneously. |
+| **Single GPU** | 12-16GB (e.g. 3060 12GB) | **SEQUENTIAL** | Uses an **Inference Lock** to swap between models, preventing Out-Of-Memory errors. |
+| **CPU Only** | N/A (32GB RAM rec.) | **SEQUENTIAL** | Models run on CPU in 8-bit/fp32. LLM and Whisper are 10-20x slower; speech synthesis is **15-40x slower** than realtime (a 10s line takes 2-4 min on 8 cores). |
+
+Measured on a 3060 12GB + 3070 8GB pair, dubbing one 10-minute episode (720p, one target language):
+
+| Stage | VRAM peak | Time |
+| :--- | :--- | :--- |
+| Audio separation (Demucs) | ~2 GB | 1:30 |
+| Diarization + Whisper `large-v3-turbo` | ~4 GB (unloaded after use) | 0:45 |
+| Global analysis + drafts (Gemma 3 12B, 8k context) | ~10 GB | 3:30 |
+| Speech synthesis (OmniVoice) | **up to 6 GB** for very long lines | 3:50 |
+| Mix + mux | – | 0:15 |
+
+> [!TIP]
+> Sharing a card with another service (a household `llama-server`, Jellyfin transcoding, ...)? Keep about
+> **6 GB free** on the card that runs speech synthesis. Dubarr puts the TTS server on the card with the most free
+> VRAM, so if the LLM hogs the small card, give it a smaller share of that card (e.g. llama.cpp
+> `--tensor-split 28,2` with more `--n-cpu-moe` layers) instead of shrinking its context. The peak also grows with
+> the length of a single line, which is why long lines are synthesized in ~10s chunks.
 
 ---
 
