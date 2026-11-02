@@ -108,3 +108,33 @@ class TestDubbingPipeline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSubtitleDiscovery(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.video = os.path.join(self.dir, "Show - S07E02 - The Well WEBDL-1080p.mkv")
+        self.pipeline = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+
+    def tearDown(self):
+        shutil.rmtree(self.dir)
+
+    def touch(self, suffix):
+        path = os.path.splitext(self.video)[0] + suffix
+        open(path, "w").close()
+        return path
+
+    def test_prefers_full_english_over_hearing_impaired_and_skips_target_language(self):
+        self.touch(".pl.srt")
+        self.touch(".en.forced.srt")
+        hi = self.touch(".en.hi.srt")
+        self.assertEqual(self.pipeline._find_external_subtitles(self.video), hi)
+        en = self.touch(".en.srt")
+        self.assertEqual(self.pipeline._find_external_subtitles(self.video), en)
+        plain = self.touch(".srt")
+        self.assertEqual(self.pipeline._find_external_subtitles(self.video), plain)
+
+    def test_only_target_language_subtitles(self):
+        self.touch(".pl.srt")
+        self.touch("-thumb.srt")
+        self.assertIsNone(self.pipeline._find_external_subtitles(self.video))

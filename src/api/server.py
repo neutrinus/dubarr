@@ -193,6 +193,7 @@ async def get_debug_artifact(task_id: int, artifact: str, username: str = Depend
         "transcription": "Stage 2: Audio Analysis",
         "context": "Stage 3: Global Analysis",
         "speakers": "Stage 3: Global Analysis",
+        "media": "Stage 2b: Media Metadata",
         "production": "Stage 5: Production",
     }
 

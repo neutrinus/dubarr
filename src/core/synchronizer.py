@@ -105,6 +105,8 @@ class SegmentSynchronizer:
                     glossary=global_context.get("glossary", {}),
                     context_before=context_before,
                     context_after=context_after,
+                    speaker=segment.get("speaker_label", ""),
+                    media=global_context.get("media", ""),
                 )
 
                 if new_text == current_text:

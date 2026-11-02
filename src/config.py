@@ -48,6 +48,17 @@ TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))
 TTS_BACKEND = os.environ.get("TTS_BACKEND", "omnivoice").lower()
 OMNIVOICE_PYTHON = os.environ.get("OMNIVOICE_PYTHON", "/app/.venv_omnivoice/bin/python3")
 
+# Media metadata (show/episode or movie, synopsis, cast) as context for the translator.
+# "on": .nfo files next to the video, then TVmaze (episodes, no account) / TMDB (movies, needs TMDB_API_KEY);
+# "local": .nfo files only; "off": no lookup. Online lookups are skipped in MOCK_MODE.
+METADATA_LOOKUP = os.environ.get("METADATA_LOOKUP", "on").lower()
+if METADATA_LOOKUP in ("1", "true", "yes"):
+    METADATA_LOOKUP = "on"
+elif METADATA_LOOKUP in ("0", "false", "no"):
+    METADATA_LOOKUP = "off"
+TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
+METADATA_TIMEOUT = int(os.environ.get("METADATA_TIMEOUT", "10"))
+
 # Dubbed speech may run into the silence after a segment (never the silence before it).
 # Cap on how much trailing silence a segment may borrow, and the gap kept before the next speech.
 SLACK_AFTER_MAX = float(os.environ.get("SLACK_AFTER_MAX", "1.0"))
