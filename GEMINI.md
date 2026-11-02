@@ -35,8 +35,7 @@ Before implementing any code changes (features, refactors, or bug fixes that alt
 
 ## 5. Local Development Caveats
 The app, Whisper, Pyannote, Demucs, llama-cpp and OmniVoice (default TTS) share one Python 3.12 venv. The app starts
-`src/omnivoice_server.py` itself as a subprocess on the same interpreter. The legacy XTTS backend (Coqui, Python 3.10,
-`transformers<5`) is optional and needs its own venv (`--build-arg WITH_XTTS=1` in Docker, `TTS_PYTHON` outside it).
+`src/omnivoice_server.py` itself as a subprocess on the same interpreter. XTTS (Coqui) was removed.
 
 ## 6. Hardware & GPU Management
 -   **GPU Index Mismatch:** Indices from `nvidia-smi` (system) do **NOT** necessarily match PyTorch `cuda:X` indices. When selecting a GPU based on system stats (VRAM free), you MUST map the device by its Name/UUID using `torch.cuda.get_device_name(i)` to find the correct PyTorch index. Never use `nvidia-smi` indices directly in application code.

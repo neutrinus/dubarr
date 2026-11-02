@@ -48,7 +48,6 @@ jobs:
       WHISPER_MODEL: small
       LLM_MODEL_REPO: Qwen/Qwen2.5-3B-Instruct-GGUF
       LLM_MODEL_FILE: qwen2.5-3b-instruct-q4_k_m.gguf
-      TTS_BACKEND: omnivoice
       TTS_TIMEOUT: "600"
       TARGET_LANGS: ${{ inputs.langs || 'pl' }}
       E2E_VIDEO_URL: ${{ inputs.video_url }}

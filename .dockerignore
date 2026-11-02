@@ -17,8 +17,6 @@ models/
 .venv/
 .venv_app/
 .venv_tts/
-.venv_xtts/
-.venv_omnivoice/
 Dockerfile
 README.md
 LICENSE

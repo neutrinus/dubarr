@@ -30,21 +30,6 @@ RUN uv python install 3.12 && \
     llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 && \
     uv cache clean
 
-# Optional legacy XTTS v2 backend (TTS_BACKEND=xtts): `docker build --build-arg WITH_XTTS=1 .`
-# Coqui needs transformers<5 while OmniVoice needs >=5.3, so XTTS lives in its own venv when it is wanted at all.
-ARG WITH_XTTS=0
-RUN mkdir -p /app/.venv_xtts && if [ "$WITH_XTTS" = "1" ]; then \
-    uv python install 3.10 && \
-    uv venv --allow-existing /app/.venv_xtts --python 3.10 && \
-    uv pip install --no-cache-dir --python /app/.venv_xtts/bin/python3 \
-    --index-strategy unsafe-best-match \
-    "numpy>=1.26.0" "torch==2.8.0" "torchaudio==2.8.0" "transformers>=4.57,<5" \
-    "flask" "coqui-tts==0.28.0" && \
-    uv cache clean && \
-    f=/app/.venv_xtts/lib/python3.10/site-packages/TTS/tts/layers/tortoise/autoregressive.py && \
-    sed -i 's/from transformers.pytorch_utils import isin_mps_friendly as isin/import torch\n\ndef isin(elements, test_elements, *args, **kwargs):\n    return torch.isin(elements, test_elements)/' "$f"; \
-    fi
-
 # Stage 2: Final
 FROM nvidia/cuda:13.1.1-devel-ubuntu24.04
 
@@ -62,8 +47,6 @@ WORKDIR /app
 # Copy Python installations and built venvs from builder
 COPY --from=builder /usr/local/uv-python /usr/local/uv-python
 COPY --from=builder /app/.venv /app/.venv
-# Empty unless built with WITH_XTTS=1
-COPY --from=builder /app/.venv_xtts /app/.venv_xtts
 
 # Copy the project files
 COPY . .

@@ -9,9 +9,6 @@ Dubarr is designed to run as a containerized application, primarily orchestrated
     Pyannote, Demucs, llama-cpp and the OmniVoice TTS engine. The TTS engine still runs as an internal microservice
     (a separate process on port 5051, started by the app on the same interpreter), so a TTS crash or restart does not
     take the worker down.
--   **Optional legacy XTTS:** Coqui-TTS (XTTS v2) needs `transformers<5`, which conflicts with OmniVoice. It is only
-    installed when the image is built with `--build-arg WITH_XTTS=1`, into a separate Python 3.10 venv
-    (`/app/.venv_xtts`, port 5050), and selected with `TTS_BACKEND=xtts`.
 -   **Volumes:**
     -   `/app/videos`: Mapped to the host's video storage (Input/Output).
     -   `/app/models`: Mapped to persist large ML models (Whisper, TTS) across restarts.
@@ -54,11 +51,11 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | Variable | Description | Default |
 | :--- | :--- | :--- |
 | `DEBUG_MODE` | If `true`, keeps intermediate files (wav segments, json) for debugging. | `false` |
-| `TTS_MODEL` | Selects the TTS engine (e.g., `xtts`, `openai`, `elevenlabs`). | `xtts` |
 | `WHISPER_MODEL` | Whisper model size (`tiny`, `base`, `small`, `medium`, `large-v3`). | `medium` |
 | `DEVICE` | Computation device (`cuda`, `cpu`, `mps`). Auto-detected if unset. | `cuda` |
 | `MOCK_MODE` | If `true`, bypasses ML models and returns dummy data. For testing/dev. | `false` |
 | `GPU_TTS` | Specific GPU ID (integer) for the TTS microservice. | `0` |
+| `OMNIVOICE_PYTHON` | Interpreter for the OmniVoice server subprocess. | the app's interpreter |
 | `LLM_API_URL` | Base URL of an OpenAI-compatible server (e.g. llama.cpp `llama-server`, `http://host:8080/v1`). When set, no LLM is loaded in-process and its VRAM stays free. | - |
 | `LLM_API_MODEL` / `LLM_API_KEY` | Model name and key sent to that server (llama-server ignores both). | - |
 | `LLM_TIMEOUT` | Seconds per request to the LLM server. | `600` |
@@ -82,10 +79,9 @@ The system includes an **Intelligent GPU Manager** that orchestrates VRAM usage 
 -   **GPU:** Strongly recommended (NVIDIA CUDA). 
 -   **Multi-GPU Recommendation:**
     -   **Primary (12GB+):** LLM (Gemma 12B) requires ~10GB for 8k context and parallel slots.
-    -   **Secondary (8GB+):** TTS (XTTS) and Analysis (Whisper/Diarization) work optimally here.
+    -   **Secondary (8GB+):** TTS (OmniVoice) and Analysis (Whisper/Diarization) work optimally here.
 -   **RAM:** Minimum 16GB.
 
 ## 4. Local Development Notes
-Running Dubarr locally (outside Docker) requires creating two separate virtual environments:
-1.  **Main Env (Py3.12):** `uv sync` from `pyproject.toml`.
-2.  **TTS Env (Py3.10):** Must be created manually to install `coqui-tts`. Run `src/tts_server.py` inside this environment on port 5050 before starting the main app.
+Running Dubarr locally (outside Docker) needs one Python 3.12 virtual environment: `uv sync --group runtime` from
+`pyproject.toml` (plus `llama-cpp-python` if the LLM runs in-process). The app starts the OmniVoice server itself.

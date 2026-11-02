@@ -6,27 +6,7 @@ import logging
 import signal
 import threading
 
-from config import MOCK_MODE, OMNIVOICE_PYTHON, TTS_PYTHON, TTS_TIMEOUT
-
-# XTTS v2 supported languages
-XTTS_LANGS = [
-    "en",
-    "es",
-    "fr",
-    "de",
-    "it",
-    "pt",
-    "pl",
-    "tr",
-    "ru",
-    "nl",
-    "cs",
-    "ar",
-    "zh-cn",
-    "hu",
-    "ko",
-    "ja",
-]
+from config import MOCK_MODE, OMNIVOICE_PYTHON, TTS_TIMEOUT
 
 
 class TTSServerClient:
@@ -98,9 +78,8 @@ class TTSServerClient:
             python_path = self.PYTHON_PATH
             if not os.path.isfile(python_path):
                 raise RuntimeError(
-                    f"{self.NAME}: Python interpreter '{python_path}' not found. "
-                    "XTTS is only in images built with --build-arg WITH_XTTS=1 (or set TTS_PYTHON); "
-                    "the default backend is TTS_BACKEND=omnivoice."
+                    f"{self.NAME}: Python interpreter '{python_path}' not found. Check OMNIVOICE_PYTHON "
+                    "(by default the TTS server runs on the app's own interpreter)."
                 )
             server_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), self.SERVER_SCRIPT)
 
@@ -146,7 +125,7 @@ class TTSServerClient:
             raise RuntimeError(f"{self.NAME} Server failed to start.")
 
     def sanitize_text(self, text: str) -> str:
-        """Removes or replaces characters known to crash XTTS v2."""
+        """Normalizes typographic punctuation and never sends empty text to the model."""
         if not text:
             return "..."
         # Replace ellipsis and other special chars
@@ -189,11 +168,7 @@ class TTSServerClient:
                 error_text = res.text
                 logging.error(f"{self.NAME} Server returned {res.status_code}: {error_text}")
 
-                # Detect Tensor Size Mismatch (XTTS v2 specific internal error) - This is input related, do NOT restart
-                if "size of tensor" in error_text and "must match" in error_text:
-                    raise ValueError(f"XTTS Tensor Error: {error_text}")
-
-                # For ALL other 500 errors (CUDA assert, sens error, unknown internal bugs), RESTART.
+                # For ALL 500 errors (CUDA assert, sens error, unknown internal bugs), RESTART.
                 if retry_on_cuda:
                     logging.warning(f"{self.NAME}: Server failure ({res.status_code}). Requesting synchronized restart...")
                     self._handle_restart()
@@ -232,31 +207,17 @@ class TTSServerClient:
             self.start_server()
 
     def stop_server(self):
-        """Stops the legacy TTS server only if we started it in this instance."""
+        """Stops the TTS server only if we started it in this instance."""
         # Note: We don't use the lock here as it might be called from start_server or handle_restart which already has it.
         if self.server_process:
             try:
-                logging.info(f"{self.NAME}: Stopping legacy TTS server (PID {self.server_process.pid})...")
+                logging.info(f"{self.NAME}: Stopping TTS server (PID {self.server_process.pid})...")
                 os.killpg(os.getpgid(self.server_process.pid), signal.SIGTERM)
                 self.server_process.wait(timeout=5)
             except Exception:
                 pass
             self.server_process = None
             self._log_thread = None
-
-
-class XTTSClient(TTSServerClient):
-    """XTTS v2 (coqui-tts) server, see src/tts_server.py."""
-
-    NAME = "XTTS"
-    PYTHON_PATH = TTS_PYTHON
-    SERVER_SCRIPT = "tts_server.py"
-    DEFAULT_PORT = 5050
-
-    def _build_payload(self, text, ref_audio, output_path, language, max_duration):
-        # XTTS cannot target a duration; the synchronizer shortens the text instead
-        xtts_lang = language if language in XTTS_LANGS else "en"
-        return super()._build_payload(text, ref_audio, output_path, xtts_lang, max_duration)
 
 
 class OmniVoiceClient(TTSServerClient):
@@ -294,19 +255,11 @@ def read_ref_text(ref_audio: str):
         return None
 
 
-TTS_CLIENTS = {
-    "xtts": XTTSClient,
-    "omnivoice": OmniVoiceClient,
-}
-
-
 class TTSWrapper:
-    """Starts the server of the chosen TTS backend and forwards synthesis requests."""
+    """Starts the OmniVoice server and forwards synthesis requests."""
 
-    def __init__(self, gpu_id=0, backend="xtts"):
-        if backend not in TTS_CLIENTS:
-            raise ValueError(f"Unknown TTS backend '{backend}'. Choose one of: {', '.join(TTS_CLIENTS)}")
-        self.client = TTS_CLIENTS[backend](gpu_id=gpu_id)
+    def __init__(self, gpu_id=0):
+        self.client = OmniVoiceClient(gpu_id=gpu_id)
         self.client.start_server()
 
     def synthesize(self, text, ref_audio, output_path, language="en", max_duration=None):
@@ -315,10 +268,3 @@ class TTSWrapper:
     def __del__(self):
         if hasattr(self, "client"):
             self.client.stop_server()
-
-
-class XTTSWrapper(TTSWrapper):
-    """Compatibility wrapper for XTTS v2 Backend."""
-
-    def __init__(self, gpu_id=0):
-        super().__init__(gpu_id=gpu_id, backend="xtts")

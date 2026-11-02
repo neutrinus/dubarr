@@ -35,12 +35,10 @@ The system is designed as a **Modular Monolith** with a clear separation between
     - `monitor.py`: Resource usage monitoring.
 
 ### 2.4. Internal Microservices
--   **TTS Server (`src/omnivoice_server.py`, default; `src/tts_server.py`, legacy XTTS):**
-    -   **Responsibility:** Hosts the speech synthesis engine (OmniVoice, or Coqui-TTS XTTS v2 with `TTS_BACKEND=xtts`).
-    -   **Architecture:** Runs as a separate Flask process on `localhost:5051` (OmniVoice, on the app's own interpreter) or
-        `localhost:5050` (XTTS, in its own Python 3.10 venv `.venv_xtts`, only in images built with `WITH_XTTS=1`).
-    -   **Reason:** A separate process can be restarted after a CUDA error without killing the worker. XTTS additionally
-        needs `transformers<5`, which conflicts with OmniVoice.
+-   **TTS Server (`src/omnivoice_server.py`):**
+    -   **Responsibility:** Hosts the OmniVoice speech synthesis engine.
+    -   **Architecture:** Runs as a separate Flask process on `localhost:5051`, on the app's own interpreter.
+    -   **Reason:** A separate process can be restarted after a CUDA error without killing the worker.
     -   **Lifecycle:** The main application (`src/infrastructure/tts_client.py`) manages the startup and shutdown of this subprocess.
 
 ## 3. Data Flow
@@ -64,8 +62,7 @@ The system is designed as a **Modular Monolith** with a clear separation between
 ## 4. Key Technical Decisions
 
 -   **Single Python Environment:** The Docker image has one Python 3.12 venv (`.venv`) for the app, Whisper, Pyannote,
-    Demucs, llama-cpp and OmniVoice. Only the optional legacy XTTS backend gets a second venv (`.venv_xtts`, Python 3.10,
-    `--build-arg WITH_XTTS=1`).
+    Demucs, llama-cpp and OmniVoice.
 -   **Step Caching:** The pipeline checks `job_steps` in the DB before running a stage. If a result exists, it's skipped. This allows resuming failed jobs without re-processing expensive steps.
 -   **Internal RPC (GPU Services):** Resource-heavy tasks (LLM, TTS) are offloaded to dedicated service threads with priority queues.
     -   **LLM Stability:** Due to thread-safety limitations in `llama-cpp-python` (CUDA), the `LLMService` is restricted to **1 worker thread** to prevent Segmentation Faults.

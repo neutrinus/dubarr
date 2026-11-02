@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 import os
 import sys
 import tempfile
-from infrastructure.tts_client import OmniVoiceClient, TTSWrapper, XTTSClient, XTTSWrapper, write_ref_text
+from infrastructure.tts_client import OmniVoiceClient, TTSWrapper, write_ref_text
 import requests
 
 
@@ -11,7 +11,7 @@ class TestTTSClient(unittest.TestCase):
     def setUp(self):
         self.mock_mode_patcher = patch("infrastructure.tts_client.MOCK_MODE", False)
         self.mock_mode_patcher.start()
-        self.client = XTTSClient(gpu_id=0, port=5050)
+        self.client = OmniVoiceClient(gpu_id=0, port=5051)
         self.client.PYTHON_PATH = sys.executable
 
     def tearDown(self):
@@ -49,9 +49,8 @@ class TestTTSClient(unittest.TestCase):
     @patch("requests.get", side_effect=requests.exceptions.ConnectionError())
     @patch("subprocess.Popen")
     def test_start_server_missing_interpreter(self, mock_popen, mock_get):
-        # e.g. TTS_BACKEND=xtts on an image built without WITH_XTTS=1
-        self.client.PYTHON_PATH = "/nonexistent/.venv_xtts/bin/python3"
-        with self.assertRaisesRegex(RuntimeError, "WITH_XTTS=1"):
+        self.client.PYTHON_PATH = "/nonexistent/bin/python3"
+        with self.assertRaisesRegex(RuntimeError, "OMNIVOICE_PYTHON"):
             self.client.start_server()
         mock_popen.assert_not_called()
 
@@ -80,11 +79,12 @@ class TestTTSClient(unittest.TestCase):
             self.client.synthesize("text", "ref.wav", "out.wav", "pl")
 
 
-class TestXTTSWrapper(unittest.TestCase):
-    @patch("infrastructure.tts_client.XTTSClient.start_server")
+class TestTTSWrapper(unittest.TestCase):
+    @patch("infrastructure.tts_client.OmniVoiceClient.start_server")
     def test_wrapper_init(self, mock_start):
-        wrapper = XTTSWrapper(gpu_id=1)
+        wrapper = TTSWrapper(gpu_id=1)
         mock_start.assert_called_once()
+        self.assertIsInstance(wrapper.client, OmniVoiceClient)
         self.assertEqual(wrapper.client.gpu_id, 1)
 
 
@@ -118,15 +118,3 @@ class TestOmniVoiceClient(unittest.TestCase):
         mock_post.return_value.status_code = 200
         self.client.synthesize("Cześć", os.path.join(self.tmp, "none.wav"), "out.wav", "pl")
         self.assertIsNone(mock_post.call_args[1]["json"]["ref_text"])
-
-    def test_unknown_backend(self):
-        with self.assertRaises(ValueError):
-            TTSWrapper(backend="nope")
-
-    @patch("requests.post")
-    def test_xtts_ignores_duration(self, mock_post):
-        mock_post.return_value.status_code = 200
-        XTTSClient().synthesize("text", "ref.wav", "out.wav", "sv", max_duration=2.0)
-        payload = mock_post.call_args[1]["json"]
-        self.assertNotIn("max_duration", payload)
-        self.assertEqual(payload["language"], "en")

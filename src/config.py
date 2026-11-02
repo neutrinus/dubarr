@@ -40,15 +40,12 @@ print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 
-# Legacy XTTS server: interpreter of its own Python 3.10 venv (only in images built with WITH_XTTS=1,
-# Coqui needs transformers<5)
-TTS_PYTHON = os.environ.get("TTS_PYTHON", "/app/.venv_xtts/bin/python3")
-# Seconds per TTS request, for either backend (raise it on CPU, synthesis is slow there)
+# Seconds per TTS request (raise it on CPU, synthesis is slow there)
 TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))
 
-# Speech synthesis backend: "omnivoice" (default) or "xtts". The OmniVoice server runs as a separate process
-# on the app's own interpreter by default.
-TTS_BACKEND = os.environ.get("TTS_BACKEND", "omnivoice").lower()
+# Speech synthesis is OmniVoice. Its server runs as a separate process, on the app's own interpreter by default.
+if os.environ.get("TTS_BACKEND", "omnivoice").lower() != "omnivoice":
+    print("WARNING: TTS_BACKEND is no longer used, XTTS was removed; OmniVoice is the only TTS backend.", flush=True)
 OMNIVOICE_PYTHON = os.environ.get("OMNIVOICE_PYTHON", sys.executable)
 
 # Media metadata (show/episode or movie, synopsis, cast) as context for the translator.

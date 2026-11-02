@@ -1,8 +1,8 @@
-from infrastructure.tts_client import XTTSClient
+from infrastructure.tts_client import OmniVoiceClient
 
 
 def test_text_sanitization():
-    client = XTTSClient()
+    client = OmniVoiceClient()
 
     # Test cases for problematic characters
     assert client.sanitize_text("Tekst…") == "Tekst..."
@@ -15,5 +15,5 @@ def test_text_sanitization():
 
 if __name__ == "__main__":
     # Manual run check
-    client = XTTSClient()
+    client = OmniVoiceClient()
     print(f"Sanitized '…': {client.sanitize_text('…')}")
