@@ -27,6 +27,20 @@ The system verifies model presence and downloads missing files. To maximize avai
     *   `diarization.json` (Time ranges mapped to speakers).
     *   `transcription.json` (Text segments with timestamps).
 
+#### 2.2a Dialogue units (script creation)
+Whisper splits speech into segments that often end mid-sentence. Translating such fragments one by one loses or
+duplicates content, because the target language orders the sentence differently. The script is therefore built from
+**dialogue units**:
+1.  Each Whisper segment gets the speaker with the largest overlap. A segment whose length is far beyond what its words
+    can take (e.g. one word stretched over 25 s of music) is clamped to `max(2 s, 1 s + syllables / 1.5)`.
+2.  Consecutive segments of the same speaker are joined when the pause between them is under `MERGE_MAX_GAP` (0.3 s) and
+    the unit stays under `MERGE_MAX_DURATION` (10 s), **or** when the earlier one does not end a sentence (no `.`, `!`,
+    `?`, `…`), the pause is under `SENTENCE_MAX_GAP` (1.5 s) and the unit stays under `SENTENCE_MAX_DURATION` (20 s).
+3.  Lines shorter than `MIN_SEGMENT_DURATION` are joined with a same-speaker neighbour.
+4.  Each unit has a **time budget**: `end - start` is the time the original speaks (the target), and `max_end` adds the
+    silence after it, up to `SLACK_AFTER_MAX` (1.5 s) and minus a 0.15 s guard before the next speech (the hard limit).
+    The silence before a unit is never used.
+
 ### 2.2b Stage 2b: Media Metadata
 *   **Input:** Path of the video.
 *   **Action:**
@@ -64,19 +78,38 @@ The system verifies model presence and downloads missing files. To maximize avai
 ### 2.5 Stage 5: Production (Global Task Pool)
 *   **Action:** All segments from all `target_langs` are combined into a single task pool to maximize resource utilization.
 *   **Workflow:**
-    1.  **Draft Translation:** LLM generates drafts for all languages (sequential batching).
+    1.  **Draft Translation:** LLM generates drafts for all languages (see 2.5a).
     2.  **Global Task Queue:** A unified list of all segments is created.
     3.  **Concurrent Execution:** A global Thread Pool of orchestrators processes segments.
     4.  **Sync Loop:** Each segment uses `LLMService` and `TTSService` via RPC.
 *   **Resource Management:** GPU-heavy tasks are prioritized (Refinement > Drafting) across all languages simultaneously.
 *   **Output:** `final_{lang}_{index}.wav` segments, sorted and grouped by language.
 
+#### 2.5a Draft translation
+The goal is a complete translation that fits the timing. Run time is secondary.
+1.  **Syllable budget per line.** The translator gets, per line, `min_syllables`, `target_syllables` and `max_syllables`,
+    derived from the time budget and `DUB_SYLLABLES_PER_SECOND` (default 5.0, the pace of the synthesized voice):
+    target = speech time × rate, max = time to `max_end` × rate, min = 75% of the target. LLMs keep syllable counts much
+    better than seconds.
+2.  **Windows with context.** Lines are translated in windows of `TRANSLATION_WINDOW` lines (default 20). Each request
+    also shows the previous 6 lines with their final translations and the next 4 source lines, read-only, so the
+    translation reads as one text and terms, forms of address and gender stay consistent.
+3.  **Information is moved, not dropped.** The translator must keep every piece of information of the window: names,
+    numbers, results, reasons, who does what. Fillers ("you know", "well", repetitions) go first. When a line cannot
+    hold everything within its `max_syllables`, the information may move to a neighbouring line of the same speaker that
+    has spare budget. It must never move to another speaker.
+4.  **Completeness review** (`TRANSLATION_REVIEW=on`, default). A second LLM pass compares each window's source and
+    translation, lists the information that is missing or wrong and returns corrected lines within their budgets. Only
+    the corrected lines are replaced.
+5.  Lines that are pure sound markers (`[music]`, `(laughter)`) are not dubbed.
+
 ### 2.6 Stage 6: Final Mix
-*   **Input:** `final_{lang}_{index}.wav` segments, `accompaniment.wav`.
+*   **Input:** `final_{lang}_{index}.wav` segments, `orig.wav`.
 *   **Action:**
     1.  Merges all speech segments into a single track.
-    2.  Mixes with background music.
-    3.  Applies "ducking" (lowering music volume during speech) if configured.
+    2.  Mixes it over the **original** audio (not the Demucs accompaniment, which also removes part of the sound effects).
+    3.  Sidechain ducking lowers the original while the dub speaks; a low-passed copy of the original ("ambient ghost")
+        keeps the room sound.
 *   **Output:**
     *   `final_{lang}.ac3` (Mixed audio track).
 
