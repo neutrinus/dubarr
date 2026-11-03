@@ -70,6 +70,8 @@ class SegmentSynchronizer:
             else:
                 # Interjections ("Wow.", "O!") are spelled too freely by the ASR to compare
                 check = self._intelligibility(text, result["audio_path"], lang) if count_syllables(text, lang) >= 4 else None
+                if check is not None:
+                    result = dict(result, similarity=round(check[0], 2), heard=check[1])
                 if check is None or check[0] >= TAKE_MIN_SIMILARITY:
                     return result, duration, False
                 score = check[0]
@@ -209,13 +211,22 @@ class SegmentSynchronizer:
                     "duration": actual_dur,
                     "delta": delta,
                     "broken": broken,
+                    "voice_type": result.get("voice_type"),
+                    "similarity": result.get("similarity"),
+                    "heard": result.get("heard"),
                 }
             )
 
             if not too_long and not too_short and not broken:
                 logger.info(f"[ID: {idx}] ACCEPTED (Duration: {actual_dur:.2f}s, Target: {speech_dur:.2f}s)")
                 self._cleanup(attempts, attempt_path)
-                return {"audio_path": attempt_path, "final_text": current_text, "duration": actual_dur, "status": "ACCEPTED"}
+                return {
+                    "audio_path": attempt_path,
+                    "final_text": current_text,
+                    "duration": actual_dur,
+                    "status": "ACCEPTED",
+                    **self._report_fields(attempts[-1], len(attempts)),
+                }
 
             if attempt >= attempt_limit:
                 break
@@ -264,6 +275,7 @@ class SegmentSynchronizer:
                         "final_text": current_text,
                         "duration": actual_dur,
                         "status": "ACCEPTED",
+                        **self._report_fields(attempts[-1], len(attempts)),
                     }
                 logger.info(f"[ID: {idx}] LLM made no changes. Stopping early.")
                 break
@@ -308,6 +320,17 @@ class SegmentSynchronizer:
             "final_text": best_attempt["text"],
             "duration": best_attempt["duration"],
             "status": status,
+            **self._report_fields(best_attempt, len(attempts)),
+        }
+
+    @staticmethod
+    def _report_fields(attempt: Dict, count: int) -> Dict:
+        """What the per-line report (DEBUG) shows about the chosen take."""
+        return {
+            "voice_type": attempt.get("voice_type"),
+            "similarity": attempt.get("similarity"),
+            "heard": attempt.get("heard"),
+            "attempts": count,
         }
 
     @staticmethod

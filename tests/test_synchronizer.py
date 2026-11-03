@@ -246,6 +246,8 @@ class TestTakeCheck(unittest.TestCase):
 
         self.assertEqual(res["status"], "ACCEPTED")
         self.assertEqual(res["duration"], 3.7)
+        self.assertEqual((res["voice_type"], res["attempts"]), ("GOLDEN", 1))
+        self.assertGreater(res["similarity"], 0.8)
         self.assertEqual(self.tts.synthesize_sync.call_args_list[1].args[0]["skip_refs"], ["DYNAMIC"])
 
     def test_least_broken_take_is_kept_when_every_reference_fails(self):

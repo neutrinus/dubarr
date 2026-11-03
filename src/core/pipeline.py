@@ -18,6 +18,7 @@ from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
 from infrastructure.monitor import ResourceMonitor
 from core.audio import prep_audio, analyze_audio, mix_audio, clarity_db
+from core.report import report_rows, summary as report_summary, write_report
 from utils import clean_srt, measure_zcr, run_cmd
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
@@ -665,6 +666,17 @@ class DubbingPipeline:
         finally:
             if hasattr(self.whisper_manager, "shutdown_take_check"):
                 self.whisper_manager.shutdown_take_check()
+
+        # Per-line report: a summary in the log, the whole table in the debug folder (Spec 001, 2.5)
+        for lang in self.target_langs:
+            try:
+                if self.debug_mode:
+                    summary = write_report(os.path.join(ddir, f"report_{lang}.tsv"), script, sync_results_by_lang[lang])
+                else:
+                    summary = report_summary(report_rows(script, sync_results_by_lang[lang]))
+                logger.info(f"Production report ({lang}): {summary}")
+            except Exception as e:
+                logger.warning(f"Production report ({lang}) failed: {e}")
 
         # Without any dubbed line the "dubbed" track would only be the ducked original, so fail the task instead
         silent_langs = [lang for lang, drafts in all_drafts_by_lang.items() if drafts and not sync_results_by_lang[lang]]
