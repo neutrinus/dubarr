@@ -154,6 +154,7 @@ class TTSManager:
                 "audio_path": result["payload"]["raw_path"],
                 "duration": result["duration"],
                 "voice_type": result["payload"]["voice_type"],
+                "ref": result["payload"].get("ref"),
             }
         return None
 
@@ -200,18 +201,32 @@ class TTSManager:
         else:
             return self.engine.synthesize(*args, **kwargs)
 
-    def _synthesize_chunked(self, text: str, ref_audio: str, out_path: str, lang: str, slot_dur: float, idx: int):
-        """Synthesizes a line, splitting long ones so no single call generates a very long clip."""
+    def _synthesize_chunked(
+        self, text: str, ref_audio: str, out_path: str, lang: str, slot_dur: float, idx: int, limit_dur: float = None
+    ):
+        """Synthesizes a line, splitting long ones so no single call generates a very long clip.
+
+        ``slot_dur`` is how long the original speaks (the target), ``limit_dur`` the latest end including the silence
+        after the line. Each chunk gets its share of both.
+        """
+        limit_dur = max(limit_dur or slot_dur, slot_dur)
         chunks = split_for_tts(text, slot_dur)
         if len(chunks) < 2:
-            self._run_synthesis(text, ref_audio, out_path, language=lang, max_duration=slot_dur)
+            self._run_synthesis(text, ref_audio, out_path, language=lang, max_duration=limit_dur, target_duration=slot_dur)
             return
 
         logging.info(f"TTS: [ID: {idx}] {slot_dur:.1f}s line split into {len(chunks)} chunks")
         chunk_paths = []
         for i, (chunk_text, chunk_dur) in enumerate(chunks):
             chunk_path = os.path.join(self.temp_dir, f"chunk_{lang}_{idx}_{i}.wav")
-            self._run_synthesis(chunk_text, ref_audio, chunk_path, language=lang, max_duration=chunk_dur)
+            self._run_synthesis(
+                chunk_text,
+                ref_audio,
+                chunk_path,
+                language=lang,
+                max_duration=chunk_dur * limit_dur / slot_dur,
+                target_duration=chunk_dur,
+            )
             chunk_paths.append(chunk_path)
 
         try:
@@ -240,8 +255,8 @@ class TTSManager:
         spk = item["speaker"]
         idx = item["index"]
 
-        # 1. Select Reference Audio (Migration Strategy)
-        chosen_ref, voice_type = self._select_reference(item, vocals_path, lang)
+        # 1. Select Reference Audio (Migration Strategy); a retry skips the references already tried
+        chosen_ref, voice_type = self._select_reference(item, vocals_path, lang, skip=item.get("skip_refs") or ())
 
         # 2. Prepare TTS inputs
         clean_text = item["text"].strip()
@@ -250,6 +265,7 @@ class TTSManager:
 
         # 3. Calculate constraints
         slot_dur = item["end"] - item["start"]
+        limit_dur = item.get("max_end", item["end"]) - item["start"]
         syl_count = count_syllables(clean_text, lang)
         max_allowed_dur = max((syl_count * 0.4) + 1.5, slot_dur + 1.5)
 
@@ -259,7 +275,7 @@ class TTSManager:
                 return None
 
             t0 = time.perf_counter()
-            self._synthesize_chunked(clean_text, chosen_ref, raw_path, lang, slot_dur, idx)
+            self._synthesize_chunked(clean_text, chosen_ref, raw_path, lang, slot_dur, idx, limit_dur)
 
             dt = time.perf_counter() - t0
 
@@ -271,6 +287,7 @@ class TTSManager:
                     "raw_path": raw_path,
                     "max_dur": max_allowed_dur,
                     "voice_type": voice_type,
+                    "ref": chosen_ref,
                     "lang": lang,
                 }
 
@@ -288,7 +305,7 @@ class TTSManager:
         self.speaker_refs = dict(speaker_refs or {})
         self.last_good_samples = {}
 
-    def _select_reference(self, item: Dict, vocals_path: str, lang: str = ""):
+    def _select_reference(self, item: Dict, vocals_path: str, lang: str = "", skip=()):
         """Implements the Voice Migration Strategy hierarchy.
 
         OmniVoice clones well from 3-10 s, so a clean clip of the line itself is tried first:
@@ -298,10 +315,11 @@ class TTSManager:
         spk = item["speaker"]
         idx = item["index"]
         dur = item["end"] - item["start"]
+        skip = set(skip or ())
         golden_ref = self.speaker_refs.get(spk)
-        has_golden = bool(golden_ref and os.path.exists(golden_ref))
+        has_golden = bool(golden_ref and os.path.exists(golden_ref) and golden_ref not in skip)
 
-        use_line = LINE_REF_RANGE[0] <= dur <= LINE_REF_RANGE[1]
+        use_line = LINE_REF_RANGE[0] <= dur <= LINE_REF_RANGE[1] and "DYNAMIC" not in skip
 
         # 1. Dynamic extraction from the line itself
         if use_line:
@@ -314,18 +332,19 @@ class TTSManager:
             return golden_ref, "GOLDEN"
 
         # 3. Last Good dynamic sample of this speaker
-        if spk in self.last_good_samples and os.path.exists(self.last_good_samples[spk]):
-            return self.last_good_samples[spk], "LAST_GOOD"
+        last_good = self.last_good_samples.get(spk)
+        if last_good and os.path.exists(last_good) and last_good not in skip:
+            return last_good, "LAST_GOOD"
 
         # 4. Global Fallback (Any Golden or Last Good)
         # If we reach here, we have no specific reference for this speaker.
         # We pick the first available one from Golden refs, then Last Good.
-        all_goldens = [p for p in self.speaker_refs.values() if os.path.exists(p)]
+        all_goldens = [p for p in self.speaker_refs.values() if os.path.exists(p) and p not in skip]
         if all_goldens:
             logging.info(f"TTS: [ID: {idx}] Using Global Golden fallback for speaker {spk}")
             return all_goldens[0], "FALLBACK_GOLDEN"
 
-        all_last_goods = [p for p in self.last_good_samples.values() if os.path.exists(p)]
+        all_last_goods = [p for p in self.last_good_samples.values() if os.path.exists(p) and p not in skip]
         if all_last_goods:
             logging.info(f"TTS: [ID: {idx}] Using Global LastGood fallback for speaker {spk}")
             return all_last_goods[0], "FALLBACK_LASTGOOD"

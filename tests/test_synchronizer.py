@@ -120,3 +120,94 @@ class TestSynchronizer(unittest.TestCase):
             with wave.open(res["audio_path"], "rb") as wav:
                 self.assertEqual(wav.getframerate(), 24000)
                 self.assertEqual(wav.getnframes(), 60000)
+
+
+class TestSyncContentKeeping(unittest.TestCase):
+    def setUp(self):
+        self.llm = MagicMock()
+        self.tts = MagicMock()
+        self.sync = SegmentSynchronizer(self.llm, self.tts, "/tmp")
+
+    def run_segment(self, segment, durations, **kwargs):
+        with patch("core.synchronizer.FFmpegWrapper.get_duration", side_effect=durations):
+            with patch("shutil.copy"), patch("os.path.exists", return_value=False):
+                return self.sync.process_segment(segment, "pl", "voc.wav", [], {}, **kwargs)
+
+    def test_swallowed_take_is_synthesized_again_with_another_reference(self):
+        # "A niebieski kwadrat." came back as 0.64 s of audio: mostly silence trimmed by OmniVoice
+        segment = {
+            "index": 28,
+            "text_en": "And the blue square!",
+            "text": "A niebieski kwadrat.",
+            "start": 0,
+            "end": 1.6,
+            "speaker": "A",
+        }
+        self.tts.synthesize_sync.side_effect = [
+            {"audio_path": "a.wav", "duration": 0.6, "voice_type": "DYNAMIC", "ref": "dyn.wav"},
+            {"audio_path": "b.wav", "duration": 1.4, "voice_type": "GOLDEN", "ref": "gold.wav"},
+        ]
+
+        res = self.run_segment(segment, [0.64, 1.45])
+
+        self.assertEqual(res["status"], "ACCEPTED")
+        self.assertEqual(res["duration"], 1.45)
+        retry_item = self.tts.synthesize_sync.call_args_list[1].args[0]
+        self.assertEqual(retry_item["skip_refs"], ["DYNAMIC"])
+        self.llm.refine_translation_by_duration.assert_not_called()
+
+    def test_take_swallowed_on_every_reference_is_not_reworded(self):
+        segment = {
+            "index": 3,
+            "text_en": "x",
+            "text": "Mark DeVitz, geniusz elektroniki.",
+            "start": 0,
+            "end": 4.0,
+            "speaker": "A",
+        }
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 0.5, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment(segment, [0.5, 0.5, 0.5])
+
+        self.assertEqual(self.tts.synthesize_sync.call_count, 3)
+        self.llm.refine_translation_by_duration.assert_not_called()
+        self.assertNotEqual(res["status"], "ACCEPTED")
+
+    def test_too_short_take_is_expanded(self):
+        segment = {
+            "index": 0,
+            "text_en": "Part of the reason is two mini-bots",
+            "text": "To Plan Eks.",
+            "start": 0,
+            "end": 5.0,
+            "speaker": "A",
+        }
+        self.tts.synthesize_sync.side_effect = [
+            {"audio_path": "a.wav", "duration": 1.5, "voice_type": "GOLDEN", "ref": "g"},
+            {"audio_path": "b.wav", "duration": 4.6, "voice_type": "GOLDEN", "ref": "g"},
+        ]
+        self.llm.refine_translation_by_duration.return_value = "To Plan Eks, częściowo dlatego, że ma dwa miniboty."
+
+        res = self.run_segment(segment, [1.5, 4.6])
+
+        self.assertEqual(res["status"], "ACCEPTED")
+        self.assertEqual(res["final_text"], "To Plan Eks, częściowo dlatego, że ma dwa miniboty.")
+        self.assertEqual(self.llm.refine_translation_by_duration.call_args.kwargs["target_dur"], 5.0)
+
+    def test_short_original_stays_short_when_nothing_can_be_added(self):
+        segment = {"index": 0, "text_en": "Wow!", "text": "Łał!", "start": 0, "end": 2.0, "speaker": "A"}
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 0.6, "voice_type": "GOLDEN", "ref": "g"}
+        self.llm.refine_translation_by_duration.return_value = "Łał!"
+
+        res = self.run_segment(segment, [0.6])
+
+        self.assertEqual(res["status"], "ACCEPTED")
+        self.assertEqual(self.tts.synthesize_sync.call_count, 1)
+
+    def test_refinement_sees_neighbouring_translations(self):
+        script = [
+            {"text_en": "Before", "translations": {"pl": "Przed"}},
+            {"text_en": "Now"},
+            {"text_en": "After", "translations": {"pl": "Po"}},
+        ]
+        self.assertEqual(SegmentSynchronizer._neighbours(script, 1, "pl"), ("Before => Przed", "After => Po"))
