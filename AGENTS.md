@@ -142,7 +142,7 @@ why the image used to need separate venvs.
 | `MIN_SEGMENT_DURATION` | `1.2` | Lines shorter than this are joined with a same-speaker neighbour; a sub-second slot can only produce a clipped fragment. |
 | `MAX_ACCEPT_SPEEDUP` | `1.08` | A take may overrun its slot by this much; the mix speeds it up instead of the LLM deleting words. |
 | `SENTENCE_MAX_GAP` / `SENTENCE_MAX_DURATION` | `1.5` / `20` | A same-speaker line that does not end a sentence is joined with the next across this pause, up to this length, so whole sentences get translated. |
-| `SLACK_AFTER_MAX` | `1.5` | How far a take may run into the silence after its line. |
+| `SLACK_AFTER_MAX` / `SLACK_BEFORE_MAX` | `1.5` / `0.5` | How far a take may run into the silence after its line, and how much earlier a still-too-long take may start in the silence before it. |
 | `DUB_SYLLABLES_PER_SECOND` | `5.0` | Pace of the synthesized voice; turns each line's time budget into a syllable budget for the translator. |
 | `TRANSLATION_WINDOW` / `TRANSLATION_REVIEW` | `20` / `on` | Lines per translation request; second LLM pass that restores missing information. |
 | `TTS_FILL_RATIO` / `TTS_MIN_SPEED` / `TTS_MAX_SPEEDUP` | `0.9` / `0.88` / `1.2` | OmniVoice duration control: slow short takes down towards the original's timing, speed long ones up, both only within this range. |

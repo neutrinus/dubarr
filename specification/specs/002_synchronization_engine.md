@@ -12,7 +12,7 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
 
 ### 2.1 Inputs
 -   **Time budget** (see Spec 001, 2.2a): the **target** is the time the original speaks (`end - start`); the **limit**
-    is `max_end - start`, which includes the silence after the line.
+    is `max_end - min_start`: the silence after the line, plus a little silence before it (Spec 001, 2.2a).
 -   **Current Text:** The translated text (starts with the draft).
 -   **Speaker Profile:** Reference audio and style settings.
 -   **Full Script Context:** Surrounding lines (source and translation) for grammatical continuity.
@@ -58,7 +58,9 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
 A retry after a swallowed take skips the references already tried for that line.
 
 ### 2.4 Post-Processing (Speed Adjustment)
-The final mix speeds a take up (pitch-preserving `atempo`) when it still overruns its limit, by at most 1.2x. Takes are
+A take that would run past `max_end` starts earlier in the mix, by its overrun but not before `min_start` and never
+before the previous dubbed line has ended. The final mix speeds a take up (pitch-preserving `atempo`) when it still
+overruns, by at most 1.2x. Takes are
 never stretched in the mix; slowing down is done by OmniVoice, which sounds natural.
 
 ## 3. Configuration

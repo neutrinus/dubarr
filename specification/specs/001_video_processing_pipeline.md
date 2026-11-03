@@ -38,8 +38,10 @@ duplicates content, because the target language orders the sentence differently.
     `?`, `…`), the pause is under `SENTENCE_MAX_GAP` (1.5 s) and the unit stays under `SENTENCE_MAX_DURATION` (20 s).
 3.  Lines shorter than `MIN_SEGMENT_DURATION` are joined with a same-speaker neighbour.
 4.  Each unit has a **time budget**: `end - start` is the time the original speaks (the target), and `max_end` adds the
-    silence after it, up to `SLACK_AFTER_MAX` (1.5 s) and minus a 0.15 s guard before the next speech (the hard limit).
-    The silence before a unit is never used.
+    silence after it, up to `SLACK_AFTER_MAX` (1.5 s) and minus a 0.15 s guard before the next speech; `min_start`
+    allows up to `SLACK_BEFORE_MAX` (0.5 s) of the silence before it, minus the same guard. The hard limit is
+    `max_end - min_start`. The silence after is used first; a take starts early only when it would still run past
+    `max_end`, and never before the previous dubbed line has ended.
 
 ### 2.2b Stage 2b: Media Metadata
 *   **Input:** Path of the video.
@@ -89,7 +91,7 @@ duplicates content, because the target language orders the sentence differently.
 The goal is a complete translation that fits the timing. Run time is secondary.
 1.  **Syllable budget per line.** The translator gets, per line, `min_syllables`, `target_syllables` and `max_syllables`,
     derived from the time budget and `DUB_SYLLABLES_PER_SECOND` (default 5.0, the pace of the synthesized voice):
-    target = speech time × rate, max = time to `max_end` × rate, min = 75% of the target. LLMs keep syllable counts much
+    target = speech time × rate, max = (`max_end - min_start`) × rate, min = 75% of the target. LLMs keep syllable counts much
     better than seconds.
 2.  **Windows with context.** Lines are translated in windows of `TRANSLATION_WINDOW` lines (default 20). Each request
     also shows the previous 6 lines with their final translations and the next 4 source lines, read-only, so the
