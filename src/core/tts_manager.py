@@ -9,7 +9,7 @@ import subprocess
 from typing import List, Dict, Optional, Any, Tuple
 from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
 from utils import measure_zcr, count_syllables
-from config import MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS, REF_MIN_CLARITY_DB
+from config import MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS, REF_MIN_CLARITY_DB, TAKE_MIN_SIMILARITY
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
 
@@ -100,7 +100,11 @@ class TTSManager:
         self.device = "cpu"
         self.inference_lock = inference_lock
         self.temp_dir = temp_dir
-        self.speaker_refs = speaker_refs  # Golden samples
+        self.speaker_refs = {}  # speaker -> reference candidates, best first (Spec 002, 2.3)
+        self.genders = {}
+        self.audition = {}  # reference path -> audition score, when the voice audition ran
+        self.line_refs_off = set()  # speakers whose voice clones badly; they skip line clips
+        self.set_speaker_refs(speaker_refs)
         self.abort_event = abort_event
         self.service = service
         self.last_good_samples = {}
@@ -310,55 +314,88 @@ class TTSManager:
                 return {"payload": payload, "duration": dt}
             else:
                 logging.warning(f"TTS: [ID: {idx}] Produced invalid/empty file.")
-                return None
-
         except Exception as e:
             logging.error(f"TTS: [ID: {idx}] Gen failed: {e}")
-            return None
+        # No audio, but the caller learns which reference failed and can try another one
+        return {"payload": {"item": item, "raw_path": None, "voice_type": voice_type, "ref": chosen_ref}, "duration": 0.0}
 
-    def set_speaker_refs(self, speaker_refs: Dict):
-        """Installs the golden references of the current video and drops samples left over from the previous one."""
-        self.speaker_refs = dict(speaker_refs or {})
+    def set_speaker_refs(self, speaker_refs: Dict, genders: Optional[Dict[str, str]] = None):
+        """Installs the references of the current video (speaker -> path or candidate list, best first).
+
+        Drops the samples and the audition left over from the previous video.
+        """
+        self.speaker_refs = {
+            spk: [p for p in ([refs] if isinstance(refs, str) else list(refs or [])) if p]
+            for spk, refs in (speaker_refs or {}).items()
+        }
+        self.genders = {spk: (g or "").lower() for spk, g in (genders or {}).items()}
+        self.audition = {}
+        self.line_refs_off = set()
         self.last_good_samples = {}
 
-    def _select_reference(self, item: Dict, vocals_path: str, lang: str = "", skip=()):
-        """Implements the Voice Migration Strategy hierarchy.
+    def apply_audition(self, scores: Dict[str, Dict[str, float]], line_ref_min: float):
+        """Ranks each speaker's candidates by their audition score (speaker -> {path: score}); Spec 002, 2.3."""
+        for spk, by_path in scores.items():
+            refs = self.speaker_refs.get(spk) or []
+            self.audition.update(by_path)
+            # Stable sort: equal scores keep the Stage 4 order
+            self.speaker_refs[spk] = sorted(refs, key=lambda p: -by_path.get(p, -1.0))
+            best = max(by_path.values(), default=None)
+            if best is not None and best < line_ref_min:
+                self.line_refs_off.add(spk)
 
-        OmniVoice clones well from 3-10 s, so a clean clip of the line itself is tried first:
-        it carries the emotion of the scene. Shorter and longer lines use the golden reference
-        (a long, clean, scored sample of the speaker).
+    def _ref_order(self, spk: str) -> List[Tuple[str, str]]:
+        """Every reference this speaker may use after the line clip, as (path or LAST_GOOD, voice type), in order."""
+        own = self.speaker_refs.get(spk) or []
+        good = [p for p in own if self.audition.get(p, 1.0) >= TAKE_MIN_SIMILARITY]
+        weak = [p for p in own if p not in good]
+
+        def best_first(paths):
+            return sorted(paths, key=lambda p: -self.audition.get(p, 0.5))
+
+        gender = self.genders.get(spk, "")
+        others = [(o, refs[0]) for o, refs in self.speaker_refs.items() if o != spk and refs]
+        same = [p for o, p in others if gender and self.genders.get(o) == gender]
+        rest = [p for o, p in others if p not in same]
+        rest += [p for o, refs in self.speaker_refs.items() if o != spk for p in refs[1:]]
+
+        order = [(p, "GOLDEN") for p in good] + [("LAST_GOOD", "LAST_GOOD")]
+        order += [(p, "BORROWED") for p in best_first(same)]
+        order += [(p, "GOLDEN") for p in weak]
+        order += [(p, "FALLBACK_GOLDEN") for p in best_first(rest)]
+        return order
+
+    def _select_reference(self, item: Dict, vocals_path: str, lang: str = "", skip=()):
+        """Picks the voice reference for a line (Spec 002, 2.3); a retry skips the references already tried.
+
+        OmniVoice clones well from 3-10 s, so a clean clip of the line itself is tried first: it carries the emotion
+        of the scene. Then the speaker's own references, best audition score first; then the voice of another speaker
+        of the same gender, which is better than a broken clone; anything else comes last.
         """
         spk = item["speaker"]
         idx = item["index"]
         dur = item["end"] - item["start"]
         skip = set(skip or ())
-        golden_ref = self.speaker_refs.get(spk)
-        has_golden = bool(golden_ref and os.path.exists(golden_ref) and golden_ref not in skip)
-
-        use_line = LINE_REF_RANGE[0] <= dur <= LINE_REF_RANGE[1] and "DYNAMIC" not in skip
 
         # 1. Dynamic extraction from the line itself
+        use_line = LINE_REF_RANGE[0] <= dur <= LINE_REF_RANGE[1] and "DYNAMIC" not in skip and spk not in self.line_refs_off
         if use_line:
             dyn_ref = self._extract_line_ref(item, vocals_path, lang)
             if dyn_ref:
                 return dyn_ref, "DYNAMIC"
 
-        # 2. Golden (scored speaker reference)
-        if has_golden:
-            return golden_ref, "GOLDEN"
-
-        # 3. Last Good dynamic sample of this speaker
-        last_good = self.last_good_samples.get(spk)
-        if last_good and os.path.exists(last_good) and last_good not in skip:
-            return last_good, "LAST_GOOD"
-
-        # 4. Global Fallback (Any Golden or Last Good)
-        # If we reach here, we have no specific reference for this speaker.
-        # We pick the first available one from Golden refs, then Last Good.
-        all_goldens = [p for p in self.speaker_refs.values() if os.path.exists(p) and p not in skip]
-        if all_goldens:
-            logging.info(f"TTS: [ID: {idx}] Using Global Golden fallback for speaker {spk}")
-            return all_goldens[0], "FALLBACK_GOLDEN"
+        for path, voice_type in self._ref_order(spk):
+            if path == "LAST_GOOD":
+                path = self.last_good_samples.get(spk)
+                if spk in self.line_refs_off:
+                    continue
+            if not path or path in skip or not os.path.exists(path):
+                continue
+            if voice_type == "BORROWED":
+                logging.info(f"TTS: [ID: {idx}] Borrowing a same-gender voice for speaker {spk}: {os.path.basename(path)}")
+            elif voice_type == "FALLBACK_GOLDEN":
+                logging.info(f"TTS: [ID: {idx}] Using Global Golden fallback for speaker {spk}")
+            return path, voice_type
 
         all_last_goods = [p for p in self.last_good_samples.values() if os.path.exists(p) and p not in skip]
         if all_last_goods:

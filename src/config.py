@@ -117,12 +117,26 @@ MAX_PLAUSIBLE_SYLLABLES_PER_SECOND = float(os.environ.get("MAX_PLAUSIBLE_SYLLABL
 # the crowd or the engines are as loud as the voice and OmniVoice would clone them too.
 REF_MIN_CLARITY_DB = float(os.environ.get("REF_MIN_CLARITY_DB", "3.0"))
 
-# Take check (Spec 002): every take is transcribed and compared with its text; below TAKE_MIN_SIMILARITY it is
+
+# Take check (Spec 002): a take is transcribed and compared with its text; below TAKE_MIN_SIMILARITY it is
 # unintelligible (noise, screams, mangled words) and synthesized again with another voice reference.
-TAKE_CHECK = os.environ.get("TAKE_CHECK", "on").lower() not in ("0", "off", "false", "no")
+# on = the voice audition and every take; audition = only the audition (a few minutes); off = neither.
+def _take_check_mode(value: str) -> str:
+    value = value.strip().lower()
+    if value in ("0", "off", "false", "no"):
+        return "off"
+    return "audition" if value == "audition" else "on"
+
+
+TAKE_CHECK = _take_check_mode(os.environ.get("TAKE_CHECK", "on"))
 # cpu by default: a check model on the TTS card takes the VRAM OmniVoice needs for its peaks and makes it crash
 TAKE_CHECK_DEVICE = os.environ.get("TAKE_CHECK_DEVICE", "cpu").lower()
 TAKE_MIN_SIMILARITY = float(os.environ.get("TAKE_MIN_SIMILARITY", "0.5"))
+# A line whose every take is broken below this is left undubbed: the original beats gibberish
+TAKE_DROP_SIMILARITY = float(os.environ.get("TAKE_DROP_SIMILARITY", "0.3"))
+# Voice audition (Spec 002, 2.3): reference candidates kept per speaker, and the score a speaker needs to use line clips
+REF_AUDITION_CANDIDATES = max(1, int(os.environ.get("REF_AUDITION_CANDIDATES", "3")))
+AUDITION_LINE_REF_MIN = float(os.environ.get("AUDITION_LINE_REF_MIN", "0.8"))
 
 
 # Safe logging setup

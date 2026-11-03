@@ -12,7 +12,7 @@ from typing import List, Optional
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_BEFORE_MAX, SLACK_GUARD
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
 from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION, SENTENCE_MAX_GAP, SENTENCE_MAX_DURATION
-from config import TRANSLATION_REVIEW, TAKE_CHECK, REF_MIN_CLARITY_DB
+from config import TRANSLATION_REVIEW, TAKE_CHECK, REF_MIN_CLARITY_DB, REF_AUDITION_CANDIDATES, AUDITION_LINE_REF_MIN
 from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
@@ -22,6 +22,7 @@ from core.report import report_rows, summary as report_summary, write_report
 from utils import clean_srt, measure_zcr, run_cmd
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
+from core.voice_audition import audition_voices
 from core.gpu_services import LLMService, TTSService
 from core.media_context import lookup_media_info, format_media_context, format_short_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -78,13 +79,14 @@ class DubbingPipeline:
         self.speaker_pans = {}
         self.abort_event = llm_manager.abort_event
         self.monitor = None
-        take_checker = getattr(whisper_manager, "transcribe_take", None) if TAKE_CHECK else None
+        # The voice audition always uses the checker unless TAKE_CHECK=off; every take only with TAKE_CHECK=on
+        self.take_checker = getattr(whisper_manager, "transcribe_take", None) if TAKE_CHECK != "off" else None
         self.synchronizer = SegmentSynchronizer(
             llm_manager=llm_manager,
             tts_manager=tts_manager,
             temp_dir=temp_dir,
             debug_mode=debug_mode,
-            take_checker=take_checker,
+            take_checker=self.take_checker if TAKE_CHECK == "on" else None,
         )
 
     def _enter_workspace(self, task_id):
@@ -303,11 +305,12 @@ class DubbingPipeline:
             return -40
         return 15 if clarity >= 12 else 5 if clarity >= 6 else 0
 
-    def _pick_clean_clip(self, spk, top, vocals_path):
-        """Cuts the best scored candidates and returns the first that passes the ZCR check as (segment, score, wav).
+    def _pick_clean_clips(self, spk, top, vocals_path, count=1):
+        """Cuts the best scored candidates and returns up to ``count`` that pass the ZCR check as [(segment, score, wav)].
 
         When none passes, the least noisy one is returned: the speaker's own voice beats another speaker's reference.
         """
+        picked = []
         least_noisy = None  # (zcr, cand, score, wav)
         for cand, score in top:
             tmp_wav = os.path.join(self.temp_dir, f"test_{spk}_{cand['start']}.wav")
@@ -317,10 +320,11 @@ class DubbingPipeline:
 
             zcr = measure_zcr(tmp_wav)
             if zcr <= 0.15:
-                if least_noisy and os.path.exists(least_noisy[3]):
-                    os.remove(least_noisy[3])
-                return cand, score, tmp_wav
-            if least_noisy is None or zcr < least_noisy[0]:
+                picked.append((cand, score, tmp_wav))
+                if len(picked) >= count:
+                    break
+                continue
+            if not picked and (least_noisy is None or zcr < least_noisy[0]):
                 if least_noisy and os.path.exists(least_noisy[3]):
                     os.remove(least_noisy[3])
                 least_noisy = (zcr, cand, score, tmp_wav)
@@ -328,11 +332,14 @@ class DubbingPipeline:
                 os.remove(tmp_wav)
 
         if least_noisy and os.path.exists(least_noisy[3]):
-            logger.warning(
-                f"Speaker {spk}: no clip passed the ZCR check, using the least noisy one (ZCR {least_noisy[0]:.2f})."
-            )
-            return least_noisy[1:]
-        return None
+            if picked:
+                os.remove(least_noisy[3])
+            else:
+                logger.warning(
+                    f"Speaker {spk}: no clip passed the ZCR check, using the least noisy one (ZCR {least_noisy[0]:.2f})."
+                )
+                return [least_noisy[1:]]
+        return picked
 
     def _extract_refs(self, script, vocals_path, ddir):
         logger.info("Extracting Smart Weighted Normalized voice references (v2 - Scored 0-100)")
@@ -409,20 +416,24 @@ class DubbingPipeline:
 
             if scored_candidates:
                 top = sorted(scored_candidates, key=lambda x: x[1], reverse=True)[:REF_CANDIDATES]
-                final_choice = self._pick_clean_clip(spk, top, vocals_path)
+                clips = self._pick_clean_clips(spk, top, vocals_path, REF_AUDITION_CANDIDATES)
 
-                if final_choice:
-                    best_seg, best_score, wav_path = final_choice
-                    out = os.path.join(self.temp_dir, f"ref_{spk}.wav")
-                    shutil.move(wav_path, out)
-                    write_ref_text(out, best_seg["text_en"])
+                if clips:
+                    paths = []
+                    for n, (seg, score, wav_path) in enumerate(clips):
+                        out = os.path.join(self.temp_dir, f"ref_{spk}.wav" if n == 0 else f"ref_{spk}_{n + 1}.wav")
+                        shutil.move(wav_path, out)
+                        write_ref_text(out, seg["text_en"])
+                        paths.append(out)
+                        if ref_debug:
+                            shutil.copy(out, os.path.join(ref_debug, os.path.basename(out)[4:]))
+                    best_seg, best_score, _ = clips[0]
                     best_per_speaker[spk] = (best_seg, best_score)
-                    self.speaker_refs[spk] = out
+                    self.speaker_refs[spk] = paths
                     logger.info(
                         f"Speaker {spk} Selected: Score {best_score} (Dur: {best_seg['end'] - best_seg['start']:.1f}s)"
+                        + (f", {len(paths)} candidates" if len(paths) > 1 else "")
                     )
-                    if ref_debug:
-                        shutil.copy(out, os.path.join(ref_debug, f"{spk}.wav"))
                 else:
                     logger.warning(f"Speaker {spk}: No clean candidates found after ZCR check.")
 
@@ -577,7 +588,8 @@ class DubbingPipeline:
 
         refs = self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
         self.speaker_refs = refs or {}
-        self.tts_manager.set_speaker_refs(self.speaker_refs)
+        genders = {spk: (info or {}).get("gender", "") for spk, info in (self.speaker_info or {}).items()}
+        self.tts_manager.set_speaker_refs(self.speaker_refs, genders)
 
         # 5. Production (Per Language / Global Task Pool)
         # Initialize GPU RPC Services
@@ -691,6 +703,7 @@ class DubbingPipeline:
 
         # 3. Global Concurrent Execution (Flattened)
         try:
+            self._audition_voices(all_drafts_by_lang)
             self._run_concurrent_sync(all_sync_tasks, sync_results_by_lang, vocals, script, checkpoint_path)
         finally:
             if hasattr(self.whisper_manager, "shutdown_take_check"):
@@ -737,6 +750,30 @@ class DubbingPipeline:
                 pass
 
         return all_audio_tracks
+
+    def _audition_voices(self, all_drafts_by_lang):
+        """Ranks each speaker's reference candidates by how intelligibly they clone (Spec 002, 2.3)."""
+        if MOCK_MODE or not self.take_checker or not self.target_langs:
+            return
+        lang = self.target_langs[0]
+        t0 = time.perf_counter()
+        try:
+            scores = audition_voices(
+                self.tts_manager,
+                self.take_checker,
+                all_drafts_by_lang.get(lang) or [],
+                lang,
+                self.temp_dir,
+                self.synchronizer.is_swallowed,
+                self.abort_event,
+            )
+        except Exception as e:
+            logger.warning(f"Voice audition failed, keeping the Stage 4 order: {e}")
+            return
+        self.tts_manager.apply_audition(scores, AUDITION_LINE_REF_MIN)
+        if self.tts_manager.line_refs_off:
+            logger.info(f"Voice audition: no line clips for {', '.join(sorted(self.tts_manager.line_refs_off))}")
+        self.durations["Stage 5a: Voice Audition"] = time.perf_counter() - t0
 
     def _load_production_checkpoint(self, checkpoint_path, sync_results_by_lang):
         """Loads partial results from disk if available."""
@@ -855,7 +892,10 @@ class DubbingPipeline:
 
             for item in res:
                 dur = item["duration"]
-                path = item["audio_path"]
+                path = item.get("audio_path")
+                if not path:
+                    # DROPPED: every take was gibberish, the original stays audible (Spec 002, 2.2 step 8)
+                    continue
                 start, speed_factor = self._place_take(item, dur, last_end_time)
 
                 final_path = os.path.join(self.temp_dir, f"final_{lang}_{item['index']}.wav")

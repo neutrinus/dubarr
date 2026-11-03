@@ -51,6 +51,7 @@ src/
     gpu_manager.py         Picks a CUDA device by free VRAM (maps nvidia-smi -> torch index by name+memory).
     media_context.py       Parses Sonarr/Radarr/scene file names, gathers show/episode or movie info, formats it for prompts.
     worker.py              JobWorker: polls SQLite for QUEUED tasks and runs a fresh pipeline per task.
+    voice_audition.py      Before Stage 5: ranks each speaker's reference clips by how intelligibly OmniVoice clones them.
     report.py              Per-line production report: summary in the log, report_<lang>.tsv in the debug folder.
   infrastructure/
     database.py            SQLite: `tasks` queue + `job_steps` (cached JSON results per stage).
@@ -152,7 +153,9 @@ why the image used to need separate venvs.
 | `MIN_FILL_RATIO` | `0.7` | A take shorter than this share of the original's speech goes back to the LLM to restore content. |
 | `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence) and is synthesized again with another voice reference. |
 | `REF_MIN_CLARITY_DB` | `3.0` | A voice reference whose voice is less than this many dB above the rest of the mix (crowd, engines) is avoided; OmniVoice would clone the noise. |
-| `TAKE_CHECK` / `TAKE_MIN_SIMILARITY` | `on` / `0.5` | Whisper transcribes every take; one that sounds less like its text than this (noise, screams, gibberish) is synthesized again with another voice reference. |
+| `TAKE_CHECK` / `TAKE_MIN_SIMILARITY` | `on` / `0.5` | `on`: Whisper scores the voice audition and every take; one that sounds less like its text than this (noise, screams, gibberish) is synthesized again with another voice reference. `audition`: only the audition (minutes instead of doubling Stage 5). `off`: neither. |
+| `TAKE_DROP_SIMILARITY` | `0.3` | A line whose every take is broken below this is left undubbed (the original stays audible). |
+| `REF_AUDITION_CANDIDATES` / `AUDITION_LINE_REF_MIN` | `3` / `0.8` | Reference clips kept per speaker for the voice audition; a speaker scoring below this does not clone from line clips. |
 | `TAKE_CHECK_DEVICE` | `cpu` | Where the take-check Whisper runs. `auto` uses a GPU only with 8.5 GB free; on the TTS card it starves OmniVoice. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
 | `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
