@@ -142,6 +142,7 @@ class TakeJudge:
         self._align: Dict[str, Optional[tuple]] = {}  # lang -> (model, processor) or None when unavailable
         self._voice = None  # pyannote Inference, False when unavailable
         self._prints: Dict[str, Optional["np.ndarray"]] = {}
+        self._print_failed = False
 
     # --- layer 3: voice match ---
 
@@ -165,11 +166,23 @@ class TakeJudge:
         if model is None or np is None or not path or not os.path.exists(path):
             return None
         try:
-            emb = np.asarray(model(path), dtype=np.float32).reshape(-1)
+            import torch
+
+            # In memory, like the diarization: pyannote decoding a file path needs torchcodec, which breaks across
+            # torch/ffmpeg versions (no take got a voice match that way)
+            samples = self._samples_16k(path)
+            if samples is None or len(samples) == 0:
+                return None
+            waveform = torch.from_numpy(np.asarray(samples, dtype=np.float32)).unsqueeze(0)
+            emb = np.asarray(model({"waveform": waveform, "sample_rate": 16000}), dtype=np.float32).reshape(-1)
             norm = float(np.linalg.norm(emb))
             return emb / norm if norm > 0 else None
         except Exception as e:
-            logger.debug(f"Take judge: voiceprint of {path} failed: {e}")
+            if not self._print_failed:
+                logger.warning(f"Take judge: voiceprint failed ({e}); the voice match is skipped where it fails")
+                self._print_failed = True
+            else:
+                logger.debug(f"Take judge: voiceprint of {path} failed: {e}")
             return None
 
     def voice_match(self, take_path: str, ref_path: Optional[str]) -> Optional[float]:
@@ -193,22 +206,35 @@ class TakeJudge:
         self._align[lang] = None
         if MOCK_MODE:
             return None
-        name = JUDGE_ALIGN_MODEL or ALIGN_MODELS.get(lang) or MMS_MODEL
-        try:
-            from transformers import AutoProcessor, Wav2Vec2ForCTC
-
-            kwargs = {}
-            if name == MMS_MODEL:
-                kwargs = {"target_lang": MMS_LANGS.get(lang, lang), "ignore_mismatched_sizes": True}
-            processor = AutoProcessor.from_pretrained(name, token=HF_TOKEN, **kwargs)
-            model = Wav2Vec2ForCTC.from_pretrained(name, token=HF_TOKEN, **kwargs).eval()
-            if JUDGE_DEVICE != "cpu":
-                model = model.to(JUDGE_DEVICE)
-            self._align[lang] = (model, processor)
-            logger.info(f"Take judge: CTC model '{name}' loaded for {lang} on {JUDGE_DEVICE}")
-        except Exception as e:
-            logger.warning(f"Take judge: no CTC model for {lang} ({e}); the text match is skipped")
+        names = [JUDGE_ALIGN_MODEL or ALIGN_MODELS.get(lang) or MMS_MODEL]
+        if names[0] != MMS_MODEL:
+            names.append(MMS_MODEL)  # the multilingual model when the language's own does not load
+        for name in names:
+            try:
+                self._align[lang] = self._load_ctc(name, lang)
+                logger.info(f"Take judge: CTC model '{name}' loaded for {lang} on {JUDGE_DEVICE}")
+                break
+            except Exception as e:
+                logger.warning(f"Take judge: CTC model '{name}' did not load for {lang}: {e}")
+        if self._align[lang] is None:
+            logger.error(f"Take judge: no CTC model for {lang}; takes are not checked against their text")
         return self._align[lang]
+
+    @staticmethod
+    def _load_ctc(name: str, lang: str):
+        from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+
+        model_kwargs, proc_kwargs = {}, {}
+        if name == MMS_MODEL:
+            proc_kwargs = {"target_lang": MMS_LANGS.get(lang, lang)}
+            model_kwargs = dict(proc_kwargs, ignore_mismatched_sizes=True)
+        # Wav2Vec2Processor, not AutoProcessor: a model with a language model (jonatasgrosman's Polish one) makes
+        # AutoProcessor pick Wav2Vec2ProcessorWithLM, which needs pyctcdecode; the CTC score needs no language model
+        processor = Wav2Vec2Processor.from_pretrained(name, token=HF_TOKEN, **proc_kwargs)
+        model = Wav2Vec2ForCTC.from_pretrained(name, token=HF_TOKEN, **model_kwargs).eval()
+        if JUDGE_DEVICE != "cpu":
+            model = model.to(JUDGE_DEVICE)
+        return model, processor
 
     def _samples_16k(self, path: str):
         fd, tmp = tempfile.mkstemp(suffix=".wav", dir=self.temp_dir or None)

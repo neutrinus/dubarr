@@ -46,7 +46,8 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
         3.5 kHz and that band `JUDGE_HF_MAX_DB` (12 dB) above its usual level in the take, for 300 ms or more (the
         6:53 squeaks of the measured run: +29 dB for 1.08 s, the only such event in the episode); clipping (more than
         0.1% of samples at full scale); a silence over 1.2 s inside the take.
-    3.  *voice match*: the take's voiceprint (Spec 006, 4.1) against the print of the reference it cloned. Under
+    3.  *voice match*: the take's voiceprint (Spec 006, 4.1; the audio goes to pyannote in memory, as in the
+        diarization, because decoding a file needs torchcodec) against the print of the reference it cloned. Under
         `JUDGE_MIN_VOICE` (0.5) the clone is not that voice: the model drifted into another voice or into noise.
     4.  *text match*: a CTC speech model of the target language (`JUDGE_ALIGN_MODEL`; default
         `jonatasgrosman/wav2vec2-large-xlsr-53-polish` for Polish, 300 M parameters, and `facebook/mms-1b-all` with
@@ -54,6 +55,11 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
         CTC loss of the text per character, turned into a score in [0, 1] (`exp(-loss / chars)`). It writes no
         transcript and has no fixed 30 s window, so it costs well under Whisper's 10 s per take. Under
         `JUDGE_MIN_TEXT` (0.5) the take is gibberish or lost words. Lines under 4 syllables skip this layer.
+        The processor is loaded without the model's language model (it needs `pyctcdecode` and the score does not
+        use it); when the language's model does not load, `facebook/mms-1b-all` is tried. When no CTC model loads,
+        that is an error in the log, and in `whisper` mode the Whisper similarity takes the text match's place for
+        the decision (same threshold): the first measured run had no text match, and 44 of 261 lines that Whisper
+        heard as gibberish were accepted.
     A take's **judge score** is its text match (1.0 for lines that skip layer 4), halved when it failed the voice match
     and 0 when it was swallowed. The sound take with the best judge score goes on; when both versions are broken,
     one more synthesis is made with the next reference, up to 2 extra. A broken take is never accepted while a sound

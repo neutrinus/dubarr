@@ -113,6 +113,47 @@ class TestJudge(unittest.TestCase):
         voice.assert_not_called()
 
 
+class TestModels(unittest.TestCase):
+    def test_ctc_model_falls_back_to_mms(self):
+        judge = TakeJudge()
+        loaded = ("model", "processor")
+        with (
+            patch("core.take_judge.MOCK_MODE", False),
+            patch.object(TakeJudge, "_load_ctc", side_effect=[ImportError("pyctcdecode"), loaded]) as load,
+        ):
+            self.assertEqual(judge._align_model("pl"), loaded)
+        self.assertEqual(
+            [c.args[0] for c in load.call_args_list], ["jonatasgrosman/wav2vec2-large-xlsr-53-polish", "facebook/mms-1b-all"]
+        )
+
+    def test_ctc_processor_is_loaded_without_a_language_model(self):
+        transformers = __import__("pytest").importorskip("transformers")
+        with (
+            patch.object(transformers, "Wav2Vec2Processor") as proc,
+            patch.object(transformers, "Wav2Vec2ForCTC") as model,
+        ):
+            TakeJudge._load_ctc("jonatasgrosman/wav2vec2-large-xlsr-53-polish", "pl")
+        proc.from_pretrained.assert_called_once()
+        model.from_pretrained.assert_called_once()
+
+    def test_voiceprint_is_computed_from_samples_in_memory(self):
+        torch = __import__("pytest").importorskip("torch")
+        path = os.path.join(tempfile.mkdtemp(), "take.wav")
+        write_wav(path, speech(1.0))
+        judge = TakeJudge()
+        seen = {}
+
+        def model(inp):
+            seen.update(inp)
+            return np.array([[3.0, 4.0]])
+
+        with patch.object(judge, "_voice_model", return_value=model):
+            emb = judge.voiceprint(path)
+        self.assertEqual(seen["sample_rate"], 16000)
+        self.assertIsInstance(seen["waveform"], torch.Tensor)
+        np.testing.assert_allclose(emb, [0.6, 0.8])
+
+
 class TestCtcScore(unittest.TestCase):
     def test_fitting_text_scores_high_and_other_text_low(self):
         torch = __import__("pytest").importorskip("torch")
