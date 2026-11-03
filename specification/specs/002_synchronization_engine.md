@@ -40,15 +40,18 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
 4.  **Broken-take check.** A take is broken when it is
     -   *swallowed*: far shorter than its text can be spoken (more than `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND`, default
         9 syllables per second); the model produced mostly silence, which OmniVoice then trims; or
-    -   *unintelligible* (`TAKE_CHECK`, on by default): Whisper transcribes the take in the target language (no VAD, no
-        conditioning on previous text) and the letters-only similarity to its text is under `TAKE_MIN_SIMILARITY`
-        (default 0.5). This catches noise, screams and gibberish cloned from a noisy voice reference. Lines under
-        4 syllables ("Wow!") are not checked, the ASR spells interjections too freely.
-    A broken take is synthesized again with the next voice reference (line clip -> golden -> last good), up to 2 extra
-    syntheses. It is never accepted while a sound one exists; when every reference fails, the least broken take is
-    kept (the most similar one; swallowed counts as worst). The check model runs on the CPU by default: on the TTS's
-    GPU it took the VRAM OmniVoice needs for long takes and made it crash. `TAKE_CHECK_DEVICE=auto` puts it on a GPU
-    only when one has 8.5 GB free (the model plus the TTS headroom). It is released after Stage 5.
+    -   *unintelligible* (only with `TAKE_CHECK=on`, the default): Whisper transcribes the take in the target language
+        (no VAD, no conditioning on previous text) and the letters-only similarity to its text is under
+        `TAKE_MIN_SIMILARITY` (default 0.5). This catches noise, screams and gibberish cloned from a noisy voice
+        reference. Lines under 4 syllables ("Wow!") are not checked, the ASR spells interjections too freely; or
+    -   *missing*: the TTS returned no usable audio (an empty file or an error).
+    A broken take is synthesized again with the next voice reference (2.3), up to 2 extra syntheses. It is never
+    accepted while a sound one exists; when every reference fails, the least broken take is kept (the most similar
+    one; swallowed counts as worst). The check model runs on the CPU by default: on the TTS's GPU it took the VRAM
+    OmniVoice needs for long takes and made it crash. `TAKE_CHECK_DEVICE=auto` puts it on a GPU only when one has
+    8.5 GB free (the model plus the TTS headroom). It is released after Stage 5.
+    `TAKE_CHECK` modes: `on` checks the voice audition (2.3) and every take; `audition` only the audition, which
+    costs a few minutes instead of doubling Stage 5; `off` neither (only the swallowed check stays).
 
 5.  **Acceptance check.** Accepted when `actual <= limit × MAX_ACCEPT_SPEEDUP + 0.05 s` and
     `actual >= MIN_FILL_RATIO × target` (default 0.7). A short take is kept when the LLM finds nothing to add (it
@@ -65,18 +68,32 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
 8.  **Finalization:**
     -   **Success:** the accepted take.
     -   **Fallback (attempts exhausted):** among sound takes, the one that fits the limit and is closest to the target;
-        if none fits, the shortest sound one. Swallowed takes are used only if nothing else exists.
+        if none fits, the shortest sound one. Broken takes are used only if nothing else exists.
+    -   **Dropped:** when every take is broken and none reaches `TAKE_DROP_SIMILARITY` (default 0.3; a swallowed take
+        counts as 0), the line is not dubbed (status `DROPPED`): the original stays audible, which beats gibberish or
+        screams in the dub.
     -   **Critical failure:** silence of the target length, so the pipeline does not stall (the original stays audible
         under it because the mix keeps the original audio).
 
 ### 2.3 Voice Reference Strategy
+**Voice audition** (before the sync loop, `TAKE_CHECK` `on` or `audition`). Each speaker's reference candidates
+(Spec 001, 2.4) synthesize the same test line: the speaker's own draft line (first target language) closest to
+18 syllables, at natural pace. Whisper scores each take as in 2.2 step 4 (a swallowed take scores 0). The candidates
+are ranked by that score, best first. A speaker whose best score is under `AUDITION_LINE_REF_MIN` (default 0.8) does
+not use line clips: a voice that clones badly from its cleanest clips (announcers shouting over the arena) clones
+worse from an arbitrary line. Without the audition the Stage 4 order is kept and line clips are used.
+
+References are tried in this order; a retry after a broken take skips the ones already tried for that line:
 1.  **Line clip:** a clean clip of the line itself when it is 3-10 s long (carries the scene's emotion). Clean means
     ZCR < 0.25 and a clarity (vocals over the rest, see Spec 001, 2.4) of at least `REF_MIN_CLARITY_DB`; a line shouted
-    over a cheering crowd uses the golden reference instead.
-2.  **Golden Reference:** the best scored sample of the speaker from Stage 4.
+    over a cheering crowd uses the speaker's references instead.
+2.  **Speaker's references:** the candidates that scored at least `TAKE_MIN_SIMILARITY` in the audition (all of them
+    without an audition), in rank order.
 3.  **Last Good Sample:** the last clean line clip of this speaker.
-4.  **Global fallback:** any golden or last good sample.
-A retry after a swallowed take skips the references already tried for that line.
+4.  **Borrowed voice:** the best reference of another speaker of the **same gender** (speaker profiles from Stage 3),
+    best audition score first. An intelligible voice of the right gender beats a broken clone.
+5.  **Speaker's weak references:** the candidates that scored under `TAKE_MIN_SIMILARITY`.
+6.  **Global fallback:** any other reference, best audition score first.
 
 ### 2.4 Post-Processing (Speed Adjustment)
 A take that would run past `max_end` starts earlier in the mix, by its overrun but not before `min_start` and never
@@ -90,5 +107,9 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `MIN_FILL_RATIO` (0.7): below this share of the target a take is refined as too short.
 -   `MAX_ACCEPT_SPEEDUP` (1.08): allowed overrun of the limit, sped up in the mix.
 -   `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` (9): faster than this means a swallowed take.
--   `TAKE_CHECK` (on), `TAKE_MIN_SIMILARITY` (0.5), `TAKE_CHECK_DEVICE` (cpu): the intelligibility check of every take.
+-   `TAKE_CHECK` (on | audition | off), `TAKE_MIN_SIMILARITY` (0.5), `TAKE_CHECK_DEVICE` (cpu): the intelligibility
+    check of the voice audition and of every take.
+-   `TAKE_DROP_SIMILARITY` (0.3): a line whose every take is broken below this is not dubbed.
+-   `REF_AUDITION_CANDIDATES` (3), `AUDITION_LINE_REF_MIN` (0.8): reference candidates per speaker, and the audition
+    score a speaker needs to use line clips.
 -   `zcr_threshold` (0.25): Zero Crossing Rate limit for line-clip references.

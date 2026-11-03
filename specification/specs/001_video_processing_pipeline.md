@@ -84,16 +84,19 @@ duplicates content, because the target language orders the sentence differently.
         **clarity**: the level of the Demucs vocals over the level of the rest (`no_vocals`) in the same span, in dB.
         A line under `REF_MIN_CLARITY_DB` (3 dB, crowd or engines as loud as the voice) loses most of its score; above
         12 dB it gains. OmniVoice clones the clip's character, so noise and screaming in a reference come back in the dub.
-    2.  Tests the best candidates (up to 8) for Zero Crossing Rate (ZCR <= 0.15, after denoising) and takes the first
-        that passes. When none passes, the tested candidate with the lowest ZCR is used: the speaker's own voice beats
-        another speaker's reference.
+    2.  Tests the best candidates (up to 8) for Zero Crossing Rate (ZCR <= 0.15, after denoising) and keeps the first
+        `REF_AUDITION_CANDIDATES` (3) that pass, best score first. When none passes, the tested candidate with the
+        lowest ZCR is used: the speaker's own voice beats another speaker's reference. Which of the kept clips the TTS
+        clones best is decided by the voice audition in Stage 5 (Spec 002, 2.3).
 *   **Output:**
-    *   `refs/{speaker_id}.wav` (Reference audio for TTS).
+    *   `refs/{speaker_id}.wav`, `refs/{speaker_id}_2.wav`, ... (reference candidates for TTS, best score first).
 
 ### 2.5 Stage 5: Production (Global Task Pool)
 *   **Action:** All segments from all `target_langs` are combined into a single task pool to maximize resource utilization.
 *   **Workflow:**
     1.  **Draft Translation:** LLM generates drafts for all languages (see 2.5a).
+    1b. **Voice audition** (`TAKE_CHECK` `on` or `audition`): each speaker's reference candidates are tried on one of
+        the speaker's own draft lines and ranked by how intelligible the take is (Spec 002, 2.3).
     2.  **Global Task Queue:** A unified list of all segments is created.
     3.  **Concurrent Execution:** A global Thread Pool of orchestrators processes segments.
     4.  **Sync Loop:** Each segment uses `LLMService` and `TTSService` via RPC.
