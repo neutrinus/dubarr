@@ -93,13 +93,47 @@ class TestLLMManager(unittest.TestCase):
 
     def test_analyze_script_gets_names_and_fixed_glossary(self):
         self.chat.side_effect = [reply(json.dumps({"summary": "s", "glossary": {}, "speakers": {}})), reply("{}")]
-        self.manager.analyze_script(
-            [{"speaker": "A", "text_en": "Hi"}], "d", "", "", {"Razorback": "Rejzorbek"}, ["Razorback", "Ice Wave"]
+        res = self.manager.analyze_script(
+            [{"speaker": "A", "text_en": "Hi"}],
+            "d",
+            "",
+            "",
+            {"Razorback": "Rejzorbek"},
+            ["Razorback", "Ice Wave"],
+            {"Razorback": "R EY1 Z ER0 B AE2 K"},
         )
         system = self.chat.call_args_list[0].kwargs["messages"][0]["content"]
         self.assertIn('"Razorback": "Rejzorbek"', system)
         self.assertIn("Razorback, Ice Wave", system)
         self.assertIn("Razorback, Ice Wave", self.chat.call_args_list[1].kwargs["messages"][0]["content"])
+        self.assertEqual(res["context"]["glossary"], {"Razorback": "Rejzorbek"})
+        self.assertEqual(res["context"]["glossary_replaced"], [])
+
+    def test_polish_respellings_are_checked_by_rules_against_phonemes(self):
+        # The analysis spells English w as Polish w (read as v); the stored "Worehed" too. Both get "ł" in place;
+        # "Rej-or-bek" lost the z and is respelled. No LLM reading test for names with phonemes.
+        self.chat.side_effect = [
+            reply(
+                json.dumps({"summary": "s", "glossary": {"Ice Wave": "Ajs Wejw", "Razorback": "Rej-or-bek"}, "speakers": {}})
+            ),
+            reply(
+                json.dumps({"phonemes": [{"id": 0, "arpabet": "AY1 S W EY1 V"}, {"id": 1, "arpabet": "R EY1 Z ER0 B AE2 K"}]})
+            ),
+            reply(json.dumps({"spellings": [{"id": 0, "spelling": "Rejzorbek"}]})),
+            reply("{}"),
+        ]
+        res = self.manager.analyze_script(
+            [{"speaker": "A", "text_en": "Hi"}], "d", "", "", {"Warhead": "Worehed"}, [], {"Warhead": "W AO1 R HH EH2 D"}
+        )
+        ctx = res["context"]
+        self.assertEqual(ctx["glossary"], {"Ice Wave": "Ajs Łejw", "Razorback": "Rejzorbek", "Warhead": "Łorehed"})
+        self.assertEqual(ctx["glossary_replaced"], ["Warhead"])
+        self.assertEqual(ctx["name_phonemes"]["Warhead"], "W AO1 R HH EH2 D")
+        asked = json.loads(self.chat.call_args_list[1].kwargs["messages"][1]["content"])
+        self.assertEqual([n["name"] for n in asked["names"]], ["Ice Wave", "Razorback"])
+        respell = self.chat.call_args_list[2].kwargs["messages"]
+        self.assertIn("Z missing", json.loads(respell[1]["content"])["names"][0]["sounds_like"])
+        self.assertIn("ł", respell[0]["content"])  # the Polish spelling rules
 
     def test_glossary_reading_test_rejects_a_lost_consonant(self):
         # "Rej-or-bek" sounds like "Rayorbeck": the "z" of Razorback is gone, so it is respelled and read again

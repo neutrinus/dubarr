@@ -355,6 +355,24 @@ class TestTakeCheck(unittest.TestCase):
         self.assertLess(res["similarity"], 0.5)
         self.assertEqual(res["heard"], "Aaaa! Aaaa!")
 
+    def test_whisper_checks_the_text_when_the_judge_has_no_ctc_model(self):
+        # The judge's CTC model did not load (text_match None): Whisper's similarity decides instead
+        self.judge.verdicts = [
+            {"score": 1.0, "problem": None, "voice": 0.8, "text_match": None},
+            {"score": 1.0, "problem": None, "voice": 0.8, "text_match": None},
+        ]
+        heard = iter(["Wawianca pięć trzy trzy", "Ajjs-wejv próbuje zachować dystans. O mój Boże!"])
+        self.sync.take_checker = lambda path, lang: next(heard)
+        self.tts.synthesize_sync.side_effect = [
+            {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "gold.wav"},
+            {"audio_path": "b.wav", "duration": 3.7, "voice_type": "DYNAMIC", "ref": "dyn.wav"},
+        ]
+
+        res = self.run_segment([3.8, 3.7])
+
+        self.assertEqual(self.tts.synthesize_sync.call_count, 2)
+        self.assertEqual((res["status"], res["voice_type"], res["score"]), ("ACCEPTED", "DYNAMIC", 1.0))
+
     def test_without_a_judge_the_take_is_accepted(self):
         self.sync.judge = None
         self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}

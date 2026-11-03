@@ -165,3 +165,39 @@ def test_apply_phonemes_keeps_polish_endings():
         "[R EY1 Z ER0 B AE2 K]owi pękł nos, a [AY1 S W EY1 V] wygrywa."
     )
     assert apply_phonemes("Bez nazw.", {}) == "Bez nazw."
+
+
+def test_polish_reading_of_respellings():
+    from utils import polish_reading
+
+    assert [x[0] for x in polish_reading("Ajs Łejw")] == ["S", "W", "V"]
+    assert [x[0] for x in polish_reading("Dżesika Czobot")] == ["JH", "S", "K", "CH", "B", "T"]
+    assert [x[0] for x in polish_reading("Basia")] == ["B", "SH"]  # "si" before a vowel is one sound
+
+
+@pytest.mark.parametrize(
+    "spelling,arpabet,ok,fixed",
+    [
+        ("Ajs Wejv", "AY1 S W EY1 V", True, "Ajs Łejv"),  # w for English W is read as v: fixed in place
+        ("Woryjer Klan", "W AO1 R IY0 ER0 K L AE1 N", True, "Łoryjer Klan"),
+        ("Rejzorbek", "R EY1 Z ER0 B AE2 K", True, "Rejzorbek"),
+        ("Zak Biwer", "Z AE1 K B IY1 V ER0", True, "Zak Biwer"),  # w for English V is right
+        ("Moli Mekgraf", "M AA1 L IY0 M AH0 K G R AE1 TH", True, "Moli Mekgraf"),  # th may be f
+        ("Rejorbek", "R EY1 Z ER0 B AE2 K", False, "Rejorbek"),  # the z is lost
+    ],
+)
+def test_check_polish_spelling(spelling, arpabet, ok, fixed):
+    from utils import check_polish_spelling
+
+    res = check_polish_spelling(spelling, arpabet)
+    assert res[0] is ok
+    assert res[1] == fixed
+
+
+def test_check_polish_spelling_never_passes_v_for_w():
+    from utils import check_polish_spelling
+
+    # "v" is no Polish "w" the check could change, and V for W is never one of the tolerated misses
+    ok, _fixed, lost = check_polish_spelling("Vorehed Vorehed", "W AO1 R HH EH2 D W AO1 R HH EH2 D")
+    assert not ok
+    assert "W read as V" in lost

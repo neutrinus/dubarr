@@ -20,7 +20,7 @@ from config import (
     REF_AUDITION_CANDIDATES,
     AUDITION_LINE_REF_MIN,
 )
-from config import VOICE_DESIGN, GLOSSARY_MODE
+from config import VOICE_DESIGN, GLOSSARY_MODE, JUDGE_MIN_TEXT
 from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
@@ -604,8 +604,9 @@ class DubbingPipeline:
             self.voice_matches = self.series.match(self.voiceprints)
             diar, self.voiceprints, self.voice_matches = merge_matched_speakers(diar, self.voiceprints, self.voice_matches)
         fixed_glossary = self.series.glossary(self._glossary_key()) if self.series else {}
-        fixed_phonemes = fixed_glossary if GLOSSARY_MODE == "phonemes" else {}
-        if fixed_phonemes:
+        # Settled English phonemes: the TTS input in phonemes mode, what Polish respellings are checked against otherwise
+        fixed_phonemes = self.series.glossary("cmu") if self.series else {}
+        if GLOSSARY_MODE == "phonemes":
             fixed_glossary = {t: t for t in fixed_phonemes}
 
         script = self._create_script(diar, trans)
@@ -723,7 +724,9 @@ class DubbingPipeline:
             glossary = (ctx.get("phonemes") if GLOSSARY_MODE == "phonemes" else ctx.get("glossary")) or {}
             text = " ".join(s.get("text_en", "") for s in script).lower()
             used = [t for t in glossary if t.lower() in text]
-            self.series.save_glossary(self._glossary_key(), glossary, used)
+            self.series.save_glossary(self._glossary_key(), glossary, used, replace=ctx.get("glossary_replaced") or [])
+            if GLOSSARY_MODE != "phonemes" and ctx.get("name_phonemes"):
+                self.series.save_glossary("cmu", ctx["name_phonemes"], used)
         except Exception as e:
             logger.warning(f"Series memory: could not save the glossary ({e})")
         try:
@@ -875,7 +878,7 @@ class DubbingPipeline:
         try:
             scores = audition_voices(
                 self.tts_manager,
-                lambda path, text, lng, ref: self.judge.judge(text, path, lng, ref)["score"],
+                self._audition_score,
                 all_drafts_by_lang.get(lang) or [],
                 lang,
                 self.temp_dir,
@@ -889,6 +892,20 @@ class DubbingPipeline:
         if self.tts_manager.line_refs_off:
             logger.info(f"Voice audition: no line clips for {', '.join(sorted(self.tts_manager.line_refs_off))}")
         self.durations["Stage 5a: Voice Audition"] = time.perf_counter() - t0
+
+    def _audition_score(self, path, text, lang, ref):
+        """The judge's score of an audition take; Whisper's similarity stands in when the judge has no text check."""
+        verdict = self.judge.judge(text, path, lang, ref)
+        score = verdict["score"]
+        if verdict.get("text_match") is None and not verdict.get("problem"):
+            check = self.synchronizer._intelligibility(text, path, lang) if count_syllables(text, lang) >= 4 else None
+            if check is not None:
+                score = min(score, check[0])
+                if check[0] < JUDGE_MIN_TEXT:
+                    verdict["problem"] = f"UNINTELLIGIBLE (Whisper similarity {check[0]:.2f}, heard '{check[1][:40]}')"
+        if verdict.get("problem"):
+            logger.info(f"Voice audition: {os.path.basename(ref or '')}: {verdict['problem']}")
+        return score
 
     def _load_production_checkpoint(self, checkpoint_path, sync_results_by_lang):
         """Loads partial results from disk if available."""

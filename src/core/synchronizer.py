@@ -5,7 +5,7 @@ import wave
 from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
 from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND
-from config import TAKE_DROP_SIMILARITY
+from config import JUDGE_MIN_TEXT, TAKE_DROP_SIMILARITY
 from utils import count_syllables, text_similarity
 from duration_policy import MAX_SPEEDUP as TTS_MAX_SPEEDUP
 
@@ -22,7 +22,8 @@ class SegmentSynchronizer:
         self.tts = tts_manager
         self.temp_dir = temp_dir
         self.debug_mode = debug_mode
-        # (audio_path, lang) -> what Whisper hears in the take; only reported, for measurement (TAKE_CHECK=whisper)
+        # (audio_path, lang) -> what Whisper hears in the take (TAKE_CHECK=whisper): reported, and the text check when
+        # the judge has no CTC model
         self.take_checker = take_checker
         # TakeJudge: decides whether a take is broken (Spec 002, 2.2 step 4)
         self.judge = judge
@@ -71,10 +72,16 @@ class SegmentSynchronizer:
             result = dict(result, score=verdict["score"], voice_match=verdict["voice"], text_match=verdict["text_match"])
             if verdict["problem"]:
                 problem = (verdict["score"], verdict["problem"])
-        # Measurement only: what Whisper hears (interjections are spelled too freely to compare)
+        # What Whisper hears (interjections are spelled too freely to compare): a measurement next to the judge, and
+        # the text check itself when the judge has none (its CTC model did not load)
         check = self._intelligibility(text, result["audio_path"], lang) if count_syllables(text, lang) >= 4 else None
         if check is not None:
             result = dict(result, similarity=round(check[0], 2), heard=check[1])
+            if self.judge and result.get("text_match") is None and problem is None:
+                score = min(float(result.get("score", 1.0)), round(check[0], 2))
+                result = dict(result, score=score)
+                if check[0] < JUDGE_MIN_TEXT:
+                    problem = (score, f"UNINTELLIGIBLE take (Whisper similarity {check[0]:.2f})")
         return result, duration, problem
 
     def _keep(self, result: Dict, lang: str, idx, n: int) -> Dict:

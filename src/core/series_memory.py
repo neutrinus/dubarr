@@ -82,16 +82,23 @@ class SeriesMemory:
         entries = _read_json(self.glossary_path).get(lang_key) or {}
         return {t: e["spelling"] for t, e in entries.items() if isinstance(e, dict) and e.get("checked") and e.get("spelling")}
 
-    def save_glossary(self, lang_key: str, glossary: Dict[str, str], used_terms=None):
-        """Stores the checked spellings of an episode; a stored spelling is never replaced, only counted."""
+    def save_glossary(self, lang_key: str, glossary: Dict[str, str], used_terms=None, replace=()):
+        """Stores the checked spellings of an episode; a stored spelling is only counted, unless it is in ``replace``
+        (it failed the reading check by spelling rules, Spec 006, 3)."""
         data = _read_json(self.glossary_path)
         entries = data.setdefault(lang_key, {})
         used = set(used_terms) if used_terms is not None else set(glossary)
+        replace = set(replace or ())
         added = 0
         for term, spelling in glossary.items():
             if not spelling:
                 continue
             entry = entries.get(term)
+            if entry is not None and term in replace and entry.get("spelling") != spelling:
+                logger.info(
+                    f"Series memory '{self.key}': '{term}' is now spelled '{spelling}' (was '{entry.get('spelling')}')"
+                )
+                entry.update(spelling=spelling, checked=True)
             if entry is None:
                 entries[term] = {"spelling": spelling, "checked": True, "episodes": 1}
                 added += 1
