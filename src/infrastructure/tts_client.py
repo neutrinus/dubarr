@@ -26,30 +26,41 @@ class TTSServerClient:
         self._log_thread = None
         self._restart_lock = threading.Lock()
 
+    @staticmethod
+    def _stderr_level(line: str) -> int:
+        """Python logging and werkzeug write everything to stderr; only real problems are errors."""
+        head = line.lstrip()[:12].upper()
+        if head.startswith(("INFO", "DEBUG")):
+            return logging.INFO
+        if head.startswith("WARN") or "WARNING" in line[:60]:
+            return logging.WARNING
+        return logging.ERROR
+
+    def _pump(self, stream, label: str, is_stderr: bool):
+        """Logs one output stream of the server until it closes."""
+        try:
+            for line in iter(stream.readline, ""):
+                line = line.strip()
+                if line:
+                    level = self._stderr_level(line) if is_stderr else logging.INFO
+                    logging.log(level, f"[{self.NAME}-{label}] {line}")
+        except Exception:
+            pass
+
     def _capture_logs(self):
-        """Thread function to capture and log subprocess output."""
+        """Starts one reader thread per stream.
+
+        Reading them one after the other left stderr unread while the server ran: every request logs a line there, and
+        a full pipe (64 KB, a few hundred requests) blocks the server on its next write.
+        """
         if not self.server_process:
             return
-
-        # Read from stdout and stderr in a way that doesn't block forever
-        # and allows the thread to terminate.
-        try:
-            for line in iter(self.server_process.stdout.readline, ""):
-                if line:
-                    logging.info(f"[{self.NAME}-Server] {line.strip()}")
-                if not self.server_process or self.server_process.poll() is not None:
-                    break
-        except Exception:
-            pass
-
-        try:
-            for line in iter(self.server_process.stderr.readline, ""):
-                if line:
-                    logging.error(f"[{self.NAME}-Server-Err] {line.strip()}")
-                if not self.server_process or self.server_process.poll() is not None:
-                    break
-        except Exception:
-            pass
+        for stream, label, is_stderr in (
+            (self.server_process.stdout, "Server", False),
+            (self.server_process.stderr, "Server-Err", True),
+        ):
+            if stream is not None:
+                threading.Thread(target=self._pump, args=(stream, label, is_stderr), daemon=True).start()
 
     def start_server(self):
         """Starts the model server in its virtual environment if not already running."""

@@ -1,7 +1,8 @@
 import subprocess
 import json
 import logging
-from typing import List, Dict, Tuple
+import re
+from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,19 @@ class FFmpegWrapper:
         except subprocess.CalledProcessError as e:
             logger.error(f"FFmpeg convert_audio failed: {e.stderr}")
             raise e
+
+    @staticmethod
+    def mean_volume(path: str, start: float, duration: float) -> Optional[float]:
+        """Mean level (dB) of a span of an audio file, None when it cannot be measured."""
+        cmd = ["ffmpeg", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", path, "-af", "volumedetect", "-f", "null", "-"]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=60).stderr
+        except subprocess.TimeoutExpired:
+            return None
+        match = re.search(r"mean_volume:\s*(-?[\d.]+|-inf) dB", out)
+        if not match or match.group(1) == "-inf":
+            return None
+        return float(match.group(1))
 
     @staticmethod
     def get_duration(path: str) -> float:

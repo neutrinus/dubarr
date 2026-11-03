@@ -12,12 +12,13 @@ from typing import List, Optional
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_BEFORE_MAX, SLACK_GUARD
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
 from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION, SENTENCE_MAX_GAP, SENTENCE_MAX_DURATION
-from config import TRANSLATION_REVIEW, TAKE_CHECK
+from config import TRANSLATION_REVIEW, TAKE_CHECK, REF_MIN_CLARITY_DB
 from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
 from infrastructure.monitor import ResourceMonitor
-from core.audio import prep_audio, analyze_audio, mix_audio
+from core.audio import prep_audio, analyze_audio, mix_audio, clarity_db
+from core.report import report_rows, summary as report_summary, write_report
 from utils import clean_srt, measure_zcr, run_cmd
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
@@ -41,6 +42,10 @@ ISO_639_2 = {
 }
 
 
+# Voice reference candidates per speaker that are cut and checked for noise (ZCR), best scored first
+REF_CANDIDATES = 8
+
+
 class DubbingPipeline:
     def __init__(
         self,
@@ -62,6 +67,7 @@ class DubbingPipeline:
         self.db = db
         self.output_folder = output_folder
         self.temp_dir = temp_dir
+        self.base_temp_dir = temp_dir
         self.debug_mode = debug_mode
 
         self.durations = {}
@@ -80,6 +86,25 @@ class DubbingPipeline:
             debug_mode=debug_mode,
             take_checker=take_checker,
         )
+
+    def _enter_workspace(self, task_id):
+        """Gives the task its own folder under TEMP_DIR (``task_<id>``, or ``standalone`` without a task).
+
+        File names in the workspace (orig.wav, vocals.mp3, ...) are fixed, and cached step results point at them:
+        in a shared folder a retried task could pick up another task's audio.
+        """
+        name = f"task_{task_id}" if task_id is not None else "standalone"
+        self.temp_dir = os.path.join(self.base_temp_dir, name)
+        os.makedirs(self.temp_dir, exist_ok=True)
+        self.synchronizer.temp_dir = self.temp_dir
+        self.tts_manager.temp_dir = self.temp_dir
+        logger.info(f"Workspace: {self.temp_dir}")
+
+    def _leave_workspace(self):
+        """Deletes the workspace after a finished task; a failed one keeps it, so a retry can reuse cached steps."""
+        if self.debug_mode or self.temp_dir == self.base_temp_dir:
+            return
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _cleanup_debug(self, fname):
         clean_name = os.path.basename(fname)
@@ -267,6 +292,48 @@ class DubbingPipeline:
         online = METADATA_LOOKUP == "on" and not MOCK_MODE
         return lookup_media_info(vpath, online=online, tmdb_api_key=TMDB_API_KEY, timeout=METADATA_TIMEOUT)
 
+    @staticmethod
+    def _clarity_bonus(vocals_path, segment, spk) -> int:
+        """Score for how clearly the voice stands out from the rest of the mix (Spec 001, 2.4)."""
+        clarity = clarity_db(vocals_path, segment["start"], segment["end"])
+        if clarity is None:
+            return 0
+        if clarity < REF_MIN_CLARITY_DB:
+            logger.debug(f"Speaker {spk}: {segment['start']:.1f}s is noisy as a reference ({clarity:.1f} dB)")
+            return -40
+        return 15 if clarity >= 12 else 5 if clarity >= 6 else 0
+
+    def _pick_clean_clip(self, spk, top, vocals_path):
+        """Cuts the best scored candidates and returns the first that passes the ZCR check as (segment, score, wav).
+
+        When none passes, the least noisy one is returned: the speaker's own voice beats another speaker's reference.
+        """
+        least_noisy = None  # (zcr, cand, score, wav)
+        for cand, score in top:
+            tmp_wav = os.path.join(self.temp_dir, f"test_{spk}_{cand['start']}.wav")
+            filt = "highpass=f=100,afftdn=nf=-20,speechnorm=e=10:r=0.0001:l=1"
+            cmd = ["ffmpeg", "-i", vocals_path, "-ss", str(cand["start"]), "-t", str(cand["end"] - cand["start"])]
+            run_cmd(cmd + ["-af", filt, "-ac", "1", "-ar", "24000", tmp_wav, "-y"], "zcr check")
+
+            zcr = measure_zcr(tmp_wav)
+            if zcr <= 0.15:
+                if least_noisy and os.path.exists(least_noisy[3]):
+                    os.remove(least_noisy[3])
+                return cand, score, tmp_wav
+            if least_noisy is None or zcr < least_noisy[0]:
+                if least_noisy and os.path.exists(least_noisy[3]):
+                    os.remove(least_noisy[3])
+                least_noisy = (zcr, cand, score, tmp_wav)
+            elif os.path.exists(tmp_wav):
+                os.remove(tmp_wav)
+
+        if least_noisy and os.path.exists(least_noisy[3]):
+            logger.warning(
+                f"Speaker {spk}: no clip passed the ZCR check, using the least noisy one (ZCR {least_noisy[0]:.2f})."
+            )
+            return least_noisy[1:]
+        return None
+
     def _extract_refs(self, script, vocals_path, ddir):
         logger.info("Extracting Smart Weighted Normalized voice references (v2 - Scored 0-100)")
         self.speaker_refs = {}
@@ -337,45 +404,12 @@ class DubbingPipeline:
                     elif 0.05 < rel_pos < 0.95:
                         pos_score = 5
 
-                total = clarity_score + dur_score + pos_score
+                total = clarity_score + dur_score + pos_score + self._clarity_bonus(vocals_path, s, spk)
                 scored_candidates.append((s, total))
 
             if scored_candidates:
-                top_3 = sorted(scored_candidates, key=lambda x: x[1], reverse=True)[:3]
-                final_choice = None
-
-                for cand, score in top_3:
-                    tmp_wav = os.path.join(self.temp_dir, f"test_{spk}_{cand['start']}.wav")
-                    filt = "highpass=f=100,afftdn=nf=-20,speechnorm=e=10:r=0.0001:l=1"
-                    run_cmd(
-                        [
-                            "ffmpeg",
-                            "-i",
-                            vocals_path,
-                            "-ss",
-                            str(cand["start"]),
-                            "-t",
-                            str(cand["end"] - cand["start"]),
-                            "-af",
-                            filt,
-                            "-ac",
-                            "1",
-                            "-ar",
-                            "24000",
-                            tmp_wav,
-                            "-y",
-                        ],
-                        "zcr check",
-                    )
-
-                    zcr = measure_zcr(tmp_wav)
-                    if zcr > 0.15:
-                        if os.path.exists(tmp_wav):
-                            os.remove(tmp_wav)
-                        continue
-
-                    final_choice = (cand, score, tmp_wav)
-                    break
+                top = sorted(scored_candidates, key=lambda x: x[1], reverse=True)[:REF_CANDIDATES]
+                final_choice = self._pick_clean_clip(spk, top, vocals_path)
 
                 if final_choice:
                     best_seg, best_score, wav_path = final_choice
@@ -482,6 +516,7 @@ class DubbingPipeline:
         logger.info(f"Languages to produce: {', '.join(self.target_langs)}")
 
         start_all = time.perf_counter()
+        self._enter_workspace(task_id)
         ddir = self._cleanup_debug(vpath)
         seg_dir = os.path.join(ddir, "segments") if self.debug_mode else None
 
@@ -494,9 +529,16 @@ class DubbingPipeline:
         self.monitor.daemon = True
         self.monitor.start()
 
-        a_stereo, vocals = self._run_step("Stage 1: Audio Separation", prep_audio, task_id, vpath)
+        a_stereo, vocals = self._run_step("Stage 1: Audio Separation", prep_audio, task_id, vpath, self.temp_dir)
         analysis_data = self._run_step(
-            "Stage 2: Audio Analysis", analyze_audio, task_id, vocals, self.diar_manager, self.whisper_manager, a_stereo
+            "Stage 2: Audio Analysis",
+            analyze_audio,
+            task_id,
+            vocals,
+            self.diar_manager,
+            self.whisper_manager,
+            a_stereo,
+            self.temp_dir,
         )
         diar, trans, audio_durs = analysis_data[0], analysis_data[1], analysis_data[2]
         self.durations.update(audio_durs)
@@ -588,6 +630,7 @@ class DubbingPipeline:
         self.tts_manager.shutdown()
         if self.monitor:
             self.monitor.stop()
+        self._leave_workspace()
         avg_tps = (
             self.llm_manager.llm_stats["tokens"] / self.llm_manager.llm_stats["time"]
             if self.llm_manager.llm_stats["time"] > 0
@@ -652,6 +695,17 @@ class DubbingPipeline:
         finally:
             if hasattr(self.whisper_manager, "shutdown_take_check"):
                 self.whisper_manager.shutdown_take_check()
+
+        # Per-line report: a summary in the log, the whole table in the debug folder (Spec 001, 2.5)
+        for lang in self.target_langs:
+            try:
+                if self.debug_mode:
+                    summary = write_report(os.path.join(ddir, f"report_{lang}.tsv"), script, sync_results_by_lang[lang])
+                else:
+                    summary = report_summary(report_rows(script, sync_results_by_lang[lang]))
+                logger.info(f"Production report ({lang}): {summary}")
+            except Exception as e:
+                logger.warning(f"Production report ({lang}) failed: {e}")
 
         # Without any dubbed line the "dubbed" track would only be the ducked original, so fail the task instead
         silent_langs = [lang for lang, drafts in all_drafts_by_lang.items() if drafts and not sync_results_by_lang[lang]]
@@ -812,7 +866,7 @@ class DubbingPipeline:
                 last_end_time = start + (dur / speed_factor)
 
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
-            mix_audio(a_stereo, final_audio_segments, final_a)
+            mix_audio(a_stereo, final_audio_segments, final_a, self.temp_dir)
             self.durations[f"Stage 5b: Sync Production ({lang})"] = (time.perf_counter() - t_start_sync_all) / len(
                 self.target_langs
             )

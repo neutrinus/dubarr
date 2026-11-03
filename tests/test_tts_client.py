@@ -1,3 +1,5 @@
+import logging
+import time
 import unittest
 from unittest.mock import patch, MagicMock
 import os
@@ -129,3 +131,29 @@ class TestOmniVoiceClient(unittest.TestCase):
         mock_post.return_value.status_code = 200
         self.client.synthesize("Cześć", os.path.join(self.tmp, "none.wav"), "out.wav", "pl")
         self.assertEqual(mock_post.call_args[1]["json"]["ref_text"], "")
+
+
+class TestServerLogs(unittest.TestCase):
+    def test_stderr_levels(self):
+        from infrastructure.tts_client import TTSServerClient
+
+        level = TTSServerClient._stderr_level
+        self.assertEqual(level('INFO:werkzeug:127.0.0.1 - - "POST /synthesize HTTP/1.1" 200 -'), logging.INFO)
+        self.assertEqual(level("WARNING:root:slow"), logging.WARNING)
+        self.assertEqual(level("Traceback (most recent call last):"), logging.ERROR)
+
+    def test_both_streams_are_read_at_once(self):
+        import io
+        from infrastructure.tts_client import TTSServerClient
+
+        client = TTSServerClient()
+        client.server_process = MagicMock()
+        # stdout never ends while the server runs; stderr must be read anyway
+        client.server_process.stdout = MagicMock()
+        pending = iter(["ready\n"] * 6)
+        client.server_process.stdout.readline.side_effect = lambda: time.sleep(0.1) or next(pending, "")
+        client.server_process.stderr = io.StringIO("INFO:werkzeug:request\n")
+        with self.assertLogs(level="INFO") as logs:
+            client._capture_logs()
+            time.sleep(0.2)
+        self.assertTrue(any("Server-Err] INFO:werkzeug:request" in m for m in logs.output))

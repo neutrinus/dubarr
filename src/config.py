@@ -113,6 +113,10 @@ TRANSLATION_REVIEW = os.environ.get("TRANSLATION_REVIEW", "on").lower() not in (
 MIN_FILL_RATIO = float(os.environ.get("MIN_FILL_RATIO", "0.7"))
 MAX_PLAUSIBLE_SYLLABLES_PER_SECOND = float(os.environ.get("MAX_PLAUSIBLE_SYLLABLES_PER_SECOND", "9.0"))
 
+# Voice references (Spec 001, 2.4): level of the Demucs vocals over the rest of the mix in a clip, in dB; under this
+# the crowd or the engines are as loud as the voice and OmniVoice would clone them too.
+REF_MIN_CLARITY_DB = float(os.environ.get("REF_MIN_CLARITY_DB", "3.0"))
+
 # Take check (Spec 002): every take is transcribed and compared with its text; below TAKE_MIN_SIMILARITY it is
 # unintelligible (noise, screams, mangled words) and synthesized again with another voice reference.
 TAKE_CHECK = os.environ.get("TAKE_CHECK", "on").lower() not in ("0", "off", "false", "no")

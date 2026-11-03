@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
-from core.audio import prep_audio, analyze_audio, get_audio_languages, extract_clean_segment
+from core.audio import prep_audio, analyze_audio, get_audio_languages, extract_clean_segment, clarity_db
 
 
 class TestAudio(unittest.TestCase):
@@ -56,6 +56,14 @@ class TestAudio(unittest.TestCase):
         with patch("infrastructure.ffmpeg.FFmpegWrapper.get_metadata", return_value=meta):
             langs = get_audio_languages("video.mkv")
             self.assertEqual(langs, ["eng", "pol"])
+
+    def test_clarity_is_voice_over_the_rest_of_the_mix(self):
+        levels = {"/t/vocals.mp3": -20.0, "/t/no_vocals.mp3": -26.5}
+        with patch("core.audio.os.path.exists", return_value=True):
+            with patch("core.audio.FFmpegWrapper.mean_volume", side_effect=lambda p, s, d: levels[p]):
+                self.assertAlmostEqual(clarity_db("/t/vocals.mp3", 1.0, 3.0), 6.5)
+        with patch("core.audio.os.path.exists", side_effect=lambda p: p == "/t/vocals.mp3"):
+            self.assertIsNone(clarity_db("/t/vocals.mp3", 1.0, 3.0))
 
     def test_extract_clean_segment(self):
         with patch("subprocess.run") as mock_run:

@@ -51,6 +51,7 @@ src/
     gpu_manager.py         Picks a CUDA device by free VRAM (maps nvidia-smi -> torch index by name+memory).
     media_context.py       Parses Sonarr/Radarr/scene file names, gathers show/episode or movie info, formats it for prompts.
     worker.py              JobWorker: polls SQLite for QUEUED tasks and runs a fresh pipeline per task.
+    report.py              Per-line production report: summary in the log, report_<lang>.tsv in the debug folder.
   infrastructure/
     database.py            SQLite: `tasks` queue + `job_steps` (cached JSON results per stage).
     ffmpeg.py              FFmpegWrapper: ffprobe metadata, extract/convert, mux.
@@ -150,6 +151,7 @@ why the image used to need separate venvs.
 | `TTS_FILL_RATIO` / `TTS_MIN_SPEED` / `TTS_MAX_SPEEDUP` | `0.9` / `0.88` / `1.2` | OmniVoice duration control: slow short takes down towards the original's timing, speed long ones up, both only within this range. |
 | `MIN_FILL_RATIO` | `0.7` | A take shorter than this share of the original's speech goes back to the LLM to restore content. |
 | `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence) and is synthesized again with another voice reference. |
+| `REF_MIN_CLARITY_DB` | `3.0` | A voice reference whose voice is less than this many dB above the rest of the mix (crowd, engines) is avoided; OmniVoice would clone the noise. |
 | `TAKE_CHECK` / `TAKE_MIN_SIMILARITY` | `on` / `0.5` | Whisper transcribes every take; one that sounds less like its text than this (noise, screams, gibberish) is synthesized again with another voice reference. |
 | `TAKE_CHECK_DEVICE` | `auto` | `auto` loads the check model on a GPU with 2.5 GB free, else the CPU; `cpu` forces the CPU. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
@@ -193,11 +195,13 @@ why the image used to need separate venvs.
 
 - `config.py` runs at import time: it prints debug paths, reads env vars, and calls `sys.exit(1)` if `HF_TOKEN` is
   missing and `MOCK_MODE` is off. Set `MOCK_MODE=1` before importing anything from `src/` in tests or scripts.
-- `TEMP_DIR` is shared between tasks and its file names (`orig.wav`, `vocals.mp3`, `mono.wav`, ...) are not
-  namespaced by task. Per-segment files carry the language (`raw_<lang>_<idx>.wav`, `attempt_<lang>_<idx>_<n>.wav`);
-  keep it that way, because target languages run concurrently and share segment indices.
-- Cached step results are JSON in SQLite. `_run_step` only re-runs a step when a cached path no longer exists, so a
-  cached result can point at a file that was since overwritten by another task.
+- Each task works in `TEMP_DIR/task_<id>` (`standalone` without a task), set by `DubbingPipeline._enter_workspace`
+  for the pipeline, the synchronizer and the shared `TTSManager`. It is deleted after a finished task (kept with
+  `DEBUG=1` or after a failure, so a retry reuses cached steps). Write temp files to `self.temp_dir` / `work_dir`,
+  never to `TEMP_DIR` directly. Per-segment files carry the language (`raw_<lang>_<idx>.wav`,
+  `attempt_<lang>_<idx>_<n>.wav`); keep it that way, because target languages run concurrently and share segment indices.
+- Cached step results are JSON in SQLite. `_run_step` only re-runs a step when a cached path no longer exists; the
+  per-task workspace keeps those paths from pointing at another task's files.
 - Prompts in `prompts.py` are system prompts sent as chat messages with `response_format=json_object`; the model's chat
   template (applied by llama-cpp-python or the server) adds the special tokens. Don't put ChatML tokens in them.
 - The OmniVoice server is restarted automatically on HTTP 500s and connection errors, then the request is retried once.

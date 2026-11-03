@@ -21,6 +21,33 @@ class TestDubbingPipeline(unittest.TestCase):
             debug_mode=False,
         )
 
+    def test_each_task_gets_its_own_workspace(self):
+        base = tempfile.mkdtemp()
+        self.pipeline.base_temp_dir = base
+
+        self.pipeline._enter_workspace(7)
+        ws = self.pipeline.temp_dir
+        self.assertEqual(ws, os.path.join(base, "task_7"))
+        self.assertTrue(os.path.isdir(ws))
+        self.assertEqual(self.pipeline.synchronizer.temp_dir, ws)
+        self.assertEqual(self.mock_tts.temp_dir, ws)
+
+        self.pipeline._leave_workspace()
+        self.assertFalse(os.path.exists(ws))
+        self.assertTrue(os.path.isdir(base))
+        shutil.rmtree(base)
+
+    def test_workspace_is_kept_in_debug_mode(self):
+        base = tempfile.mkdtemp()
+        self.pipeline.base_temp_dir = base
+        self.pipeline.debug_mode = True
+
+        self.pipeline._enter_workspace(None)
+        self.pipeline._leave_workspace()
+
+        self.assertTrue(os.path.isdir(os.path.join(base, "standalone")))
+        shutil.rmtree(base)
+
     def test_create_script(self):
         # Two practically continuous lines of the same speaker are merged
         diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 4.0}]
@@ -188,6 +215,49 @@ class TestDubbingPipeline(unittest.TestCase):
         self.assertIs(refs, self.pipeline.speaker_refs)
         with open(os.path.join(self.pipeline.temp_dir, "ref_A.txt"), encoding="utf-8") as f:
             self.assertEqual(f.read(), script[0]["text_en"])
+        shutil.rmtree(self.pipeline.temp_dir)
+
+    def test_extract_refs_prefers_a_clear_line_over_a_noisy_one(self):
+        script = [
+            {"speaker": "A", "start": 10.0, "end": 18.0, "text_en": "Huge sparks with every hit from the spinner here"},
+            {"speaker": "A", "start": 30.0, "end": 38.0, "text_en": "This next battle is going to be beautiful indeed"},
+        ]
+        self.pipeline.temp_dir = tempfile.mkdtemp()
+        clarity = {10.0: 1.0, 30.0: 15.0}  # the first line is shouted over the crowd
+        with (
+            patch("core.pipeline.run_cmd"),
+            patch("core.pipeline.measure_zcr", return_value=0.05),
+            patch("core.pipeline.shutil.move"),
+            patch("core.pipeline.clarity_db", side_effect=lambda v, start, end: clarity[start]),
+        ):
+            self.pipeline._extract_refs(script, "vocals.mp3", "/tmp/ddir")
+
+        with open(os.path.join(self.pipeline.temp_dir, "ref_A.txt"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), script[1]["text_en"])
+        shutil.rmtree(self.pipeline.temp_dir)
+
+    def test_extract_refs_keeps_the_speakers_own_voice_when_every_clip_is_noisy(self):
+        script = [
+            {"speaker": "A", "start": 10.0, "end": 18.0, "text_en": "Huge sparks with every hit from the spinner here"},
+            {"speaker": "A", "start": 30.0, "end": 38.0, "text_en": "This next battle is going to be beautiful indeed"},
+        ]
+        self.pipeline.temp_dir = tempfile.mkdtemp()
+        zcr = iter([0.3, 0.2])
+
+        def cut(cmd, label):
+            open(cmd[-2], "wb").close()
+
+        with (
+            patch("core.pipeline.run_cmd", side_effect=cut),
+            patch("core.pipeline.measure_zcr", side_effect=lambda path: next(zcr)),
+            patch("core.pipeline.shutil.move") as move,
+            patch("core.pipeline.os.remove"),
+        ):
+            refs = self.pipeline._extract_refs(script, "vocals.mp3", "/tmp/ddir")
+
+        self.assertIn("A", refs)
+        # The second tested clip had the lower ZCR
+        self.assertIn("test_A_30.0", move.call_args.args[0])
         shutil.rmtree(self.pipeline.temp_dir)
 
 

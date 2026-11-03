@@ -5,6 +5,8 @@ The **Video Dubbing Pipeline** is the core business process of Dubarr. It transf
 
 ## 2. Process Flow
 The pipeline executes sequentially in 8 stages (plus initialization). Each stage is checkpointed in the database to allow resumption.
+Each task works in its own folder, `TEMP_DIR/task_<id>` (`standalone` without a task): file names inside are fixed,
+and checkpoints point at them, so a shared folder would let a retried task pick up another task's audio.
 
 ### 2.0 Initialization (Startup)
 The system verifies model presence and downloads missing files. To maximize available VRAM, models follow a **Lazy Loading** strategy: they are loaded into memory only when needed and unloaded immediately after their stage completes.
@@ -78,9 +80,13 @@ duplicates content, because the target language orders the sentence differently.
 ### 2.4 Stage 4: Voice Reference Extraction
 *   **Input:** `vocals.wav`, `transcription.json`, `diarization.json`.
 *   **Action:**
-    1.  Scans for clean audio segments for each speaker.
-    2.  Filters out short/noisy clips using Zero Crossing Rate (ZCR) and signal-to-noise ratio checks.
-    3.  Selects the best 3-5 second sample for voice cloning.
+    1.  Scores every 2-20 s line of each speaker: ASR confidence, speaking rate, length (6-14 s best), position, and
+        **clarity**: the level of the Demucs vocals over the level of the rest (`no_vocals`) in the same span, in dB.
+        A line under `REF_MIN_CLARITY_DB` (3 dB, crowd or engines as loud as the voice) loses most of its score; above
+        12 dB it gains. OmniVoice clones the clip's character, so noise and screaming in a reference come back in the dub.
+    2.  Tests the best candidates (up to 8) for Zero Crossing Rate (ZCR <= 0.15, after denoising) and takes the first
+        that passes. When none passes, the tested candidate with the lowest ZCR is used: the speaker's own voice beats
+        another speaker's reference.
 *   **Output:**
     *   `refs/{speaker_id}.wav` (Reference audio for TTS).
 
@@ -93,6 +99,10 @@ duplicates content, because the target language orders the sentence differently.
     4.  **Sync Loop:** Each segment uses `LLMService` and `TTSService` via RPC.
 *   **Resource Management:** GPU-heavy tasks are prioritized (Refinement > Drafting) across all languages simultaneously.
 *   **Output:** `final_{lang}_{index}.wav` segments, sorted and grouped by language.
+*   **Production report:** after the sync loop, one log line per language summarizes it (lines, slot fill, statuses,
+    take-check similarity). With `DEBUG=1`, `report_{lang}.tsv` in the debug folder lists every line: time, speaker,
+    slot and limit, take duration and fill, status, voice reference type, similarity, attempts, source text, dub text
+    and what the take check heard.
 
 #### 2.5a Draft translation
 The goal is a complete translation that fits the timing. Run time is secondary.
@@ -139,7 +149,8 @@ The goal is a complete translation that fits the timing. Run time is secondary.
         1.  Calculates total processing time and individual stage durations.
         2.  Calculates LLM performance metrics (tokens per second).
         3.  Generates a detailed performance report logged to the system console.
-        4.  Cleans up temporary files (unless `debug_mode` is enabled).
+        4.  Deletes the task's folder (unless `debug_mode` is enabled). A failed task keeps it, so a retry reuses the
+            checkpointed stages.
         5.  Updates task status to `DONE`.
     
     ## 3. Data Persistence
