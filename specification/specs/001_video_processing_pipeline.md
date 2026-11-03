@@ -78,9 +78,13 @@ duplicates content, because the target language orders the sentence differently.
 ### 2.4 Stage 4: Voice Reference Extraction
 *   **Input:** `vocals.wav`, `transcription.json`, `diarization.json`.
 *   **Action:**
-    1.  Scans for clean audio segments for each speaker.
-    2.  Filters out short/noisy clips using Zero Crossing Rate (ZCR) and signal-to-noise ratio checks.
-    3.  Selects the best 3-5 second sample for voice cloning.
+    1.  Scores every 2-20 s line of each speaker: ASR confidence, speaking rate, length (6-14 s best), position, and
+        **clarity**: the level of the Demucs vocals over the level of the rest (`no_vocals`) in the same span, in dB.
+        A line under `REF_MIN_CLARITY_DB` (3 dB, crowd or engines as loud as the voice) loses most of its score; above
+        12 dB it gains. OmniVoice clones the clip's character, so noise and screaming in a reference come back in the dub.
+    2.  Tests the best candidates (up to 8) for Zero Crossing Rate (ZCR <= 0.15, after denoising) and takes the first
+        that passes. When none passes, the tested candidate with the lowest ZCR is used: the speaker's own voice beats
+        another speaker's reference.
 *   **Output:**
     *   `refs/{speaker_id}.wav` (Reference audio for TTS).
 

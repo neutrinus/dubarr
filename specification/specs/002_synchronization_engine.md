@@ -69,7 +69,9 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
         under it because the mix keeps the original audio).
 
 ### 2.3 Voice Reference Strategy
-1.  **Line clip:** a clean clip of the line itself when it is 3-10 s long (carries the scene's emotion).
+1.  **Line clip:** a clean clip of the line itself when it is 3-10 s long (carries the scene's emotion). Clean means
+    ZCR < 0.25 and a clarity (vocals over the rest, see Spec 001, 2.4) of at least `REF_MIN_CLARITY_DB`; a line shouted
+    over a cheering crowd uses the golden reference instead.
 2.  **Golden Reference:** the best scored sample of the speaker from Stage 4.
 3.  **Last Good Sample:** the last clean line clip of this speaker.
 4.  **Global fallback:** any golden or last good sample.
