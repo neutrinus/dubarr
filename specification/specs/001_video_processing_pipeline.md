@@ -103,7 +103,11 @@ The goal is a complete translation that fits the timing. Run time is secondary.
 4.  **Completeness review** (`TRANSLATION_REVIEW=on`, default). A second LLM pass compares each window's source and
     translation, lists the information that is missing or wrong and returns corrected lines within their budgets. Only
     the corrected lines are replaced.
-5.  Lines that are pure sound markers (`[music]`, `(laughter)`) are not dubbed.
+5.  **Length variants.** Besides the main translation (aimed at `target_syllables`), the translator returns a `short`
+    variant (towards `min_syllables`, essentials only) and a `long` one (towards `max_syllables`, fuller phrasing, no
+    invented facts). All carry the same information as far as their length allows. The sync loop picks between them
+    before synthesis (Spec 002, 2.2). A line fixed by the review keeps only the fixed text.
+6.  Lines that are pure sound markers (`[music]`, `(laughter)`) are not dubbed.
 
 ### 2.6 Stage 6: Final Mix
 *   **Input:** `final_{lang}_{index}.wav` segments, `orig.wav`.

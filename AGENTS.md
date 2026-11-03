@@ -41,7 +41,7 @@ src/
   verify_output.py         Manual QA helper (faster-whisper re-transcription of generated segments).
   core/
     pipeline.py            DubbingPipeline: stages 1-7, step caching, Stage 5 checkpointing, final mix/mux.
-    synchronizer.py        Per-segment loop: TTS -> measure duration -> ask LLM to shorten -> retry (max 3).
+    synchronizer.py        Per-segment loop: pick length variant by estimate -> TTS -> measure -> other variant / LLM -> retry.
     llm_engine.py          LLMManager (llama-cpp-python Gemma 3 12B GGUF, or an external server): analysis, ASR fix, drafts, refinement.
     tts_manager.py         TTSManager: voice reference selection (dynamic / golden / last good) + TTS calls.
     whisper_engine.py      WhisperManager (faster-whisper, large-v3-turbo).

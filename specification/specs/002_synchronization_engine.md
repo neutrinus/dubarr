@@ -22,28 +22,36 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
 
 1.  **Sanitization:** problematic characters (e.g. `…` -> `...`, `„` -> `"`) are replaced before synthesis.
 
-2.  **Synthesize with duration control (OmniVoice).** The server estimates the natural length of the text and asks the
+2.  **Pick a length variant (no synthesis).** When the draft has variants, the OmniVoice server estimates the
+    natural length of each (`/estimate`, the model's own text-based estimator; no audio is generated). The variant
+    closest to the target wins; running past the limit counts three times as much as falling short. If there are no
+    variants or the estimate fails, the main translation is used.
+
+3.  **Synthesize with duration control (OmniVoice).** The server estimates the natural length of the text and asks the
     model for a duration only when needed, within a natural-sounding range:
     -   natural length within `[TTS_FILL_RATIO × target, limit]` (default ratio 0.9): natural pace;
     -   shorter: slow down towards the target, but not below `TTS_MIN_SPEED` (default 0.88);
     -   longer than the limit: speed up to the limit, but not above `TTS_MAX_SPEEDUP` (default 1.2).
     Long lines are synthesized in sentence chunks; each chunk gets its share of the target and of the limit.
 
-3.  **Swallowed-take check.** A take that is far shorter than its text can be spoken (more than
+4.  **Swallowed-take check.** A take that is far shorter than its text can be spoken (more than
     `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND`, default 9 syllables per second) is broken: the model produced mostly silence,
     which OmniVoice then trims. It is synthesized again with the next voice reference (line clip -> golden -> last good),
     up to 2 extra syntheses. Such a take is never accepted while a sound one exists.
 
-4.  **Acceptance check.** Accepted when `actual <= limit × MAX_ACCEPT_SPEEDUP + 0.05 s` and
+5.  **Acceptance check.** Accepted when `actual <= limit × MAX_ACCEPT_SPEEDUP + 0.05 s` and
     `actual >= MIN_FILL_RATIO × target` (default 0.7). A short take is kept when the LLM finds nothing to add (it
     returns the same text): short original lines like "Wow!" stay short.
 
-5.  **Refinement (LLM)**, Priority 1 in `LLMService`, with the previous and next lines (source and translation):
+6.  **Unused variant first.** A rejected take is retried with the unused variant whose estimate moves towards the
+    target (shorter when too long, longer when too short), before asking the LLM.
+
+7.  **Refinement (LLM)**, Priority 1 in `LLMService`, with the previous and next lines (source and translation):
     -   **Too long:** shorten by removing fillers and using shorter synonyms; names, numbers, results and reasons stay.
     -   **Too short:** restore details of the source that the draft left out, or phrase it more fully. Never invent facts.
-    The loop goes back to step 2. It stops early when the LLM returns the same text.
+    The loop goes back to step 3. It stops early when the LLM returns the same text.
 
-6.  **Finalization:**
+8.  **Finalization:**
     -   **Success:** the accepted take.
     -   **Fallback (attempts exhausted):** among sound takes, the one that fits the limit and is closest to the target;
         if none fits, the shortest sound one. Swallowed takes are used only if nothing else exists.
