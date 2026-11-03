@@ -25,7 +25,8 @@ from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
 from core.voice_audition import audition_voices, design_voices
 from core.gpu_services import LLMService, TTSService
-from core.media_context import lookup_media_info, format_media_context, format_short_context
+from core.media_context import lookup_media_info, format_media_context, format_short_context, episode_names
+from core.series_memory import SeriesMemory
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ class DubbingPipeline:
         self.speaker_info = {}
         self.speaker_refs = {}
         self.global_context = {}
+        self.series = None  # SeriesMemory of the current episode (Spec 006)
         self.available_pans = [-0.10, 0.10, -0.03, 0.03, -0.17, 0.17]
         self.speaker_pans = {}
         self.abort_event = llm_manager.abort_event
@@ -569,6 +571,9 @@ class DubbingPipeline:
             with open(os.path.join(ddir, "media_info.json"), "w") as f_dbg:
                 json.dump(media_info, f_dbg, indent=2, ensure_ascii=False)
 
+        # Settled spellings of this series and the names known to occur (Spec 006, 3)
+        self.series = SeriesMemory.for_media(media_info)
+        fixed_glossary = self.series.glossary(SeriesMemory.lang_key(self.target_langs)) if self.series else {}
         analysis_results = self._run_step(
             "Stage 3: Global Analysis",
             self.llm_manager.analyze_script,
@@ -577,6 +582,8 @@ class DubbingPipeline:
             ddir,
             ref_subs,
             format_media_context(media_info),
+            fixed_glossary,
+            episode_names(media_info),
         )
         self.global_context = analysis_results["context"]
         if media_info:
@@ -639,6 +646,7 @@ class DubbingPipeline:
                 logger.error(f"Failed to install dubbed version! Restoring backup. Error: {e}")
                 shutil.move(bak_path, vpath)
                 raise e
+            self._remember_series(script)
 
         self.tts_manager.shutdown()
         if self.monitor:
@@ -650,6 +658,18 @@ class DubbingPipeline:
             else 0
         )
         self._print_report(vpath, time.perf_counter() - start_all, avg_tps)
+
+    def _remember_series(self, script):
+        """Stores what this episode settled for the next episodes of the series (Spec 006). Never fails the task."""
+        if not getattr(self, "series", None):
+            return
+        try:
+            glossary = (self.global_context or {}).get("glossary") or {}
+            text = " ".join(s.get("text_en", "") for s in script).lower()
+            used = [t for t in glossary if t.lower() in text]
+            self.series.save_glossary(SeriesMemory.lang_key(self.target_langs), glossary, used)
+        except Exception as e:
+            logger.warning(f"Series memory: could not save ({e})")
 
     def _print_report(self, f, t, avg_tps):
         rep = ["\n" + "=" * 50, f" PROFILING REPORT: {f}", "=" * 50]

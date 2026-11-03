@@ -30,12 +30,14 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
     are and only add new terms. Its answer cannot change a stored spelling.
 4.  **Reading test** for every new or changed spelling that differs from the term: a separate short LLM request gets
     only the spellings (not the terms) and writes, in English spelling, what an English speaker would hear when a
-    native speaker of the target language reads each of them aloud. The answer is compared with the term (letters only,
-    lower-case, after folding similar spellings: `ck`/`c`/`q` -> `k`, `ph` -> `f`, `y` -> `i`, doubled letters once).
-    A similarity under `GLOSSARY_MIN_SIMILARITY` (0.75) fails: the model is asked for a new spelling of the failed
-    terms, with the failed spelling and what it sounded like, at most twice. A term that still fails keeps its
-    original spelling (the TTS reads it as written, which beats a wrong name).
-5.  Only checked entries are stored. A stored entry counts the episodes that used it.
+    native speaker of the target language reads each of them aloud. The answer is compared with the term
+    by their consonants: letters only, doubled letters once, voiced and voiceless pairs folded (`b`/`p`, `d`/`t`,
+    `g`/`k`, `z`/`s`, `v`/`f`/`w`), `ck`/`ch`/`c`/`q` -> `k`, `ph` -> `f`, `th` -> `t`, and `j`/`y` counted as vowels.
+    A spelling that loses or changes more than one consonant in six fails ("Rayorbeck" keeps `rrpk` of `rsrpk`): the
+    model is asked for a new spelling of the failed terms, with the failed spelling and what it sounded like, at most
+    twice. A term that still fails keeps its original spelling (the TTS reads it as written, which beats a wrong name).
+5.  Acronyms of up to 6 capitals (`S.T.C.W.R.`) skip the test. Only checked entries are stored. A stored entry counts
+    the episodes that used it.
 
 ## 4. Voice Bank
 1.  **Voiceprint.** Diarization keeps each speaker's centroid embedding, which pyannote computes anyway (Spec 001,
@@ -60,6 +62,5 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
 
 ## 5. Configuration
 -   `SERIES_MEMORY` (on): series glossary and voice bank.
--   `GLOSSARY_MIN_SIMILARITY` (0.75): reading-test similarity a respelling needs.
 -   `VOICE_MATCH_MIN` (0.6): voiceprint similarity from which a speaker is a known person. To be tuned on measured runs.
 -   `VOICE_BANK_CLIPS` (5): clips kept per person.

@@ -67,6 +67,9 @@ def parse_media_path(path: str) -> Dict:
         dir_title, dir_year = _split_year(show_dir) if show_dir else ("", None)
         info["title"] = title or dir_title
         info["year"] = year or dir_year
+        episode_title = _clean_title(JUNK_RE.sub("", " " + stem[m.end() :]))
+        if episode_title:
+            info["episode_title"] = episode_title
         return info
 
     title, year = _split_year(stem)
@@ -107,6 +110,29 @@ def _merge_cast(primary: List[Dict], secondary: List[Dict]) -> List[Dict]:
         other = by_actor.get(c.get("actor", "").lower()) or by_char.get(c.get("character", "").lower()) or {}
         merged.append({**c, "gender": c.get("gender") or other.get("gender", "")})
     return merged
+
+
+# Separators between the names in an episode title ("Backlash vs. Disposable Hero, Tentoumushi vs. Sallad")
+NAME_SPLIT_RE = re.compile(r"\s+vs\.?\s+|\s*,\s*|\s+&\s+|\s+and\s+|\s+-\s+", re.IGNORECASE)
+# A part in parentheses is a remark, not a name ("(Lightweight Finals)")
+PAREN_RE = re.compile(r"\([^)]*\)")
+
+
+def episode_names(info: Dict) -> List[str]:
+    """Names in the episode title and the cast: they occur in the episode, with the right spelling (Spec 006, 3)."""
+    names: List[str] = []
+    title = PAREN_RE.sub(" ", (info or {}).get("episode_title") or "")
+    parts = NAME_SPLIT_RE.split(title) if NAME_SPLIT_RE.search(title) else []
+    for part in parts:
+        part = part.strip()
+        if part and len(part.split()) <= 4:
+            names.append(part)
+    for c in ((info or {}).get("cast") or []) + ((info or {}).get("guest_cast") or []):
+        for key in ("character", "actor"):
+            if c.get(key):
+                names.append(c[key])
+    seen = set()
+    return [n for n in names if not (n.lower() in seen or seen.add(n.lower()))]
 
 
 def lookup_media_info(path: str, online: bool = True, tmdb_api_key: str = "", timeout: int = 10, local: bool = True) -> Dict:
@@ -150,7 +176,7 @@ def lookup_media_info(path: str, online: bool = True, tmdb_api_key: str = "", ti
                 "plot": show.get("plot") or remote.get("plot", ""),
                 "season": guess["season"],
                 "episode": guess["episode"],
-                "episode_title": item.get("title") or remote.get("episode_title", ""),
+                "episode_title": item.get("title") or remote.get("episode_title", "") or guess.get("episode_title", ""),
                 "episode_plot": item.get("plot") or remote.get("episode_plot", ""),
                 "cast": _merge_cast(show.get("cast"), remote.get("cast")),
                 # Episode .nfo actors are usually the guest stars plus the main cast; keep only those not in the show cast
@@ -180,6 +206,7 @@ def lookup_media_info(path: str, online: bool = True, tmdb_api_key: str = "", ti
                 "year": info["year"],
                 "season": guess["season"],
                 "episode": guess["episode"],
+                "episode_title": guess.get("episode_title", ""),
                 "sources": [],
             }
         info["sources"] = sources

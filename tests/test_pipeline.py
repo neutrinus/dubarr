@@ -380,3 +380,15 @@ class TestPauseBeforeLine(unittest.TestCase):
         start, speed = DubbingPipeline._place_take(item, 3.0, 9.9)
         self.assertAlmostEqual(start, 9.9)
         self.assertAlmostEqual(speed, 3.0 / 2.6)  # what does not fit is sped up instead
+
+
+class TestRememberSeries(unittest.TestCase):
+    def test_saves_the_used_names_and_never_fails(self):
+        pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        pipe.series = MagicMock()
+        pipe.global_context = {"glossary": {"Razorback": "Rejzorbek", "Ice Wave": "Ajs Łejw"}}
+        pipe._remember_series([{"text_en": "Razorback spins up."}])
+        pipe.series.save_glossary.assert_called_once_with("pl", pipe.global_context["glossary"], ["Razorback"])
+
+        pipe.series.save_glossary.side_effect = OSError("disk full")
+        pipe._remember_series([])  # logged, not raised

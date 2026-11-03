@@ -1,4 +1,5 @@
 import difflib
+import unicodedata
 import json
 import re
 import wave
@@ -133,3 +134,49 @@ def text_similarity(expected: str, heard: str) -> float:
     if not b:
         return 0.0
     return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+
+# English spellings that sound alike fold to one consonant (both sides of the glossary reading test are English spelling)
+_SOUND_FOLDS = (
+    ("sch", "sh"),
+    ("ck", "k"),
+    ("ch", "k"),
+    ("ph", "f"),
+    ("th", "t"),
+    ("x", "ks"),
+    ("q", "k"),
+    ("c", "k"),
+    ("b", "p"),
+    ("d", "t"),
+    ("g", "k"),
+    ("z", "s"),
+    ("v", "f"),
+    ("w", "f"),
+)
+
+
+def consonant_skeleton(text: str) -> str:
+    """The consonants of an English spelling, voiced and voiceless pairs folded ("Razorback" -> "rsrpk").
+
+    ``j`` and ``y`` count as vowels: a Polish "j" is an English "y", and the two spellings swap freely.
+    """
+    t = unicodedata.normalize("NFKD", (text or "").lower())
+    t = "".join(ch for ch in t if ch.isascii() and ch.isalpha())
+    t = re.sub(r"(.)\1+", r"\1", t)  # doubled letters are one sound ("Sallad")
+    for a, b in _SOUND_FOLDS:
+        t = t.replace(a, b)
+    return re.sub(r"[aeiouyj]", "", t)
+
+
+def respelling_heard_as(term: str, heard: str) -> bool:
+    """Whether what a respelling sounds like ("Rayorbeck") keeps the consonants of the term ("Razorback").
+
+    A respelling that drops or changes a consonant names something else; one change is allowed per 6 consonants
+    (Spec 006, 3).
+    """
+    a, b = consonant_skeleton(term), consonant_skeleton(heard)
+    if not a:
+        return True
+    ops = difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
+    missing = sum(i2 - i1 for op, i1, i2, _j1, _j2 in ops if op in ("replace", "delete"))
+    return missing <= len(a) // 6

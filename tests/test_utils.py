@@ -122,3 +122,27 @@ def test_text_similarity_tolerates_phonetic_spellings_but_not_noise():
     assert text_similarity(text, "Aaaa! Aaaa!") < 0.5
     assert text_similarity(text, "") == 0.0
     assert text_similarity("", "anything") == 1.0
+
+
+def test_respelling_that_loses_a_consonant_fails():
+    from utils import respelling_heard_as
+
+    assert not respelling_heard_as("Razorback", "Rayorbeck")  # "Rej-or-bek" lost the z
+    assert not respelling_heard_as("Ice Wave", "Ice Way")
+
+
+@pytest.mark.parametrize(
+    "term,heard",
+    [
+        ("Razorback", "Rayzorbak"),
+        ("Hyneman", "Hineman"),
+        ("Mjollnir", "Myolnir"),
+        ("Disposable Hero", "Dispozebel Hiro"),
+        ("James", "Jayms"),
+        ("Sallad", "Salad"),
+    ],
+)
+def test_close_respellings_pass(term, heard):
+    from utils import respelling_heard_as
+
+    assert respelling_heard_as(term, heard)

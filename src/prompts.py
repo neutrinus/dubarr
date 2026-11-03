@@ -8,13 +8,18 @@ REFERENCE SUBTITLES (Ground Truth for names/context): "{subtitles}"
 KNOWN MEDIA INFO (from the file name and a metadata database; may be empty or slightly off):
 {media_info}
 
+NAMES THAT OCCUR IN THIS EPISODE (from its title and cast; this is their correct spelling): {names}
+
+FIXED GLOSSARY (spellings settled in earlier episodes of this series; reuse them exactly, never change them): {fixed_glossary}
+
 Analyze the movie script provided by the user. Return A SINGLE JSON object containing:
 1. 'summary': A concise summary of the plot and context of THIS video (episode), in English.
-2. 'glossary': A dictionary of proper nouns, names, and specific terms.
-   - For names and brands that should keep their original sound,
-     provide a PHONETIC SPELLING in the target language(s) ({langs}).
-   - Example (for Polish): 'James' -> 'Dżejms', 'MythBusters' -> 'Mif-basters', 'Hyneman' -> 'Hajneman'.
-   - This is crucial for the TTS engine to pronounce them correctly.
+2. 'glossary': A dictionary of the names and brands that keep their original sound (people, robots, teams, shows),
+   each with a PHONETIC SPELLING in the target language(s) ({langs}) that a native speaker reads aloud as the original.
+   - Example (for Polish): 'James' -> 'Dżejms', 'Razorback' -> 'Rejzorbek', 'Hyneman' -> 'Hajneman'.
+   - Keep EVERY consonant sound of the original: a spelling that drops one names something else.
+   - This is crucial for the TTS engine to pronounce them correctly. Words that are translated do not belong here.
+   - Include the entries of the FIXED GLOSSARY that occur in the script, unchanged.
 3. 'speakers': A dictionary where keys are speaker IDs (e.g. SPEAKER_00) and values are objects with:
    - 'name': The inferred real name of the character/person. Prefer the character names from KNOWN MEDIA INFO
      (identify speakers by how they are addressed and what they talk about).
@@ -34,15 +39,41 @@ OUTPUT FORMAT:
 }}
 """
 
+T_GLOSSARY_READ = """You check phonetic spellings for a {lang_name} text-to-speech voice.
+
+INPUT (JSON): "spellings", each with "id" and "spelling", a {lang_name} phonetic spelling of a foreign name.
+
+TASK: For each spelling, imagine a native {lang_name} speaker reading it aloud by {lang_name} pronunciation rules.
+Write, in ENGLISH spelling, what an English listener would hear. Do not guess which name was meant: write only what
+the spelling sounds like.
+
+OUTPUT FORMAT (JSON):
+{{"heard": [{{"id": 0, "english": "..."}}]}}
+"""
+
+T_GLOSSARY_RESPELL = """You write phonetic spellings for a {lang_name} text-to-speech voice.
+
+INPUT (JSON): "names", each with "id", "name" (the original name), "spelling" (a rejected {lang_name} spelling) and
+"sounds_like" (what that spelling sounds like when read aloud in {lang_name}).
+
+TASK: For each name, write a new {lang_name} phonetic spelling that a native speaker reads aloud as the ORIGINAL
+name. Keep every consonant sound of the original; fix what "sounds_like" shows is lost or wrong.
+
+OUTPUT FORMAT (JSON):
+{{"spellings": [{{"id": 0, "spelling": "..."}}]}}
+"""
+
 T_ED = """You are a Transcription Corrector. Your task is to fix ASR (speech-to-text) errors in the source text.
 
 CONTEXT GLOSSARY (For name reference only): {glossary}
+NAMES THAT OCCUR IN THIS EPISODE (correct spelling): {names}
 REFERENCE SUBTITLES: "{subtitles}"
 
 RULES:
 1. Identify lines with misheard names or phonetic ASR errors.
 2. USE STANDARD ORTHOGRAPHY of the source language. NEVER use phonetic transcriptions (like 'æ', 'ð', 'ʃ') in the output.
-3. Verify proper nouns against the Reference Subtitles.
+3. Verify proper nouns against the Reference Subtitles and the names that occur in this episode: a misheard name
+   ("Icewing" for "Ice Wave") is replaced by its correct spelling.
 4. Return ONLY a JSON object where keys are Line Indices (integers) and values are the Corrected Source Text.
 5. IF A LINE IS CORRECT, DO NOT INCLUDE IT.
 

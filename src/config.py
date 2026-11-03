@@ -143,6 +143,11 @@ AUDITION_LINE_REF_MIN = float(os.environ.get("AUDITION_LINE_REF_MIN", "0.8"))
 # One OmniVoice voice-design clip per speaker (gender/age/pitch from the profile) joins the reference candidates
 VOICE_DESIGN = os.environ.get("VOICE_DESIGN", "on").lower() not in ("0", "off", "false", "no")
 
+# Series memory (Spec 006): settled name spellings and the voice bank, kept between the episodes of a series
+SERIES_MEMORY = os.environ.get("SERIES_MEMORY", "on").lower() not in ("0", "off", "false", "no")
+VOICE_MATCH_MIN = float(os.environ.get("VOICE_MATCH_MIN", "0.6"))
+VOICE_BANK_CLIPS = max(1, int(os.environ.get("VOICE_BANK_CLIPS", "5")))
+
 
 # Safe logging setup
 def setup_logging():
