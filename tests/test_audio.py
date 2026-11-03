@@ -94,3 +94,13 @@ class TestMixAudio(unittest.TestCase):
                 )
             mix_audio(bg, [(speech, 3.0, 3.0)], out)  # speech ends at 6 s, background at 4 s
             self.assertAlmostEqual(FFmpegWrapper.get_duration(out), 4.0, delta=0.2)
+
+
+def test_calm_bonus():
+    from core.audio import calm_bonus
+
+    assert calm_bonus(-20.0, -20.0) == 5
+    assert calm_bonus(-17.0, -20.0) == 0
+    assert calm_bonus(-15.0, -20.0) == -10
+    assert calm_bonus(-5.0, -20.0) == -40
+    assert calm_bonus(None, -20.0) == 0

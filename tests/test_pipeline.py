@@ -392,3 +392,22 @@ class TestRememberSeries(unittest.TestCase):
 
         pipe.series.save_glossary.side_effect = OSError("disk full")
         pipe._remember_series([])  # logged, not raised
+
+
+class TestCalmReferences(unittest.TestCase):
+    def test_shouted_line_loses_to_calm_talk_after_it(self):
+        pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        lines = [{"start": float(t), "end": float(t) + 8} for t in (10, 30, 50, 70)]
+        # Shouting at 10 s, the calm talk comes later in the episode
+        levels = {10.0: -12.0, 30.0: -20.0, 50.0: -21.0, 70.0: -19.0}
+        with patch("core.pipeline.voice_level", side_effect=lambda v, start, end: levels[start]):
+            scored = pipe._apply_calm_scores([(s, 90) for s in lines], "vocals.wav", "A")
+        best = max(scored, key=lambda x: x[1])[0]
+        self.assertNotEqual(best["start"], 10.0)
+        self.assertLess(dict((s["start"], v) for s, v in scored)[10.0], 90 - 20)
+
+    def test_too_few_lines_leave_scores_alone(self):
+        pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        scored = [({"start": 1.0, "end": 5.0}, 50), ({"start": 9.0, "end": 14.0}, 60)]
+        with patch("core.pipeline.voice_level", return_value=-20.0):
+            self.assertEqual(pipe._apply_calm_scores(scored, "v.wav", "A"), scored)

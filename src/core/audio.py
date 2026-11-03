@@ -203,6 +203,27 @@ def get_audio_languages(vpath: str) -> List[str]:
         return []
 
 
+def voice_level(vocals_path: str, start: float, end: float) -> Optional[float]:
+    """Mean level (dB) of the separated voice in a span; None when it cannot be measured."""
+    if end <= start or not os.path.exists(vocals_path):
+        return None
+    return FFmpegWrapper.mean_volume(vocals_path, start, end - start)
+
+
+def calm_bonus(level: Optional[float], median: Optional[float]) -> int:
+    """Reference score for how calm a line is compared with the same speaker's usual level (Spec 001, 2.4).
+
+    Shouting (4 dB or more above the speaker's median) loses 5 points per dB above 3 dB, up to 40; a line within
+    2 dB of the median gains 5. The speaker is only compared with itself, so a loud voice is not penalised.
+    """
+    if level is None or median is None:
+        return 0
+    above = level - median
+    if above >= 4.0:
+        return -min(40, round(5 * (above - 3.0)))
+    return 5 if abs(above) <= 2.0 else 0
+
+
 def clarity_db(vocals_path: str, start: float, end: float) -> Optional[float]:
     """How much louder the separated voice is than the rest of the mix in a span (dB); None without the stems.
 
