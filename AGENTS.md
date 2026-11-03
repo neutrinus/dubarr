@@ -154,6 +154,7 @@ why the image used to need separate venvs.
 | `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence) and is synthesized again with another voice reference. |
 | `REF_MIN_CLARITY_DB` | `3.0` | A voice reference whose voice is less than this many dB above the rest of the mix (crowd, engines) is avoided; OmniVoice would clone the noise. |
 | `TAKE_CHECK` / `TAKE_MIN_SIMILARITY` | `on` / `0.5` | `on`: Whisper scores the voice audition and every take; one that sounds less like its text than this (noise, screams, gibberish) is synthesized again with another voice reference. `audition`: only the audition (minutes instead of doubling Stage 5). `off`: neither. |
+| `VOICE_DESIGN` | `on` | One OmniVoice voice-design clip per speaker (gender/age/pitch from the speaker profile) joins the reference candidates; the voice audition decides whether it is used. |
 | `TAKE_DROP_SIMILARITY` | `0.3` | A line whose every take is broken below this is left undubbed (the original stays audible). |
 | `REF_AUDITION_CANDIDATES` / `AUDITION_LINE_REF_MIN` | `3` / `0.8` | Reference clips kept per speaker for the voice audition; a speaker scoring below this does not clone from line clips. |
 | `TAKE_CHECK_DEVICE` | `cpu` | Where the take-check Whisper runs. `auto` uses a GPU only with 8.5 GB free; on the TTS card it starves OmniVoice. |

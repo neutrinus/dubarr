@@ -83,6 +83,14 @@ are ranked by that score, best first. A speaker whose best score is under `AUDIT
 not use line clips: a voice that clones badly from its cleanest clips (announcers shouting over the arena) clones
 worse from an arbitrary line. Without the audition the Stage 4 order is kept and line clips are used.
 
+**Designed voice** (`VOICE_DESIGN`, on by default). Before the audition, OmniVoice voice design synthesizes one clip
+per speaker with a known gender from the attributes it understands: gender, age and pitch, taken from the speaker
+profile (Stage 3; e.g. "male, middle-aged, low pitch"). The clip speaks the speaker's own lines (about 30 syllables,
+not the audition test line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
+other reference, so the voice stays the same across the video. The audition decides whether it beats the speaker's
+own clips (voice design was trained on Chinese and English only and may be unstable in other languages). It gives a
+voice to speakers without any clean clip; it is never lent to another speaker.
+
 References are tried in this order; a retry after a broken take skips the ones already tried for that line:
 1.  **Line clip:** a clean clip of the line itself when it is 3-10 s long (carries the scene's emotion). Clean means
     ZCR < 0.25 and a clarity (vocals over the rest, see Spec 001, 2.4) of at least `REF_MIN_CLARITY_DB`; a line shouted
@@ -110,6 +118,7 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `TAKE_CHECK` (on | audition | off), `TAKE_MIN_SIMILARITY` (0.5), `TAKE_CHECK_DEVICE` (cpu): the intelligibility
     check of the voice audition and of every take.
 -   `TAKE_DROP_SIMILARITY` (0.3): a line whose every take is broken below this is not dubbed.
+-   `VOICE_DESIGN` (on): one voice-design clip per speaker as an extra reference candidate.
 -   `REF_AUDITION_CANDIDATES` (3), `AUDITION_LINE_REF_MIN` (0.8): reference candidates per speaker, and the audition
     score a speaker needs to use line clips.
 -   `zcr_threshold` (0.25): Zero Crossing Rate limit for line-clip references.
