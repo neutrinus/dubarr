@@ -12,7 +12,14 @@ from typing import List, Optional
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_BEFORE_MAX, SLACK_GUARD
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
 from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION, SENTENCE_MAX_GAP, SENTENCE_MAX_DURATION
-from config import TRANSLATION_REVIEW, TAKE_CHECK, REF_MIN_CLARITY_DB, REF_AUDITION_CANDIDATES, AUDITION_LINE_REF_MIN
+from config import (
+    TRANSLATION_REVIEW,
+    TAKE_CHECK,
+    TAKE_VERSIONS,
+    REF_MIN_CLARITY_DB,
+    REF_AUDITION_CANDIDATES,
+    AUDITION_LINE_REF_MIN,
+)
 from config import VOICE_DESIGN
 from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
@@ -27,6 +34,7 @@ from core.voice_audition import audition_voices, design_voices
 from core.gpu_services import LLMService, TTSService
 from core.media_context import lookup_media_info, format_media_context, format_short_context, episode_names
 from core.series_memory import SeriesMemory
+from core.take_judge import TakeJudge
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
@@ -82,14 +90,19 @@ class DubbingPipeline:
         self.speaker_pans = {}
         self.abort_event = llm_manager.abort_event
         self.monitor = None
-        # The voice audition always uses the checker unless TAKE_CHECK=off; every take only with TAKE_CHECK=on
-        self.take_checker = getattr(whisper_manager, "transcribe_take", None) if TAKE_CHECK != "off" else None
+        # The take judge decides on every take and in the voice audition (Spec 002, 2.2 step 4); TAKE_CHECK=off keeps
+        # only its signal checks. Whisper only reports its similarity next to it (TAKE_CHECK=whisper, measurement).
+        self.take_check = TAKE_CHECK
+        self.judge = TakeJudge(temp_dir, signal_only=TAKE_CHECK == "off")
+        self.take_checker = getattr(whisper_manager, "transcribe_take", None) if TAKE_CHECK == "whisper" else None
         self.synchronizer = SegmentSynchronizer(
             llm_manager=llm_manager,
             tts_manager=tts_manager,
             temp_dir=temp_dir,
             debug_mode=debug_mode,
-            take_checker=self.take_checker if TAKE_CHECK == "on" else None,
+            take_checker=self.take_checker,
+            judge=self.judge,
+            versions=TAKE_VERSIONS,
         )
 
     def _enter_workspace(self, task_id):
@@ -102,6 +115,7 @@ class DubbingPipeline:
         self.temp_dir = os.path.join(self.base_temp_dir, name)
         os.makedirs(self.temp_dir, exist_ok=True)
         self.synchronizer.temp_dir = self.temp_dir
+        self.judge.temp_dir = self.temp_dir
         self.tts_manager.temp_dir = self.temp_dir
         logger.info(f"Workspace: {self.temp_dir}")
 
@@ -746,6 +760,7 @@ class DubbingPipeline:
         finally:
             if hasattr(self.whisper_manager, "shutdown_take_check"):
                 self.whisper_manager.shutdown_take_check()
+            self.judge.shutdown()
 
         # Per-line report: a summary in the log, the whole table in the debug folder (Spec 001, 2.5)
         for lang in self.target_langs:
@@ -800,12 +815,12 @@ class DubbingPipeline:
                 design_voices(self.tts_manager, self.speaker_info, all_drafts_by_lang.get(lang) or [], lang, self.temp_dir)
             except Exception as e:
                 logger.warning(f"Voice design failed: {e}")
-        if not self.take_checker:
+        if self.take_check == "off":
             return
         try:
             scores = audition_voices(
                 self.tts_manager,
-                self.take_checker,
+                lambda path, text, lng, ref: self.judge.judge(text, path, lng, ref)["score"],
                 all_drafts_by_lang.get(lang) or [],
                 lang,
                 self.temp_dir,

@@ -38,18 +38,16 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
     Long lines are synthesized in sentence chunks; each chunk gets its share of the target and of the limit.
 
 4.  **Takes and the judge.** Each synthesis makes `TAKE_VERSIONS` (2) takes of the text at once, cloning the
-    speaker's first two references in the order of 2.3 (the same reference with another seed when the speaker has
-    one). The **judge** scores each take in layers, cheapest first; a take that fails a layer is broken and the later
-    layers skip it:
+    speaker's first two references in the order of 2.3. The **judge** scores each take in layers, cheapest first; a
+    take that fails a layer is broken and the later layers skip it:
     1.  *missing or swallowed*: no usable audio, or far shorter than its text can be spoken (more than
         `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND`, default 9 syllables per second): mostly silence, trimmed by OmniVoice.
-    2.  *artifacts* (signal only, milliseconds): squeaks, i.e. energy above 3.5 kHz more than `JUDGE_HF_MAX_DB` (12 dB)
-        over the original line's level in that band, holding more than 35% of the take's energy, for 300 ms or more
-        (the 6:53 squeaks of the measured run: +29 dB for 1.08 s, the only such event in the episode); clipping (more
-        than 0.1% of samples at full scale); a silence over 1.2 s inside the take.
-    3.  *voice match*: the take's voiceprint (Spec 006, 4.1) against the speaker's (its diarization centroid, or its
-        bank voice). Under `JUDGE_MIN_VOICE` (0.5) the clone is not the speaker: a crowd or an engine was cloned, or the
-        model drifted into another voice.
+    2.  *artifacts* (signal only, milliseconds): a squeak, i.e. frames with more than 35% of their energy above
+        3.5 kHz and that band `JUDGE_HF_MAX_DB` (12 dB) above its usual level in the take, for 300 ms or more (the
+        6:53 squeaks of the measured run: +29 dB for 1.08 s, the only such event in the episode); clipping (more than
+        0.1% of samples at full scale); a silence over 1.2 s inside the take.
+    3.  *voice match*: the take's voiceprint (Spec 006, 4.1) against the print of the reference it cloned. Under
+        `JUDGE_MIN_VOICE` (0.5) the clone is not that voice: the model drifted into another voice or into noise.
     4.  *text match*: a CTC speech model of the target language (`JUDGE_ALIGN_MODEL`; default
         `jonatasgrosman/wav2vec2-large-xlsr-53-polish` for Polish, 300 M parameters, and `facebook/mms-1b-all` with
         the language's adapter for other languages; on the CPU) scores how well the take's text fits the audio: the
@@ -62,7 +60,7 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
     one exists; when every take is broken the least broken is kept (the best score; swallowed counts as worst).
     `TAKE_CHECK` modes: `judge` (default) as above, also for the voice audition; `whisper` runs the judge and, for
     measurement only, the old Whisper similarity next to it (both in the production report); `off` keeps only
-    layers 1 and 2. Earlier values: `on` reads as `judge`, `audition` as `off` plus the judged voice audition. The judge's models are loaded on first use and released after Stage 5.
+    layers 1 and 2 (and no audition). The judge is cheap, so the earlier values `on` and `audition` read as `judge`. The judge's models are loaded on first use and released after Stage 5.
 
 5.  **Acceptance check.** Accepted when `actual <= limit × MAX_ACCEPT_SPEEDUP + 0.05 s` and
     `actual >= MIN_FILL_RATIO × target` (default 0.7). A short take is kept when the LLM finds nothing to add (it

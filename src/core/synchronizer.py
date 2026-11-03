@@ -4,7 +4,7 @@ import shutil
 import wave
 from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
-from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND, TAKE_MIN_SIMILARITY
+from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND
 from config import TAKE_DROP_SIMILARITY
 from utils import count_syllables, text_similarity
 from duration_policy import MAX_SPEEDUP as TTS_MAX_SPEEDUP
@@ -17,13 +17,17 @@ SWALLOW_RETRIES = 2
 
 
 class SegmentSynchronizer:
-    def __init__(self, llm_manager, tts_manager, temp_dir, debug_mode=False, take_checker=None):
+    def __init__(self, llm_manager, tts_manager, temp_dir, debug_mode=False, take_checker=None, judge=None, versions=1):
         self.llm = llm_manager
         self.tts = tts_manager
         self.temp_dir = temp_dir
         self.debug_mode = debug_mode
-        # (audio_path, lang) -> what an ASR hears in the take, or None when it cannot tell (Spec 002, 2.2 step 4)
+        # (audio_path, lang) -> what Whisper hears in the take; only reported, for measurement (TAKE_CHECK=whisper)
         self.take_checker = take_checker
+        # TakeJudge: decides whether a take is broken (Spec 002, 2.2 step 4)
+        self.judge = judge
+        # Takes per synthesis, each from another voice reference; the best judged one goes on
+        self.versions = max(1, versions)
 
     @staticmethod
     def is_swallowed(text: str, duration: float, lang: str) -> bool:
@@ -47,59 +51,78 @@ class SegmentSynchronizer:
     def _judge(self, text: str, result: Dict, lang: str):
         """(result, duration, None) for a sound take, or (result, duration, (score, problem)) for a broken one.
 
-        Higher scores are less broken: a missing take scores -2, a swallowed one -1, an unintelligible one its similarity.
+        Higher scores are less broken: a missing take scores -2, a swallowed one -1, any other its judge score (0..1).
         """
         if not result.get("audio_path"):
-            return result, 0.0, (-2.0, "MISSING take (no audio from the TTS)")
+            return dict(result, score=0.0), 0.0, (-2.0, "MISSING take (no audio from the TTS)")
         try:
             duration = FFmpegWrapper.get_duration(result["audio_path"])
         except Exception:
             duration = result["duration"]
         if self.is_swallowed(text, duration, lang):
-            return result, duration, (-1.0, f"SWALLOWED take ({duration:.2f}s for '{text[:40]}')")
-        # Interjections ("Wow.", "O!") are spelled too freely by the ASR to compare
+            return dict(result, score=0.0), duration, (-1.0, f"SWALLOWED take ({duration:.2f}s for '{text[:40]}')")
+        problem = None
+        if self.judge:
+            try:
+                verdict = self.judge.judge(text, result["audio_path"], lang, result.get("ref"))
+            except Exception as e:
+                logger.warning(f"Take judge failed: {e}")
+                verdict = {"score": 1.0, "problem": None, "voice": None, "text_match": None}
+            result = dict(result, score=verdict["score"], voice_match=verdict["voice"], text_match=verdict["text_match"])
+            if verdict["problem"]:
+                problem = (verdict["score"], verdict["problem"])
+        # Measurement only: what Whisper hears (interjections are spelled too freely to compare)
         check = self._intelligibility(text, result["audio_path"], lang) if count_syllables(text, lang) >= 4 else None
-        if check is None:
-            return result, duration, None
-        result = dict(result, similarity=round(check[0], 2), heard=check[1])
-        if check[0] >= TAKE_MIN_SIMILARITY:
-            return result, duration, None
-        return result, duration, (check[0], f"UNINTELLIGIBLE take (similarity {check[0]:.2f}, heard '{check[1][:60]}')")
+        if check is not None:
+            result = dict(result, similarity=round(check[0], 2), heard=check[1])
+        return result, duration, problem
+
+    def _keep(self, result: Dict, lang: str, idx, n: int) -> Dict:
+        """Copies a take away from the TTS output file, which the next synthesis of the line rewrites."""
+        kept = os.path.join(self.temp_dir, f"take_{lang}_{idx}_{n}.wav")
+        shutil.copy(result["audio_path"], kept)
+        return dict(result, audio_path=kept)
 
     def _synthesize_sound(self, tts_item: Dict, lang: str, vocals_path: str, full_script: List[Dict]):
-        """Synthesizes a take and re-synthesizes it with other references while it comes out broken.
+        """Synthesizes takes of a line from different voice references and returns the best sound one.
 
-        Broken means missing (no audio), swallowed (far too short for its text) or unintelligible (the ASR hears
-        something else: noise, screams, mangled words). Returns (result, duration, broken) or None when synthesis
-        failed; when every reference gives a broken take, the least broken one is returned.
+        The first round makes ``versions`` takes; while all of them are broken (missing, swallowed, artifacts, wrong
+        voice, unintelligible), one more is made with the next reference, up to SWALLOW_RETRIES. Returns
+        (result, duration, broken) or None when synthesis failed; when every take is broken, the least broken one.
         """
         idx = tts_item["index"]
         text = tts_item["text"]
         skip = []
+        sound = []  # (score, result, duration)
         best = None  # (score, (result, duration, True)); higher score = less broken
-        for retry in range(SWALLOW_RETRIES + 1):
+        total = self.versions + SWALLOW_RETRIES
+        for n in range(total):
+            if n >= self.versions and sound:
+                break
             item = dict(tts_item, skip_refs=list(skip))
             result = self.tts.synthesize_sync(item, lang, vocals_path, full_script)
             if not result:
-                return best[1] if best else None
-            result, duration, problem = self._judge(text, result, lang)
-            if problem is None:
-                return result, duration, False
-            score, problem = problem
-
-            if retry < SWALLOW_RETRIES:
-                logger.warning(
-                    f"[ID: {idx}] {problem}, synthesizing again with another voice reference ({retry + 1}/{SWALLOW_RETRIES})"
-                )
-            else:
-                logger.warning(f"[ID: {idx}] {problem}, no voice reference left")
+                break
             # Skip what was used: the line clip as a whole, any other reference by its path
             skip.append("DYNAMIC" if result.get("voice_type") == "DYNAMIC" else result.get("ref") or "")
+            result, duration, problem = self._judge(text, result, lang)
+            if result.get("audio_path") and total > 1:
+                result = self._keep(result, lang, idx, n)
+            if problem is None:
+                sound.append((result.get("score", 1.0), result, duration))
+                continue
+            score, problem = problem
+            if n + 1 < total and (n + 1 < self.versions or not sound):
+                logger.warning(f"[ID: {idx}] {problem}, synthesizing again with another voice reference")
+            else:
+                logger.warning(f"[ID: {idx}] {problem}")
             if result.get("audio_path") and (best is None or score > best[0]):
-                # The take file is rewritten by the next call; keep the least broken one as the last resort
-                kept = os.path.join(self.temp_dir, f"broken_{lang}_{idx}_{retry}.wav")
-                shutil.copy(result["audio_path"], kept)
-                best = (score, (dict(result, audio_path=kept), duration, True))
+                best = (score, (result, duration, True))
+        if sound:
+            score, result, duration = max(sound, key=lambda x: x[0])
+            if len(sound) > 1:
+                logger.debug(f"[ID: {idx}] Best of {len(sound)} sound takes: {result.get('voice_type')} ({score:.2f})")
+            return result, duration, False
         return best[1] if best else None
 
     @staticmethod
@@ -224,6 +247,9 @@ class SegmentSynchronizer:
                     "voice_type": result.get("voice_type"),
                     "similarity": result.get("similarity"),
                     "heard": result.get("heard"),
+                    "score": result.get("score"),
+                    "voice_match": result.get("voice_match"),
+                    "text_match": result.get("text_match"),
                 }
             )
 
@@ -310,7 +336,7 @@ class SegmentSynchronizer:
             }
 
         # Every take broken beyond use (gibberish, screams, silence): leave the original audible (Spec 002, 2.2 step 8)
-        if all(a["broken"] for a in attempts) and max(a.get("similarity") or 0.0 for a in attempts) < TAKE_DROP_SIMILARITY:
+        if all(a["broken"] for a in attempts) and max(self._drop_score(a) for a in attempts) < TAKE_DROP_SIMILARITY:
             logger.warning(f"[ID: {idx}] DROPPED: every take was broken, the original stays audible")
             self._cleanup(attempts, None)
             return {
@@ -318,7 +344,7 @@ class SegmentSynchronizer:
                 "final_text": attempts[-1]["text"],
                 "duration": 0.0,
                 "status": "DROPPED",
-                **self._report_fields(max(attempts, key=lambda a: a.get("similarity") or 0.0), len(attempts)),
+                **self._report_fields(max(attempts, key=self._drop_score), len(attempts)),
             }
 
         # Final selection: sound takes first; among those that fit the limit, the one closest to the target
@@ -346,12 +372,23 @@ class SegmentSynchronizer:
         }
 
     @staticmethod
+    def _drop_score(attempt: Dict) -> float:
+        """How usable a broken take is: the judge score, else the Whisper similarity (0 when neither is known)."""
+        value = attempt.get("score")
+        if value is None:
+            value = attempt.get("similarity")
+        return value or 0.0
+
+    @staticmethod
     def _report_fields(attempt: Dict, count: int) -> Dict:
         """What the per-line report (DEBUG) shows about the chosen take."""
         return {
             "voice_type": attempt.get("voice_type"),
             "similarity": attempt.get("similarity"),
             "heard": attempt.get("heard"),
+            "score": attempt.get("score"),
+            "voice_match": attempt.get("voice_match"),
+            "text_match": attempt.get("text_match"),
             "attempts": count,
         }
 

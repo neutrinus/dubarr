@@ -214,14 +214,30 @@ class TestSyncContentKeeping(unittest.TestCase):
         self.assertEqual(SegmentSynchronizer._neighbours(script, 1, "pl"), ("Before => Przed", "After => Po"))
 
 
+def verdict(score, problem=None):
+    return {"score": score, "problem": problem, "voice": 0.8, "text_match": score}
+
+
+class FakeJudge:
+    """Hands out verdicts in order; a take after the list ran out is sound."""
+
+    def __init__(self, verdicts):
+        self.verdicts = list(verdicts)
+        self.calls = []
+
+    def judge(self, text, path, lang, ref):
+        self.calls.append((path, ref))
+        return self.verdicts.pop(0) if self.verdicts else verdict(0.9)
+
+
 class TestTakeCheck(unittest.TestCase):
-    """Takes the ASR cannot match with their text (noise, screams) are synthesized again (Spec 002, 2.2 step 4)."""
+    """Broken takes (noise, screams, a wrong voice) are synthesized again (Spec 002, 2.2 step 4)."""
 
     def setUp(self):
         self.llm = MagicMock()
         self.tts = MagicMock()
-        self.heard = []
-        self.sync = SegmentSynchronizer(self.llm, self.tts, "/tmp", take_checker=lambda path, lang: self.heard.pop(0))
+        self.judge = FakeJudge([])
+        self.sync = SegmentSynchronizer(self.llm, self.tts, "/tmp", judge=self.judge)
         self.segment = {
             "index": 34,
             "text_en": "IceWave's trying to get some distance. Oh, my goodness.",
@@ -237,7 +253,7 @@ class TestTakeCheck(unittest.TestCase):
                 return self.sync.process_segment(self.segment, "pl", "voc.wav", [], {})
 
     def test_unintelligible_take_is_synthesized_again_with_another_reference(self):
-        self.heard = ["Aaaa! Aaaa!", "Ice Wave próbuje zachować dystans. O mój Boże!"]
+        self.judge.verdicts = [verdict(0.2, "UNINTELLIGIBLE take"), verdict(0.9)]
         self.tts.synthesize_sync.side_effect = [
             {"audio_path": "a.wav", "duration": 3.8, "voice_type": "DYNAMIC", "ref": "dyn.wav"},
             {"audio_path": "b.wav", "duration": 3.7, "voice_type": "GOLDEN", "ref": "gold.wav"},
@@ -248,11 +264,36 @@ class TestTakeCheck(unittest.TestCase):
         self.assertEqual(res["status"], "ACCEPTED")
         self.assertEqual(res["duration"], 3.7)
         self.assertEqual((res["voice_type"], res["attempts"]), ("GOLDEN", 1))
-        self.assertGreater(res["similarity"], 0.8)
+        self.assertEqual(res["score"], 0.9)
         self.assertEqual(self.tts.synthesize_sync.call_args_list[1].args[0]["skip_refs"], ["DYNAMIC"])
+        self.assertEqual(self.judge.calls[1][1], "gold.wav")  # the voice is compared with the reference it cloned
+
+    def test_two_versions_and_the_better_one_wins(self):
+        self.sync.versions = 2
+        self.judge.verdicts = [verdict(0.7), verdict(0.95)]
+        self.tts.synthesize_sync.side_effect = [
+            {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "gold.wav"},
+            {"audio_path": "a.wav", "duration": 3.7, "voice_type": "GOLDEN", "ref": "gold_2.wav"},
+        ]
+
+        res = self.run_segment([3.8, 3.7])
+
+        self.assertEqual(self.tts.synthesize_sync.call_count, 2)
+        self.assertEqual(self.tts.synthesize_sync.call_args_list[1].args[0]["skip_refs"], ["gold.wav"])
+        self.assertEqual((res["status"], res["score"], res["duration"]), ("ACCEPTED", 0.95, 3.7))
+
+    def test_a_third_take_only_when_both_versions_are_broken(self):
+        self.sync.versions = 2
+        self.judge.verdicts = [verdict(0.0, "SQUEAK"), verdict(0.3, "UNINTELLIGIBLE take"), verdict(0.9)]
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([3.8, 3.8, 3.8])
+
+        self.assertEqual(self.tts.synthesize_sync.call_count, 3)
+        self.assertEqual(res["status"], "ACCEPTED")
 
     def test_least_broken_take_is_kept_when_every_reference_fails(self):
-        self.heard = ["Aaaa!", "Ajjs próbuje", "..."]
+        self.judge.verdicts = [verdict(0.1, "UNINTELLIGIBLE"), verdict(0.45, "UNINTELLIGIBLE"), verdict(0.2, "WRONG VOICE")]
         self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
 
         with patch("core.synchronizer.FFmpegWrapper.get_duration", return_value=3.8), patch("shutil.copy"):
@@ -260,12 +301,11 @@ class TestTakeCheck(unittest.TestCase):
 
         self.assertEqual(self.tts.synthesize_sync.call_count, 3)
         self.assertTrue(broken)
-        # "Ajjs próbuje" is the closest to the text
-        self.assertTrue(result["audio_path"].endswith("broken_pl_34_1.wav"))
+        self.assertTrue(result["audio_path"].endswith("take_pl_34_1.wav"))
 
     def test_gibberish_on_every_reference_is_dropped(self):
         # 5:17 "Trudno mu skrócić dystans" came out as "Cięty, pary maj ty. Pani win." on every voice
-        self.heard = ["Czytpariwaite! Wreniwe!", "Skye! Chyna win!", "O! Goczyczny!"]
+        self.judge.verdicts = [verdict(0.1, "UNINTELLIGIBLE")] * 3
         self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
 
         with patch("os.remove"):
@@ -276,7 +316,7 @@ class TestTakeCheck(unittest.TestCase):
         self.llm.refine_translation_by_duration.assert_not_called()
 
     def test_a_barely_intelligible_take_is_kept_rather_than_dropped(self):
-        self.heard = ["Aaaa!", "Ajjs próbuje zachować dystans", "..."]
+        self.judge.verdicts = [verdict(0.1, "U"), verdict(0.4, "U"), verdict(0.1, "U")]
         self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
 
         res = self.run_segment([3.8, 3.8, 3.8])
@@ -286,10 +326,9 @@ class TestTakeCheck(unittest.TestCase):
 
     def test_missing_take_is_synthesized_again_with_another_reference(self):
         # ID 32: "Produced invalid/empty file" used to end the line in silence
-        self.heard = ["Ajjs-wejv próbuje zachować dystans. O mój Boże!"]
         self.tts.synthesize_sync.side_effect = [
             {"audio_path": None, "duration": 0.0, "voice_type": "GOLDEN", "ref": "gold.wav"},
-            {"audio_path": "b.wav", "duration": 3.7, "voice_type": "BORROWED", "ref": "other.wav"},
+            {"audio_path": "b.wav", "duration": 3.7, "voice_type": "DESIGNED", "ref": "designed.wav"},
         ]
 
         res = self.run_segment([3.7])
@@ -305,23 +344,24 @@ class TestTakeCheck(unittest.TestCase):
 
         self.assertEqual(res["status"], "FAILED_FALLBACK")
 
-    def test_without_an_answer_from_the_checker_the_take_is_accepted(self):
-        self.sync.take_checker = lambda path, lang: None
+    def test_whisper_is_only_reported(self):
+        # TAKE_CHECK=whisper: Whisper hears garbage, the judge decides the take is sound
+        self.sync.take_checker = lambda path, lang: "Aaaa! Aaaa!"
         self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
 
         res = self.run_segment([3.8])
 
         self.assertEqual(res["status"], "ACCEPTED")
+        self.assertLess(res["similarity"], 0.5)
+        self.assertEqual(res["heard"], "Aaaa! Aaaa!")
 
-    def test_interjections_are_not_checked(self):
-        self.segment.update(text="Wow!", text_en="Wow!", end=0.8)
-        self.heard = ["Łał"]
-        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 0.7, "voice_type": "GOLDEN", "ref": "g"}
+    def test_without_a_judge_the_take_is_accepted(self):
+        self.sync.judge = None
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
 
-        res = self.run_segment([0.7])
+        res = self.run_segment([3.8])
 
         self.assertEqual(res["status"], "ACCEPTED")
-        self.assertEqual(self.heard, ["Łał"])
 
 
 class TestLengthVariants(unittest.TestCase):

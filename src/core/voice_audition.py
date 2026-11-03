@@ -11,7 +11,7 @@ from typing import Callable, Dict, List, Optional
 
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
-from utils import count_syllables, text_similarity
+from utils import count_syllables
 
 logger = logging.getLogger(__name__)
 
@@ -122,14 +122,16 @@ def design_voices(tts_manager, speaker_info: Dict[str, Dict], drafts: List[Dict]
 
 def audition_voices(
     tts_manager,
-    checker: Callable[[str, str], Optional[str]],
+    scorer: Callable[[str, str, str, str], Optional[float]],
     drafts: List[Dict],
     lang: str,
     work_dir: str,
     is_swallowed: Callable[[str, float, str], bool],
     abort_event=None,
 ) -> Dict[str, Dict[str, float]]:
-    """Scores every reference candidate of every speaker: speaker -> {reference path: similarity 0..1}.
+    """Scores every reference candidate of every speaker: speaker -> {reference path: judge score 0..1}.
+
+    ``scorer(take path, text, lang, reference)`` is the take judge's score, None when it cannot tell.
 
     A speaker with a single candidate is auditioned too: a low score turns its line clips off and lets its designed
     voice go first (Spec 002, 2.3). Speakers without a usable test line, or whose takes cannot be checked, are left out.
@@ -151,20 +153,18 @@ def audition_voices(
                 tts_manager._run_synthesis(text, ref, out, language=lang)
                 duration = FFmpegWrapper.get_duration(out) if os.path.exists(out) else 0.0
                 if duration <= 0 or is_swallowed(text, duration, lang):
-                    score, heard = 0.0, ""
+                    score = 0.0
                 else:
-                    heard = checker(out, lang)
-                    if not isinstance(heard, str):
+                    score = scorer(out, text, lang, ref)
+                    if score is None:
                         continue
-                    score = text_similarity(text, heard)
             except Exception as e:
                 logger.warning(f"Voice audition: {spk} candidate {n + 1} failed: {e}")
-                score, heard = 0.0, ""
+                score = 0.0
             finally:
                 if os.path.exists(out):
                     os.remove(out)
             by_path[ref] = round(score, 2)
-            logger.debug(f"Voice audition: {spk} candidate {n + 1} heard '{heard[:60]}'")
         if by_path:
             scores[spk] = by_path
             ranked = ", ".join(f"{os.path.basename(p)} {s:.2f}" for p, s in by_path.items())

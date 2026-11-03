@@ -287,14 +287,15 @@ class TestVoiceAuditionStep(unittest.TestCase):
             return DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
 
     def test_take_check_modes(self):
-        on, audition, off = self.build("on"), self.build("audition"), self.build("off")
-        self.assertIsNotNone(on.synchronizer.take_checker)
-        self.assertIsNone(audition.synchronizer.take_checker)
-        self.assertIsNotNone(audition.take_checker)
-        self.assertIsNone(off.take_checker)
+        judge, whisper, off = self.build("judge"), self.build("whisper"), self.build("off")
+        self.assertIs(judge.synchronizer.judge, judge.judge)
+        self.assertFalse(judge.judge.signal_only)
+        self.assertIsNone(judge.synchronizer.take_checker)
+        self.assertIsNotNone(whisper.synchronizer.take_checker)
+        self.assertTrue(off.judge.signal_only)
 
     def test_audition_ranks_references_before_production(self):
-        pipeline = self.build("audition")
+        pipeline = self.build("judge")
         scores = {"A": {"a.wav": 0.9}}
         with patch("core.pipeline.MOCK_MODE", False), patch("core.pipeline.audition_voices", return_value=scores) as run:
             pipeline._audition_voices({"pl": [{"speaker": "A", "text": "x"}]})
@@ -312,9 +313,10 @@ class TestTakeCheckMode(unittest.TestCase):
     def test_values(self):
         from config import _take_check_mode
 
-        self.assertEqual(_take_check_mode("on"), "on")
-        self.assertEqual(_take_check_mode("1"), "on")
-        self.assertEqual(_take_check_mode("Audition"), "audition")
+        self.assertEqual(_take_check_mode("judge"), "judge")
+        self.assertEqual(_take_check_mode("on"), "judge")
+        self.assertEqual(_take_check_mode("Audition"), "judge")
+        self.assertEqual(_take_check_mode("whisper"), "whisper")
         self.assertEqual(_take_check_mode("off"), "off")
         self.assertEqual(_take_check_mode("false"), "off")
 
