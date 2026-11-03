@@ -21,6 +21,33 @@ class TestDubbingPipeline(unittest.TestCase):
             debug_mode=False,
         )
 
+    def test_each_task_gets_its_own_workspace(self):
+        base = tempfile.mkdtemp()
+        self.pipeline.base_temp_dir = base
+
+        self.pipeline._enter_workspace(7)
+        ws = self.pipeline.temp_dir
+        self.assertEqual(ws, os.path.join(base, "task_7"))
+        self.assertTrue(os.path.isdir(ws))
+        self.assertEqual(self.pipeline.synchronizer.temp_dir, ws)
+        self.assertEqual(self.mock_tts.temp_dir, ws)
+
+        self.pipeline._leave_workspace()
+        self.assertFalse(os.path.exists(ws))
+        self.assertTrue(os.path.isdir(base))
+        shutil.rmtree(base)
+
+    def test_workspace_is_kept_in_debug_mode(self):
+        base = tempfile.mkdtemp()
+        self.pipeline.base_temp_dir = base
+        self.pipeline.debug_mode = True
+
+        self.pipeline._enter_workspace(None)
+        self.pipeline._leave_workspace()
+
+        self.assertTrue(os.path.isdir(os.path.join(base, "standalone")))
+        shutil.rmtree(base)
+
     def test_create_script(self):
         # Two practically continuous lines of the same speaker are merged
         diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 4.0}]

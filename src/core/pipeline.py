@@ -67,6 +67,7 @@ class DubbingPipeline:
         self.db = db
         self.output_folder = output_folder
         self.temp_dir = temp_dir
+        self.base_temp_dir = temp_dir
         self.debug_mode = debug_mode
 
         self.durations = {}
@@ -85,6 +86,25 @@ class DubbingPipeline:
             debug_mode=debug_mode,
             take_checker=take_checker,
         )
+
+    def _enter_workspace(self, task_id):
+        """Gives the task its own folder under TEMP_DIR (``task_<id>``, or ``standalone`` without a task).
+
+        File names in the workspace (orig.wav, vocals.mp3, ...) are fixed, and cached step results point at them:
+        in a shared folder a retried task could pick up another task's audio.
+        """
+        name = f"task_{task_id}" if task_id is not None else "standalone"
+        self.temp_dir = os.path.join(self.base_temp_dir, name)
+        os.makedirs(self.temp_dir, exist_ok=True)
+        self.synchronizer.temp_dir = self.temp_dir
+        self.tts_manager.temp_dir = self.temp_dir
+        logger.info(f"Workspace: {self.temp_dir}")
+
+    def _leave_workspace(self):
+        """Deletes the workspace after a finished task; a failed one keeps it, so a retry can reuse cached steps."""
+        if self.debug_mode or self.temp_dir == self.base_temp_dir:
+            return
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _cleanup_debug(self, fname):
         clean_name = os.path.basename(fname)
@@ -496,6 +516,7 @@ class DubbingPipeline:
         logger.info(f"Languages to produce: {', '.join(self.target_langs)}")
 
         start_all = time.perf_counter()
+        self._enter_workspace(task_id)
         ddir = self._cleanup_debug(vpath)
         seg_dir = os.path.join(ddir, "segments") if self.debug_mode else None
 
@@ -508,9 +529,16 @@ class DubbingPipeline:
         self.monitor.daemon = True
         self.monitor.start()
 
-        a_stereo, vocals = self._run_step("Stage 1: Audio Separation", prep_audio, task_id, vpath)
+        a_stereo, vocals = self._run_step("Stage 1: Audio Separation", prep_audio, task_id, vpath, self.temp_dir)
         analysis_data = self._run_step(
-            "Stage 2: Audio Analysis", analyze_audio, task_id, vocals, self.diar_manager, self.whisper_manager, a_stereo
+            "Stage 2: Audio Analysis",
+            analyze_audio,
+            task_id,
+            vocals,
+            self.diar_manager,
+            self.whisper_manager,
+            a_stereo,
+            self.temp_dir,
         )
         diar, trans, audio_durs = analysis_data[0], analysis_data[1], analysis_data[2]
         self.durations.update(audio_durs)
@@ -602,6 +630,7 @@ class DubbingPipeline:
         self.tts_manager.shutdown()
         if self.monitor:
             self.monitor.stop()
+        self._leave_workspace()
         avg_tps = (
             self.llm_manager.llm_stats["tokens"] / self.llm_manager.llm_stats["time"]
             if self.llm_manager.llm_stats["time"] > 0
@@ -837,7 +866,7 @@ class DubbingPipeline:
                 last_end_time = start + (dur / speed_factor)
 
             final_a = os.path.join(self.temp_dir, f"final_{lang}.ac3")
-            mix_audio(a_stereo, final_audio_segments, final_a)
+            mix_audio(a_stereo, final_audio_segments, final_a, self.temp_dir)
             self.durations[f"Stage 5b: Sync Production ({lang})"] = (time.perf_counter() - t_start_sync_all) / len(
                 self.target_langs
             )

@@ -16,14 +16,14 @@ except ImportError:
     torch = None
 
 
-def prep_audio(vpath: str) -> Tuple[str, str]:
+def prep_audio(vpath: str, work_dir: str = TEMP_DIR) -> Tuple[str, str]:
     """Extracts original stereo audio and separates vocals using Demucs. Mocks in MOCK_MODE."""
-    a_stereo = os.path.join(TEMP_DIR, "orig.wav")
+    a_stereo = os.path.join(work_dir, "orig.wav")
     FFmpegWrapper.extract_audio(vpath, a_stereo)
 
     if MOCK_MODE:
         logger.info("Demucs: MOCK_MODE enabled. Using original audio as vocals.")
-        vocals_path = os.path.join(TEMP_DIR, "vocals.mp3")
+        vocals_path = os.path.join(work_dir, "vocals.mp3")
         shutil.copy(a_stereo, vocals_path)
         return a_stereo, vocals_path
 
@@ -37,7 +37,7 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
         "--two-stems",
         "vocals",
         "-o",
-        TEMP_DIR,
+        work_dir,
         "-n",
         "htdemucs_ft",
         "--device",
@@ -56,19 +56,21 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
 
     GPUManager.force_gc()
 
-    found = glob.glob(os.path.join(TEMP_DIR, "**", "vocals.mp3"), recursive=True)
+    found = glob.glob(os.path.join(work_dir, "**", "vocals.mp3"), recursive=True)
     if not found:
         raise FileNotFoundError("Demucs failed to produce vocals.mp3")
     return a_stereo, found[0]
 
 
-def analyze_audio(vocals_path: str, diar_manager, whisper_manager, original_path: str = None) -> Tuple[List, List, Dict]:
+def analyze_audio(
+    vocals_path: str, diar_manager, whisper_manager, original_path: str = None, work_dir: str = TEMP_DIR
+) -> Tuple[List, List, Dict]:
     """Orchestrates diarization and transcription using provided managers with eager VRAM cleanup.
 
     Diarization runs on the separated vocals. Whisper hears the original mix by default (ASR_SOURCE=original): it is
     trained on noisy audio, while Demucs can cut or distort speech under loud effects (Spec 001, 2.2).
     """
-    mpath = os.path.join(TEMP_DIR, "mono.wav")
+    mpath = os.path.join(work_dir, "mono.wav")
     FFmpegWrapper.convert_audio(vocals_path, mpath, ac=1, ar=24000)
 
     durations = {}
@@ -89,7 +91,7 @@ def analyze_audio(vocals_path: str, diar_manager, whisper_manager, original_path
     whisper_manager.load_model()
     asr_path = mpath
     if ASR_SOURCE == "original" and original_path:
-        asr_path = os.path.join(TEMP_DIR, "asr_mono.wav")
+        asr_path = os.path.join(work_dir, "asr_mono.wav")
         FFmpegWrapper.convert_audio(original_path, asr_path, ac=1, ar=16000)
     logger.info(f"Stage 2b: Whisper listens to the {'original mix' if asr_path != mpath else 'separated vocals'}.")
     trans_result = whisper_manager.transcribe(asr_path)
@@ -100,7 +102,7 @@ def analyze_audio(vocals_path: str, diar_manager, whisper_manager, original_path
     return diar_result, trans_result, durations
 
 
-def mix_audio(bg: str, clips: List, out: str):
+def mix_audio(bg: str, clips: List, out: str, work_dir: str = TEMP_DIR):
     """Mixes background audio with dubbed clips using sidechain compression and batching."""
     if not clips:
         shutil.copy(bg, out)
@@ -112,7 +114,7 @@ def mix_audio(bg: str, clips: List, out: str):
     # 1. Process speech in batches to avoid OOM
     for b_idx in range(0, len(clips), batch_size):
         batch = clips[b_idx : b_idx + batch_size]
-        batch_out = os.path.join(TEMP_DIR, f"speech_batch_{b_idx // batch_size}.wav")
+        batch_out = os.path.join(work_dir, f"speech_batch_{b_idx // batch_size}.wav")
         logger.info(f"Mixing speech batch {b_idx // batch_size + 1}/{(len(clips) - 1) // batch_size + 1}...")
 
         inputs = []
@@ -133,7 +135,7 @@ def mix_audio(bg: str, clips: List, out: str):
         mix_labels = "".join([f"[a{i}]" for i in range(len(batch))])
         filter_parts.append(f"{mix_labels}amix=inputs={len(batch)}:normalize=0[out_a]")
 
-        filter_script_path = os.path.join(TEMP_DIR, f"batch_{b_idx // batch_size}_filter.txt")
+        filter_script_path = os.path.join(work_dir, f"batch_{b_idx // batch_size}_filter.txt")
         with open(filter_script_path, "w") as f_scr:
             f_scr.write(";".join(filter_parts))
 
@@ -149,7 +151,7 @@ def mix_audio(bg: str, clips: List, out: str):
         intermediate_speech_files.append(batch_out)
 
     # 2. Combine all speech batches into one track
-    speech_final = os.path.join(TEMP_DIR, "speech_final.wav")
+    speech_final = os.path.join(work_dir, "speech_final.wav")
     if len(intermediate_speech_files) > 1:
         logger.info("Merging speech batches...")
         merge_inputs = []
@@ -167,7 +169,7 @@ def mix_audio(bg: str, clips: List, out: str):
 
     # 3. Final Master Mix with sidechain ducking and ghost track
     logger.info("Performing final master mix with sidechain...")
-    master_filter_path = os.path.join(TEMP_DIR, "master_mix_filter.txt")
+    master_filter_path = os.path.join(work_dir, "master_mix_filter.txt")
 
     # [0:a] is background, [1:a] is combined speech
     bg_duration = FFmpegWrapper.get_duration(bg)
