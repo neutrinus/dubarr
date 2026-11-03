@@ -5,6 +5,8 @@ The **Video Dubbing Pipeline** is the core business process of Dubarr. It transf
 
 ## 2. Process Flow
 The pipeline executes sequentially in 8 stages (plus initialization). Each stage is checkpointed in the database to allow resumption.
+Each task works in its own folder, `TEMP_DIR/task_<id>` (`standalone` without a task): file names inside are fixed,
+and checkpoints point at them, so a shared folder would let a retried task pick up another task's audio.
 
 ### 2.0 Initialization (Startup)
 The system verifies model presence and downloads missing files. To maximize available VRAM, models follow a **Lazy Loading** strategy: they are loaded into memory only when needed and unloaded immediately after their stage completes.
@@ -147,7 +149,8 @@ The goal is a complete translation that fits the timing. Run time is secondary.
         1.  Calculates total processing time and individual stage durations.
         2.  Calculates LLM performance metrics (tokens per second).
         3.  Generates a detailed performance report logged to the system console.
-        4.  Cleans up temporary files (unless `debug_mode` is enabled).
+        4.  Deletes the task's folder (unless `debug_mode` is enabled). A failed task keeps it, so a retry reuses the
+            checkpointed stages.
         5.  Updates task status to `DONE`.
     
     ## 3. Data Persistence
