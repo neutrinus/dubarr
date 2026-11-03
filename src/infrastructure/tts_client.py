@@ -207,6 +207,22 @@ class TTSServerClient:
             logging.error(f"{self.NAME} Synthesis Failed: {e}")
             raise e
 
+    def estimate(self, texts, ref_audio):
+        """Estimated natural duration (seconds) of each text with this voice, or None if the server cannot tell."""
+        payload = {
+            "texts": [self.sanitize_text(t) for t in texts],
+            "ref_audio": ref_audio,
+            "ref_text": read_ref_text(ref_audio) if TTS_REF_TEXT == "auto" else "",
+        }
+        try:
+            res = requests.post(f"{self.server_url}/estimate", json=payload, timeout=TTS_TIMEOUT)
+            if res.status_code == 200:
+                return res.json().get("durations")
+            logging.warning(f"{self.NAME}: estimate returned {res.status_code}: {res.text[:200]}")
+        except Exception as e:
+            logging.warning(f"{self.NAME}: estimate failed: {e}")
+        return None
+
     def _handle_restart(self):
         """Synchronized restart of the server."""
         with self._restart_lock:
@@ -287,6 +303,9 @@ class TTSWrapper:
         self.client.synthesize(
             text, ref_audio, output_path, language=language, max_duration=max_duration, target_duration=target_duration
         )
+
+    def estimate(self, texts, ref_audio):
+        return self.client.estimate(texts, ref_audio)
 
     def __del__(self):
         if hasattr(self, "client"):

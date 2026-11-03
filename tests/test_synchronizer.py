@@ -211,3 +211,56 @@ class TestSyncContentKeeping(unittest.TestCase):
             {"text_en": "After", "translations": {"pl": "Po"}},
         ]
         self.assertEqual(SegmentSynchronizer._neighbours(script, 1, "pl"), ("Before => Przed", "After => Po"))
+
+
+class TestLengthVariants(unittest.TestCase):
+    def setUp(self):
+        self.llm = MagicMock()
+        self.tts = MagicMock()
+        self.sync = SegmentSynchronizer(self.llm, self.tts, "/tmp")
+        self.segment = {
+            "index": 0,
+            "speaker": "A",
+            "text_en": "x",
+            "text": "Normalna wersja kwestii.",
+            "variants": ["Normalna wersja kwestii.", "Krótka.", "Dłuższa i pełniejsza wersja tej kwestii."],
+            "start": 0,
+            "end": 3.0,
+            "max_end": 3.5,
+        }
+
+    def run_segment(self, durations):
+        with patch("core.synchronizer.FFmpegWrapper.get_duration", side_effect=durations):
+            with patch("shutil.copy"), patch("os.path.exists", return_value=False):
+                return self.sync.process_segment(self.segment, "pl", "voc.wav", [], {})
+
+    def test_best_fitting_variant_is_synthesized_first(self):
+        self.tts.estimate_durations.return_value = [2.0, 1.0, 3.1]
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.0, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([3.0])
+
+        self.assertEqual(res["final_text"], "Dłuższa i pełniejsza wersja tej kwestii.")
+        self.llm.refine_translation_by_duration.assert_not_called()
+
+    def test_overrun_counts_more_than_falling_short(self):
+        self.assertEqual(SegmentSynchronizer._miss(2.6, 3.0, 3.5), SegmentSynchronizer._miss(3.4, 3.0, 3.5))
+        self.assertGreater(SegmentSynchronizer._miss(4.0, 3.0, 3.5), SegmentSynchronizer._miss(2.0, 3.0, 3.5))
+
+    def test_too_long_take_tries_the_shorter_variant_before_the_llm(self):
+        self.tts.estimate_durations.return_value = [2.9, 1.5, 4.5]
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 4.0, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([4.5, 2.8])
+
+        self.assertEqual(res["status"], "ACCEPTED")
+        self.assertEqual(res["final_text"], "Krótka.")
+        self.llm.refine_translation_by_duration.assert_not_called()
+
+    def test_without_an_estimate_the_main_translation_is_used(self):
+        self.tts.estimate_durations.return_value = None
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.0, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([3.0])
+
+        self.assertEqual(res["final_text"], "Normalna wersja kwestii.")

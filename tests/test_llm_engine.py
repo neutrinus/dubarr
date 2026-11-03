@@ -232,3 +232,21 @@ class TestWindowedTranslation(unittest.TestCase):
 
         self.assertEqual(reviewed[0]["text"], "Mają dwa miniboty.")
         self.assertEqual(reviewed[1]["text"], "Cześć.")  # far over its 0.5 s budget
+
+    def test_drafts_keep_length_variants_and_review_drops_stale_ones(self):
+        script = [{"speaker": "A", "text_en": "They have two mini-bots.", "start": 0, "end": 3}]
+        self.chat.return_value = reply(
+            json.dumps(
+                {
+                    "translations": [
+                        {"id": 0, "text": "Mają dwa miniboty.", "short": "Dwa miniboty.", "long": "Mają aż dwa miniboty."}
+                    ]
+                }
+            )
+        )
+        drafts = self.manager.generate_drafts(script, "pl", {}, {})
+        self.assertEqual(drafts[0]["variants"], ["Mają dwa miniboty.", "Dwa miniboty.", "Mają aż dwa miniboty."])
+
+        self.chat.return_value = reply(json.dumps({"fixes": [{"id": 0, "text": "Mają dwa małe miniboty."}]}))
+        reviewed = self.manager.review_drafts(drafts, "pl", {}, {})
+        self.assertEqual(reviewed[0]["variants"], ["Mają dwa małe miniboty."])

@@ -411,6 +411,7 @@ class LLMManager:
 
         valid_indices = [idx for idx, s in enumerate(script) if not self._is_sound_marker(s["text_en"])]
         translated: Dict[int, str] = {}
+        variants: Dict[int, List[str]] = {}
 
         for w_start in range(0, len(valid_indices), TRANSLATION_WINDOW):
             if self.abort_event.is_set():
@@ -458,16 +459,28 @@ class LLMManager:
                 parsed = parse_json(res["choices"][0]["text"])
                 for item in parsed.get("translations", []):
                     if "id" in item and item.get("text") and int(item["id"]) in window:
-                        translated[int(item["id"])] = clean_output(item["text"], self.target_langs)
+                        i = int(item["id"])
+                        translated[i] = clean_output(item["text"], self.target_langs)
+                        # Main translation first, then the length variants (Spec 001, 2.5a)
+                        options = [translated[i]]
+                        for key in ("short", "long"):
+                            if isinstance(item.get(key), str) and item[key].strip():
+                                option = clean_output(item[key], self.target_langs)
+                                if option and option not in options:
+                                    options.append(option)
+                        variants[i] = options
                 missing = [idx for idx in window if idx not in translated]
                 if missing:
                     logging.warning(f"LLM: No {lang_name} translation for lines {missing}, keeping the original text")
             except Exception as e:
                 logging.error(f"LLM: Draft generation failed for window {w_start}: {e}")
 
-        return [
-            self._draft_entry(script, idx, translated.get(idx, script[idx]["text_en"]), speaker_info) for idx in valid_indices
-        ]
+        drafts = []
+        for idx in valid_indices:
+            entry = self._draft_entry(script, idx, translated.get(idx, script[idx]["text_en"]), speaker_info)
+            entry["variants"] = variants.get(idx, [entry["text"]])
+            drafts.append(entry)
+        return drafts
 
     def review_drafts(self, drafts: List[Dict], lang: str, speaker_info: Dict, global_context: Dict) -> List[Dict]:
         """Completeness review: a second pass fixes lines with missing or wrong information (Spec 001, 2.5a)."""
@@ -521,6 +534,8 @@ class LLMManager:
                     if text != by_index[i].get("text"):
                         logging.info(f"Review ({lang}) L_{i}: '{by_index[i].get('text')}' -> '{text}'")
                         by_index[i]["text"] = text
+                        # The variants predate the fix and may miss what it restored
+                        by_index[i]["variants"] = [text]
             except Exception as e:
                 logging.warning(f"LLM: Translation review failed for window {w_start}: {e}")
 

@@ -158,6 +158,22 @@ class TTSManager:
             }
         return None
 
+    def estimate_durations(self, item: Dict, lang: str, vocals_path: str, texts: List[str]) -> Optional[List[float]]:
+        """Natural length of each text with the voice this line would use (Spec 002, 2.2 step 2); None if unknown."""
+        if MOCK_MODE:
+            return [count_syllables(t, lang) / 5.0 for t in texts]
+        self.load_engine()
+        ref, _ = self._select_reference(item, vocals_path, lang)
+        if not ref or not self.engine or not hasattr(self.engine, "estimate"):
+            return None
+
+        def _direct_call(t, r):
+            return self.engine.estimate(t, r)
+
+        if self.service:
+            return self.service.submit(_direct_call, texts, ref, priority=1).result()
+        return self.engine.estimate(texts, ref)
+
     def shutdown(self):
         """Explicitly stops the TTS engine."""
         with self._engine_lock:

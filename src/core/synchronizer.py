@@ -60,6 +60,40 @@ class SegmentSynchronizer:
                 last = (dict(result, audio_path=kept), duration, swallowed)
         return last
 
+    @staticmethod
+    def _miss(estimate: float, speech: float, limit: float) -> float:
+        """How far a length is from the timing; running past the limit weighs three times as much."""
+        if estimate > limit:
+            return (limit - speech) + 3 * (estimate - limit)
+        return abs(estimate - speech)
+
+    def _estimate_variants(self, segment: Dict, lang: str, vocals_path: str, speech: float, limit: float):
+        """[(text, estimated seconds)] of the draft's length variants, best fit first; [] without variants."""
+        options = [t for t in segment.get("variants") or [] if t and t.strip()]
+        if len(options) < 2:
+            return []
+        item = {
+            "index": segment["index"],
+            "speaker": segment["speaker"],
+            "start": segment["start"],
+            "end": segment["end"],
+            "source_text": segment.get("text_en", ""),
+        }
+        try:
+            estimates = self.tts.estimate_durations(item, lang, vocals_path, options)
+        except Exception as e:
+            logger.warning(f"[ID: {segment['index']}] Variant estimate failed: {e}")
+            return []
+        if not estimates or len(estimates) != len(options):
+            return []
+        ranked = sorted(zip(options, estimates), key=lambda x: self._miss(x[1], speech, limit))
+        logger.info(
+            f"[ID: {segment['index']}] Variants (est.): "
+            + ", ".join(f"{e:.2f}s" for _, e in zip(options, estimates))
+            + f" -> picked {ranked[0][1]:.2f}s (target {speech:.2f}s, limit {limit:.2f}s)"
+        )
+        return ranked
+
     def process_segment(
         self, segment: Dict, lang: str, vocals_path: str, full_script: List[Dict], global_context: Dict, attempt_limit: int = 3
     ) -> Optional[Dict]:
@@ -78,6 +112,12 @@ class SegmentSynchronizer:
         idx = segment["index"]
 
         attempts = []
+        # Pick the length variant that fits best before synthesizing anything; the rest stay for retries
+        variants = self._estimate_variants(segment, lang, vocals_path, speech_dur, target_dur)
+        if variants:
+            current_text = variants[0][0]
+        unused = {text: est for text, est in variants[1:]}
+        current_est = variants[0][1] if variants else None
 
         for attempt in range(1, attempt_limit + 1):
             logger.info(
@@ -138,6 +178,16 @@ class SegmentSynchronizer:
                 logger.info(f"[ID: {idx}] REJECTED (Too short: {actual_dur:.2f}s < {speech_dur:.2f}s). Expanding text...")
                 aim = speech_dur
 
+            # An unused variant that moves the right way is cheaper and safer than a rewrite
+            alternative = self._next_variant(unused, current_est, actual_dur, too_long)
+            if alternative:
+                logger.info(
+                    f"[ID: {idx}] Trying the {'shorter' if too_long else 'longer'} variant ({unused[alternative]:.2f}s est.)"
+                )
+                current_est = unused.pop(alternative)
+                current_text = alternative
+                continue
+
             context_before, context_after = self._neighbours(full_script, idx, lang)
             new_text = self.llm.refine_translation_by_duration(
                 original_text=original_text,
@@ -167,6 +217,7 @@ class SegmentSynchronizer:
                 break
 
             current_text = new_text
+            current_est = None
 
         if not attempts:
             logger.error(f"[ID: {idx}] All synthesis attempts failed. Using silent fallback.")
@@ -206,6 +257,17 @@ class SegmentSynchronizer:
             "duration": best_attempt["duration"],
             "status": status,
         }
+
+    @staticmethod
+    def _next_variant(unused: Dict[str, float], current_est: Optional[float], actual: float, too_long: bool):
+        """The unused variant estimated shorter (too long) or longer (too short) than the current text."""
+        if not unused or current_est is None:
+            return None
+        if too_long:
+            shorter = {t: e for t, e in unused.items() if e < current_est}
+            return max(shorter, key=shorter.get) if shorter else None
+        longer = {t: e for t, e in unused.items() if e > current_est}
+        return min(longer, key=longer.get) if longer else None
 
     @staticmethod
     def _neighbours(full_script: List[Dict], idx: int, lang: str = ""):

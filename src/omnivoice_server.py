@@ -97,6 +97,24 @@ def synthesize():
             torch.cuda.empty_cache()
 
 
+@app.route("/estimate", methods=["POST"])
+def estimate():
+    """Natural spoken length of each text with this voice, from the model's text-based estimator (no audio)."""
+    data = request.json
+    try:
+        prompt = get_voice_prompt(data.get("ref_audio"), data.get("ref_text"))
+        frame_rate = model.audio_tokenizer.config.frame_rate
+        ref_tokens = prompt.ref_audio_tokens.size(-1)
+        durations = [
+            model._estimate_target_tokens(text or ".", prompt.ref_text, ref_tokens) / frame_rate + 2 * PAD_DURATION
+            for text in data.get("texts", [])
+        ]
+        return jsonify({"status": "success", "durations": durations})
+    except Exception as e:
+        logging.error(f"OmniVoice Estimate Failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})

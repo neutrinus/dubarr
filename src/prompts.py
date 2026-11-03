@@ -82,13 +82,16 @@ RULES:
    natural rounded values.
 7. Follow the GLOSSARY. Write natural {lang_name}; never leave a line in the source language.
 8. Return every id of "translate" exactly once.
+9. For each line also give two LENGTH VARIANTS with the same meaning: "short" (towards "min_syllables": only the
+   essentials, still a natural sentence) and "long" (towards "max_syllables": fuller, more natural phrasing; never
+   invent facts). The voice director picks the one that fits the actor's timing best.
 
 OUTPUT FORMAT (JSON):
 {{
   "thought": "Brief notes: which lines are tight and where you moved information",
   "translations": [
-    {{ "id": 0, "text": "Translated text" }},
-    {{ "id": 1, "text": "Translated text" }}
+    {{ "id": 0, "text": "Translated text", "short": "Shorter variant", "long": "Longer variant" }},
+    {{ "id": 1, "text": "Translated text", "short": "Shorter variant", "long": "Longer variant" }}
   ]
 }}
 """
