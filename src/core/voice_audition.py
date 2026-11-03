@@ -42,6 +42,7 @@ def audition_voices(
     voice go first (Spec 002, 2.3). Speakers without a usable test line, or whose takes cannot be checked, are left out.
     """
     scores: Dict[str, Dict[str, float]] = {}
+    tts_manager.load_engine()
     for spk, refs in sorted(tts_manager.speaker_refs.items()):
         if abort_event is not None and abort_event.is_set():
             break
