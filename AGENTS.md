@@ -138,6 +138,8 @@ why the image used to need separate venvs.
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |
 | `LLM_MAX_TOKENS` | `4096` | Completion budget for the bulk calls (analysis, editor, drafts); a truncated answer is retried once with double the budget. |
 | `MERGE_MAX_GAP` / `MERGE_MAX_DURATION` | `0.3` / `10` | Consecutive lines of one speaker are merged only across this pause and up to this length, so the dub stays aligned with the original pauses. |
+| `MIN_SEGMENT_DURATION` | `1.2` | Lines shorter than this are joined with a same-speaker neighbour; a sub-second slot can only produce a clipped fragment. |
+| `MAX_ACCEPT_SPEEDUP` | `1.08` | A take may overrun its slot by this much; the mix speeds it up instead of the LLM deleting words. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
 | `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
 | `TTS_CPU_THREADS` | all cores | Threads used when synthesis runs on the CPU. |

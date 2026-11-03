@@ -469,6 +469,7 @@ class LLMManager:
         context_after: str = "",
         speaker: str = "",
         media: str = "",
+        language: str = "",
     ) -> str:
         """Refines text based on actual audio duration feedback."""
         delta = actual_dur - target_dur
@@ -492,6 +493,7 @@ class LLMManager:
             context_after=context_after,
             speaker=speaker or "unknown",
             media=media or "unknown",
+            language=LANG_MAP.get(language, language) or "the target language",
         )
 
         t0 = time.perf_counter()

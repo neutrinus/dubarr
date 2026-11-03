@@ -82,6 +82,12 @@ SLACK_GUARD = 0.15
 # Longer blocks would be spoken continuously over the original's pauses, which drifts out of sync.
 MERGE_MAX_GAP = float(os.environ.get("MERGE_MAX_GAP", "0.3"))
 MERGE_MAX_DURATION = float(os.environ.get("MERGE_MAX_DURATION", "10.0"))
+# Lines shorter than this are joined with a neighbour of the same speaker: a 0.4 s slot can only produce a
+# clipped fragment of a word, so it is better spoken together with the following line.
+MIN_SEGMENT_DURATION = float(os.environ.get("MIN_SEGMENT_DURATION", "1.2"))
+# A take may overrun its slot by this much; the final mix speeds it up (pitch-preserving) instead of the LLM
+# cutting words out of the translation.
+MAX_ACCEPT_SPEEDUP = float(os.environ.get("MAX_ACCEPT_SPEEDUP", "1.08"))
 
 
 # Safe logging setup

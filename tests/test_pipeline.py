@@ -38,11 +38,11 @@ class TestDubbingPipeline(unittest.TestCase):
     def test_create_script_does_not_merge_across_a_pause(self):
         # A 0.5 s pause stays split: speaking over it drifts out of sync with the original
         diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 4.0}]
-        trans = [{"start": 0.5, "end": 1.5, "text": "Hello"}, {"start": 2.0, "end": 3.5, "text": "World"}]
+        trans = [{"start": 0.5, "end": 2.0, "text": "Hello there"}, {"start": 2.5, "end": 4.0, "text": "World again"}]
 
         script = self.pipeline._create_script(diar, trans)
 
-        self.assertEqual([s["text_en"] for s in script], ["Hello", "World"])
+        self.assertEqual([s["text_en"] for s in script], ["Hello there", "World again"])
 
     def test_create_script_does_not_merge_beyond_the_duration_cap(self):
         # Back-to-back lines are still left separate when the block would get too long to stay in sync
@@ -52,6 +52,30 @@ class TestDubbingPipeline(unittest.TestCase):
         script = self.pipeline._create_script(diar, trans)
 
         self.assertEqual(len(script), 2)
+
+    def test_create_script_merges_a_very_short_line_into_the_previous_one(self):
+        # A 0.4 s slot can only hold a clipped fragment, so it is spoken together with the previous line
+        diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 10.0}]
+        trans = [
+            {"start": 0.0, "end": 3.0, "text": "First line"},
+            {"start": 4.0, "end": 4.4, "text": "O!"},
+        ]
+
+        script = self.pipeline._create_script(diar, trans)
+
+        self.assertEqual(len(script), 1)
+        self.assertEqual(script[0]["text_en"], "First line O!")
+        self.assertEqual(script[0]["end"], 4.4)
+
+    def test_create_script_merges_a_short_first_line_forward(self):
+        diar = [{"speaker": "A", "start": 0.0, "end": 10.0}]
+        trans = [{"start": 0.0, "end": 0.4, "text": "O!"}, {"start": 1.0, "end": 4.0, "text": "Real line"}]
+
+        script = self.pipeline._create_script(diar, trans)
+
+        self.assertEqual(len(script), 1)
+        self.assertEqual(script[0]["text_en"], "O! Real line")
+        self.assertEqual(script[0]["start"], 0.0)
 
     def test_create_script_different_speakers(self):
         diar = [{"speaker": "A", "start": 0.0, "end": 2.0}, {"speaker": "B", "start": 2.0, "end": 4.0}]
@@ -81,18 +105,18 @@ class TestDubbingPipeline(unittest.TestCase):
             {"speaker": "A", "start": 7.55, "end": 20.0},
         ]
         trans = [
-            {"start": 0.0, "end": 1.0, "text": "One"},  # 0.5s gap to B -> 0.35s slack
-            {"start": 1.5, "end": 3.0, "text": "Two"},  # 4.0s gap -> capped
-            {"start": 7.0, "end": 7.5, "text": "Three"},  # 0.1s gap to A -> no slack
-            {"start": 7.6, "end": 9.0, "text": "Four"},  # last segment -> capped
+            {"start": 0.0, "end": 3.0, "text": "One"},  # 1.0s gap to the next line -> 0.85s slack
+            {"start": 4.0, "end": 6.0, "text": "Two"},  # 4.0s gap -> capped at 1s
+            {"start": 10.0, "end": 12.0, "text": "Three"},  # 0.5s gap -> 0.35s slack
+            {"start": 12.5, "end": 14.5, "text": "Four"},  # last segment -> capped
         ]
         with patch("core.pipeline.SLACK_AFTER_MAX", 1.0), patch("core.pipeline.SLACK_GUARD", 0.15):
             script = self.pipeline._create_script(diar, trans)
         self.assertEqual(len(script), 4)
-        self.assertAlmostEqual(script[0]["max_end"], 1.35)
-        self.assertAlmostEqual(script[1]["max_end"], 4.0)
-        self.assertAlmostEqual(script[2]["max_end"], 7.5)
-        self.assertAlmostEqual(script[3]["max_end"], 10.0)
+        self.assertAlmostEqual(script[0]["max_end"], 3.85)
+        self.assertAlmostEqual(script[1]["max_end"], 7.0)
+        self.assertAlmostEqual(script[2]["max_end"], 12.35)
+        self.assertAlmostEqual(script[3]["max_end"], 15.5)
 
     def test_cleanup_debug(self):
         with patch("shutil.rmtree") as mock_rm, patch("os.path.exists", return_value=True), patch("os.makedirs") as mock_mk:

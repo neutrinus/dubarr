@@ -39,19 +39,29 @@ class TestSynchronizer(unittest.TestCase):
         self.assertEqual(res["status"], "ACCEPTED")
         self.mock_llm.refine_translation_by_duration.assert_not_called()
 
-    def test_valid_fallback(self):
-        # Scenario: Duration target = 5.0, TTS produces 5.08 (within 0.1s but not 0.05s)
+    def test_small_overrun_is_accepted_and_speed_up_later(self):
+        # Target 5.0, TTS produces 5.2: within MAX_ACCEPT_SPEEDUP, the mix speeds the clip up instead of the
+        # LLM deleting words
         segment = {"index": 0, "text_en": "Hello", "start": 0, "end": 5, "speaker": "A"}
 
-        self.mock_tts.synthesize_sync.return_value = {"audio_path": "fake.wav", "duration": 5.08, "voice_type": "MOCK"}
-        # Ensure LLM returns the same text so the loop finishes
-        self.mock_llm.refine_translation_by_duration.return_value = "Hello"
+        self.mock_tts.synthesize_sync.return_value = {"audio_path": "fake.wav", "duration": 5.2, "voice_type": "MOCK"}
 
-        with patch("core.synchronizer.FFmpegWrapper.get_duration", return_value=5.08):
+        with patch("core.synchronizer.FFmpegWrapper.get_duration", return_value=5.2):
             with patch("shutil.copy"):
                 res = self.sync.process_segment(segment, "pl", "voc.wav", [], {}, attempt_limit=1)
 
-        self.assertEqual(res["status"], "VALID_FALLBACK")
+        self.assertEqual(res["status"], "ACCEPTED")
+        self.mock_llm.refine_translation_by_duration.assert_not_called()
+
+    def test_large_overrun_is_still_refined(self):
+        segment = {"index": 0, "text_en": "Hello", "start": 0, "end": 5, "speaker": "A"}
+        self.mock_tts.synthesize_sync.return_value = {"audio_path": "fake.wav", "duration": 5.9, "voice_type": "MOCK"}
+
+        with patch("core.synchronizer.FFmpegWrapper.get_duration", return_value=5.9):
+            with patch("shutil.copy"):
+                res = self.sync.process_segment(segment, "pl", "voc.wav", [], {}, attempt_limit=1)
+
+        self.assertEqual(res["status"], "FORCED_SHORT_FALLBACK")
 
     def test_too_long_refinement(self):
         # Scenario: Target=5.0. Attempt 1=7.0 (Too long). LLM shortens. Attempt 2=5.0 (OK).

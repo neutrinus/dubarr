@@ -4,6 +4,7 @@ import shutil
 import wave
 from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
+from config import MAX_ACCEPT_SPEEDUP
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +61,9 @@ class SegmentSynchronizer:
 
             delta = actual_dur - target_dur
 
-            # Acceptance Criteria: Strictly not longer than original plus trailing silence
-            # We allow a very tiny margin (0.05s) for technical jitter
-            is_acceptable = actual_dur <= (target_dur + 0.05)
+            # Acceptance: not longer than the slot, or only slightly longer — the final mix then speeds the clip
+            # up (pitch-preserving) instead of the LLM deleting words to fit
+            is_acceptable = actual_dur <= target_dur * MAX_ACCEPT_SPEEDUP + 0.05
 
             # Save attempt
             # The accepted attempt is mixed much later, so it must not be shared between languages
@@ -106,6 +107,7 @@ class SegmentSynchronizer:
                     glossary=global_context.get("glossary", {}),
                     context_before=context_before,
                     context_after=context_after,
+                    language=lang,
                     speaker=segment.get("speaker_label", ""),
                     media=global_context.get("media", ""),
                 )

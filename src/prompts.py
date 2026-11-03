@@ -86,6 +86,7 @@ T_REFINE_DURATION = """You are a Dubbing Director adjusting a script to match th
 The current translation does not fit the audio duration constraint.
 
 TASK: Rewrite the text to match the Target Duration while maintaining PERFECT GRAMMAR.
+The answer MUST be written in {language} - never switch to another language.
 - If current duration > target: Shorten the text (remove fillers, use synonyms).
 - If current duration < target: Expand the text (add natural fillers, adjectives, rephrase).
 

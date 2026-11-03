@@ -71,6 +71,8 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `TTS_MAX_CHUNK_SECONDS` | Lines longer than this are synthesized in chunks, breaking at sentence ends first, then at commas/semicolons. Keeps the dub in sync with the original pauses and caps the VRAM peak. | `10` |
 | `TTS_REF_TEXT` | Send the reference clip transcript to OmniVoice. `off` keeps the source language's phonetics from leaking into the target text. | `off` |
 | `MERGE_MAX_GAP` / `MERGE_MAX_DURATION` | Same-speaker Whisper lines are merged only across this pause and up to this length. | `0.3` / `10` |
+| `MIN_SEGMENT_DURATION` | Lines shorter than this are joined with a same-speaker neighbour instead of becoming clipped fragments. | `1.2` |
+| `MAX_ACCEPT_SPEEDUP` | A synthesized take may overrun its slot by this factor; the final mix speeds it up rather than the translator cutting words. | `1.08` |
 
 ### 2.3 GPU Resource Management
 The system includes an **Intelligent GPU Manager** that orchestrates VRAM usage using a **Lazy Loading** and **Memory Rotation** strategy.

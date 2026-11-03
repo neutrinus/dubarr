@@ -10,7 +10,7 @@ from typing import List, Optional
 
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_GUARD
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
-from config import MERGE_MAX_GAP, MERGE_MAX_DURATION
+from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
 from infrastructure.monitor import ResourceMonitor
@@ -92,6 +92,38 @@ class DubbingPipeline:
                 overlap[d["speaker"]] = overlap.get(d["speaker"], 0.0) + o
         return max(overlap, key=overlap.get) if overlap else "unknown"
 
+    @staticmethod
+    def _merge_short_lines(lines):
+        """Joins lines shorter than MIN_SEGMENT_DURATION with a same-speaker neighbour.
+
+        A 0.3-0.8 s slot cannot hold a translated sentence, so the LLM trims it to a fragment ("O!") or the TTS
+        squeezes it into a clipped word. Speaking it together with the adjacent line fixes both.
+        """
+        out = []
+        for line in lines:
+            line = dict(line)
+            if out:
+                prev = out[-1]
+                if (
+                    line["end"] - line["start"] < MIN_SEGMENT_DURATION
+                    and prev["speaker"] == line["speaker"]
+                    and line["end"] - prev["start"] <= MERGE_MAX_DURATION
+                    and len(prev["text"]) + len(line["text"]) < 400
+                ):
+                    prev["text"] = prev["text"].strip() + " " + line["text"].strip()
+                    prev["end"] = line["end"]
+                    continue
+            out.append(line)
+
+        # A short first line has nobody before it: join it forward instead
+        if len(out) > 1 and out[0]["end"] - out[0]["start"] < MIN_SEGMENT_DURATION:
+            first, nxt = out[0], out[1]
+            if first["speaker"] == nxt["speaker"] and nxt["end"] - first["start"] <= MERGE_MAX_DURATION:
+                nxt["text"] = first["text"].strip() + " " + nxt["text"].strip()
+                nxt["start"] = first["start"]
+                out.pop(0)
+        return out
+
     def _create_script(self, diar, trans):
         raw_script = []
         for t in trans:
@@ -121,6 +153,7 @@ class DubbingPipeline:
                 merged.append(curr)
                 curr = nxt
         merged.append(curr)
+        merged = self._merge_short_lines(merged)
 
         script = []
         for i, s in enumerate(merged):
