@@ -22,7 +22,7 @@ OpenAI-compatible LLM server when `LLM_API_URL` is set.
 
 ### 1.2 Docker Compose
 `README.md` has the recommended `docker-compose.yml` for the published image. The `docker-compose.yml` in the
-repository builds the image from source for development.
+repository builds the image from source for development (port `8000`, data in the `dubarr_cache` volume).
 
 ## 2. Configuration
 Configuration is only through environment variables (read in `src/config.py`, the duration control in
