@@ -67,7 +67,7 @@ specification/             ARCHITECTURE.md + numbered feature specs (the intende
 ## Pipeline at a glance
 
 1. **Separation**: ffmpeg extracts stereo, Demucs `htdemucs_ft` isolates vocals.
-2. **Analysis**: pyannote diarization, then faster-whisper transcription (models are loaded and unloaded one at a time).
+2. **Analysis**: pyannote diarization on the vocals, then faster-whisper transcription of the original mix (models are loaded and unloaded one at a time).
    `DubbingPipeline._create_script` assigns speakers to Whisper segments and merges short same-speaker lines.
 2b. **Media metadata**: `core/media_context.py` identifies the show/episode or movie from the path (Sonarr/Radarr naming)
    and fetches synopsis and cast (character, actor, gender) from `.nfo` files, TVmaze or TMDB. Failures only log.
@@ -131,6 +131,7 @@ why the image used to need separate venvs.
 | `API_USER` / `API_PASS` | `dubarr` / `dubarr` | Basic auth for `/webhook`, `/upload`, `/download`, `/debug`. |
 | `PUID` / `PGID` | `1000` | Container user, handled by `entrypoint.sh`. |
 | `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
+| `ASR_SOURCE` | `original` | What Whisper transcribes: the original mix or the Demucs `vocals`. Diarization and voice references always use the vocals. |
 | `ASR_GAP_PASS` / `ASR_GAP_MIN` | `on` / `2.0` | Second Whisper pass without VAD over gaps of at least this length (speech under noise); only confident segments are kept. |
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |
 | `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |

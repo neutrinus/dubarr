@@ -496,7 +496,7 @@ class DubbingPipeline:
 
         a_stereo, vocals = self._run_step("Stage 1: Audio Separation", prep_audio, task_id, vpath)
         analysis_data = self._run_step(
-            "Stage 2: Audio Analysis", analyze_audio, task_id, vocals, self.diar_manager, self.whisper_manager
+            "Stage 2: Audio Analysis", analyze_audio, task_id, vocals, self.diar_manager, self.whisper_manager, a_stereo
         )
         diar, trans, audio_durs = analysis_data[0], analysis_data[1], analysis_data[2]
         self.durations.update(audio_durs)

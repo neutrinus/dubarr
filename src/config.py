@@ -46,6 +46,8 @@ print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 # Second transcription pass without VAD over the gaps the first pass left (commentary under arena noise, which VAD
 # drops); only confident, non-hallucinated segments are kept (Spec 001, 2.2).
+# What Whisper transcribes: the original mix (default) or the Demucs vocals; diarization always uses the vocals
+ASR_SOURCE = os.environ.get("ASR_SOURCE", "original").lower()
 ASR_GAP_PASS = os.environ.get("ASR_GAP_PASS", "on").lower() not in ("0", "off", "false", "no")
 ASR_GAP_MIN = float(os.environ.get("ASR_GAP_MIN", "2.0"))
 

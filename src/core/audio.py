@@ -4,7 +4,7 @@ import logging
 import shutil
 import time
 from typing import List, Dict, Tuple
-from config import TEMP_DIR, MOCK_MODE
+from config import TEMP_DIR, MOCK_MODE, ASR_SOURCE
 from infrastructure.ffmpeg import FFmpegWrapper
 from core.gpu_manager import GPUManager
 
@@ -62,8 +62,12 @@ def prep_audio(vpath: str) -> Tuple[str, str]:
     return a_stereo, found[0]
 
 
-def analyze_audio(vocals_path: str, diar_manager, whisper_manager) -> Tuple[List, List, Dict]:
-    """Orchestrates diarization and transcription using provided managers with eager VRAM cleanup."""
+def analyze_audio(vocals_path: str, diar_manager, whisper_manager, original_path: str = None) -> Tuple[List, List, Dict]:
+    """Orchestrates diarization and transcription using provided managers with eager VRAM cleanup.
+
+    Diarization runs on the separated vocals. Whisper hears the original mix by default (ASR_SOURCE=original): it is
+    trained on noisy audio, while Demucs can cut or distort speech under loud effects (Spec 001, 2.2).
+    """
     mpath = os.path.join(TEMP_DIR, "mono.wav")
     FFmpegWrapper.convert_audio(vocals_path, mpath, ac=1, ar=24000)
 
@@ -83,7 +87,12 @@ def analyze_audio(vocals_path: str, diar_manager, whisper_manager) -> Tuple[List
     logger.info("Stage 2b: Transcription...")
     # WhisperManager.transcribe will auto-load if needed, but we can be explicit
     whisper_manager.load_model()
-    trans_result = whisper_manager.transcribe(mpath)
+    asr_path = mpath
+    if ASR_SOURCE == "original" and original_path:
+        asr_path = os.path.join(TEMP_DIR, "asr_mono.wav")
+        FFmpegWrapper.convert_audio(original_path, asr_path, ac=1, ar=16000)
+    logger.info(f"Stage 2b: Whisper listens to the {'original mix' if asr_path != mpath else 'separated vocals'}.")
+    trans_result = whisper_manager.transcribe(asr_path)
     durations["2b. Transcription"] = time.perf_counter() - t0
     whisper_manager.shutdown()
     GPUManager.force_gc()  # Aggressive cleanup
