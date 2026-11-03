@@ -135,6 +135,7 @@ why the image used to need separate venvs.
 | `API_USER` / `API_PASS` | `dubarr` / `dubarr` | Basic auth for `/webhook`, `/upload`, `/download`, `/debug`. |
 | `PUID` / `PGID` | `1000` | Container user, handled by `entrypoint.sh`. |
 | `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
+| `DEMUCS_TIMEOUT` | `1800` | Seconds allowed for Demucs separation of one file (a 45-minute 720p episode takes ~8 min on a 3060). |
 | `ASR_SOURCE` | `original` | What Whisper transcribes: the original mix or the Demucs `vocals`. Diarization and voice references always use the vocals. |
 | `ASR_GAP_PASS` / `ASR_GAP_MIN` | `on` / `2.0` | Second Whisper pass without VAD over gaps of at least this length (speech under noise); only confident segments are kept. |
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |

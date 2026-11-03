@@ -44,6 +44,10 @@ print(f"DEBUG: config.OUTPUT_FOLDER={OUTPUT_FOLDER}", flush=True)
 print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
+
+# Demucs gets a whole episode in one call; a 45-minute 720p episode takes ~8 minutes on a 3060, so the limit
+# must leave room for slower cards and larger files.
+DEMUCS_TIMEOUT = int(os.environ.get("DEMUCS_TIMEOUT", "1800"))
 # Second transcription pass without VAD over the gaps the first pass left (commentary under arena noise, which VAD
 # drops); only confident, non-hallucinated segments are kept (Spec 001, 2.2).
 # What Whisper transcribes: the original mix (default) or the Demucs vocals; diarization always uses the vocals

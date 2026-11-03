@@ -4,7 +4,7 @@ import logging
 import shutil
 import time
 from typing import List, Dict, Optional, Tuple
-from config import TEMP_DIR, MOCK_MODE, ASR_SOURCE
+from config import TEMP_DIR, MOCK_MODE, DEMUCS_TIMEOUT, ASR_SOURCE
 from infrastructure.ffmpeg import FFmpegWrapper
 from core.gpu_manager import GPUManager
 
@@ -46,12 +46,11 @@ def prep_audio(vpath: str, work_dir: str = TEMP_DIR) -> Tuple[str, str]:
     ]
     import subprocess
 
-    # 10 minutes timeout for Demucs is reasonable for most videos.
-    # If it takes longer, something is likely wrong or hardware is too slow.
+    # A feature-length file can take a long time on a slow card; the limit is configurable (DEMUCS_TIMEOUT).
     try:
-        subprocess.run(demucs_cmd, check=True, timeout=600)
+        subprocess.run(demucs_cmd, check=True, timeout=DEMUCS_TIMEOUT)
     except subprocess.TimeoutExpired:
-        logger.error("Demucs separation TIMED OUT (600s).")
+        logger.error(f"Demucs separation TIMED OUT ({DEMUCS_TIMEOUT}s).")
         raise RuntimeError("Audio separation took too long.")
 
     GPUManager.force_gc()
