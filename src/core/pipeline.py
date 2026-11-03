@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import logging
 import time
 import humanfriendly
@@ -10,7 +11,9 @@ from typing import List, Optional
 
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_GUARD
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
-from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION
+from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION, SENTENCE_MAX_GAP, SENTENCE_MAX_DURATION
+from config import TRANSLATION_REVIEW
+from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
 from infrastructure.monitor import ResourceMonitor
@@ -124,9 +127,39 @@ class DubbingPipeline:
                 out.pop(0)
         return out
 
+    @staticmethod
+    def _clamp_stretched(segment):
+        """Shortens a segment whose length is far beyond what its words can take.
+
+        Whisper sometimes stretches a short line over music ("Ready for battle" over 25 s); the dub would then be
+        timed against a slot nobody speaks in.
+        """
+        words = count_syllables(segment.get("text", ""), "en")
+        cap = max(2.0, 1.0 + words / 1.5)
+        if segment["end"] - segment["start"] > cap:
+            segment = dict(segment, end=segment["start"] + cap)
+        return segment
+
+    @staticmethod
+    def _ends_sentence(text: str) -> bool:
+        return bool(re.search(r"[.!?…][\"')\]]*\s*$", text.strip()))
+
+    def _joins(self, curr, nxt):
+        """Same speaker, and either a short pause or a sentence that continues (Spec 001, 2.2a)."""
+        if nxt["speaker"] != curr["speaker"] or len(curr["text"]) + len(nxt["text"]) >= 600:
+            return False
+        gap = nxt["start"] - curr["end"]
+        merged_duration = nxt["end"] - curr["start"]
+        if gap < 0:
+            return False
+        if gap < MERGE_MAX_GAP and merged_duration <= MERGE_MAX_DURATION:
+            return True
+        return not self._ends_sentence(curr["text"]) and gap < SENTENCE_MAX_GAP and merged_duration <= SENTENCE_MAX_DURATION
+
     def _create_script(self, diar, trans):
         raw_script = []
         for t in trans:
+            t = self._clamp_stretched(t)
             spk = self._dominant_speaker(diar, t["start"], t["end"])
             raw_script.append({**t, "speaker": spk})
 
@@ -137,14 +170,7 @@ class DubbingPipeline:
         curr = raw_script[0]
         for i in range(1, len(raw_script)):
             nxt = raw_script[i]
-            gap = nxt["start"] - curr["end"]
-            merged_duration = nxt["end"] - curr["start"]
-            if (
-                nxt["speaker"] == curr["speaker"]
-                and 0 <= gap < MERGE_MAX_GAP
-                and merged_duration <= MERGE_MAX_DURATION
-                and len(curr["text"]) + len(nxt["text"]) < 400
-            ):
+            if self._joins(curr, nxt):
                 curr["text"] = curr["text"].strip() + " " + nxt["text"].strip()
                 curr["end"] = nxt["end"]
                 if "avg_logprob" in curr and "avg_logprob" in nxt:
@@ -583,6 +609,14 @@ class DubbingPipeline:
             logger.info(f"--- PREPARING DRAFTS FOR LANGUAGE: {lang} ---")
             t_start_draft = time.perf_counter()
             draft_segments = self.llm_manager.generate_drafts(script, lang, self.speaker_info, self.global_context)
+            if TRANSLATION_REVIEW:
+                draft_segments = self.llm_manager.review_drafts(draft_segments, lang, self.speaker_info, self.global_context)
+            # The sync loop shows neighbouring translations to the refinement
+            for seg in draft_segments:
+                script[seg["index"]].setdefault("translations", {})[lang] = seg.get("text", "")
+            if self.debug_mode:
+                with open(os.path.join(ddir, f"drafts_{lang}.json"), "w") as f_dbg:
+                    json.dump(draft_segments, f_dbg, indent=2, ensure_ascii=False)
             self.durations[f"Stage 5a: Draft Translation ({lang})"] = time.perf_counter() - t_start_draft
             all_drafts_by_lang[lang] = draft_segments
 
