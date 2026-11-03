@@ -204,7 +204,6 @@ it) in the same PR. The ones you need most often while developing:
   template (applied by llama-cpp-python or the server) adds the special tokens. Don't put ChatML tokens in them.
 - The mux encodes only the dubbed tracks (AC3) and copies every original stream (audio, subtitles, MKV attachments).
   Dubbed tracks are tagged with ISO 639-2 codes (`config.ISO_639_2`, `pl` -> `pol`): MP4 drops two-letter codes.
-- `SERIES_CONTEXT` is read in `config.py` but nothing uses it; the series comes from the media metadata.
 - The OmniVoice server is restarted automatically on HTTP 500s and connection errors, then the request is retried once.
 - `omnivoice_server.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before importing torch. It usually
   runs next to another GPU process (a shared `llama-server`), where the default allocator dies on 20 MB
