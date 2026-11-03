@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
 from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND
 from utils import count_syllables
+from duration_policy import MAX_SPEEDUP as TTS_MAX_SPEEDUP
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,28 @@ class SegmentSynchronizer:
             return (limit - speech) + 3 * (estimate - limit)
         return abs(estimate - speech)
 
+    @classmethod
+    def _rank_variants(cls, options, speech: float, limit: float):
+        """Orders (text, estimate) pairs, content first (Spec 002, 2.2 step 2).
+
+        A variant fits when duration control can bring it into the limit (estimate <= limit x TTS_MAX_SPEEDUP). When
+        the main translation fits, nothing shorter than it is picked; among it and the longer variants the closest to
+        the target wins. Only when it does not fit, the longest variant that fits goes first (shortest if none does).
+        """
+        main_est = options[0][1]
+        ceiling = limit * TTS_MAX_SPEEDUP
+
+        def key(option):
+            text, est = option
+            fits = est <= ceiling
+            if main_est <= ceiling:
+                # Full content fits: shorter variants only as a fallback after a rejected take
+                return (0 if fits and est >= main_est else 1, cls._miss(est, speech, limit))
+            # Main does not fit: as much content as fits, then the shortest
+            return (0, -est) if fits else (1, est)
+
+        return sorted(options, key=key)
+
     def _estimate_variants(self, segment: Dict, lang: str, vocals_path: str, speech: float, limit: float):
         """[(text, estimated seconds)] of the draft's length variants, best fit first; [] without variants."""
         options = [t for t in segment.get("variants") or [] if t and t.strip()]
@@ -86,7 +109,7 @@ class SegmentSynchronizer:
             return []
         if not estimates or len(estimates) != len(options):
             return []
-        ranked = sorted(zip(options, estimates), key=lambda x: self._miss(x[1], speech, limit))
+        ranked = self._rank_variants(list(zip(options, estimates)), speech, limit)
         logger.info(
             f"[ID: {segment['index']}] Variants (est.): "
             + ", ".join(f"{e:.2f}s" for _, e in zip(options, estimates))

@@ -243,6 +243,19 @@ class TestLengthVariants(unittest.TestCase):
         self.assertEqual(res["final_text"], "Dłuższa i pełniejsza wersja tej kwestii.")
         self.llm.refine_translation_by_duration.assert_not_called()
 
+    def test_main_translation_beats_the_short_variant_when_it_fits(self):
+        # 3.9 s overruns the 3.5 s limit only within the duration control speed-up, so no content is dropped
+        ranked = SegmentSynchronizer._rank_variants([("main", 3.9), ("short", 2.9), ("long", 4.6)], 3.0, 3.5)
+        self.assertEqual(ranked[0][0], "main")
+
+    def test_longest_fitting_variant_when_the_main_one_does_not_fit(self):
+        ranked = SegmentSynchronizer._rank_variants([("main", 6.0), ("short", 3.9), ("tiny", 2.0)], 3.0, 3.5)
+        self.assertEqual([t for t, _ in ranked][:2], ["short", "tiny"])
+
+    def test_shortest_variant_when_nothing_fits(self):
+        ranked = SegmentSynchronizer._rank_variants([("main", 9.0), ("short", 6.0)], 3.0, 3.5)
+        self.assertEqual(ranked[0][0], "short")
+
     def test_overrun_counts_more_than_falling_short(self):
         self.assertEqual(SegmentSynchronizer._miss(2.6, 3.0, 3.5), SegmentSynchronizer._miss(3.4, 3.0, 3.5))
         self.assertGreater(SegmentSynchronizer._miss(4.0, 3.0, 3.5), SegmentSynchronizer._miss(2.0, 3.0, 3.5))
