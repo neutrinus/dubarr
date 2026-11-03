@@ -265,7 +265,7 @@ class TTSManager:
 
         # 3. Calculate constraints
         slot_dur = item["end"] - item["start"]
-        limit_dur = item.get("max_end", item["end"]) - item["start"]
+        limit_dur = item.get("max_end", item["end"]) - item.get("min_start", item["start"])
         syl_count = count_syllables(clean_text, lang)
         max_allowed_dur = max((syl_count * 0.4) + 1.5, slot_dur + 1.5)
 

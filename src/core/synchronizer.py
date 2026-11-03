@@ -67,12 +67,13 @@ class SegmentSynchronizer:
         Orchestrates the feedback loop for a single segment (Spec 002).
 
         The target is the time the original speaks (end - start); the limit adds the silence after the line
-        ("max_end"). A take is accepted when it ends within the limit and fills at least MIN_FILL_RATIO of the target.
+        ("max_end") and the short silence before it ("min_start"). A take is accepted when it ends within the limit and fills at least MIN_FILL_RATIO of the target.
         """
         original_text = segment.get("text_en", "")
         current_text = segment.get("text", original_text)
         speech_dur = segment["end"] - segment["start"]
-        target_dur = segment.get("max_end", segment["end"]) - segment["start"]
+        # The limit: silence after the line, plus (for a take that is still too long) a little silence before it
+        target_dur = segment.get("max_end", segment["end"]) - segment.get("min_start", segment["start"])
         speaker = segment["speaker"]
         idx = segment["index"]
 
@@ -91,6 +92,7 @@ class SegmentSynchronizer:
                 "start": segment["start"],
                 "end": segment["end"],
                 "max_end": segment.get("max_end", segment["end"]),
+                "min_start": segment.get("min_start", segment["start"]),
             }
 
             synthesized = self._synthesize_sound(tts_item, lang, vocals_path, full_script)

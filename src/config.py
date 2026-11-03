@@ -73,9 +73,11 @@ TTS_MAX_CHUNK_SECONDS = float(os.environ.get("TTS_MAX_CHUNK_SECONDS", "10.0"))
 TTS_REF_TEXT = os.environ.get("TTS_REF_TEXT", "off").lower()
 
 
-# Dubbed speech may run into the silence after a segment (never the silence before it).
+# Dubbed speech may run into the silence after a segment and, when still too long, start early in the one before it.
 # Cap on how much trailing silence a segment may borrow, and the gap kept before the next speech.
 SLACK_AFTER_MAX = float(os.environ.get("SLACK_AFTER_MAX", "1.5"))
+# A take that is still too long may also start this much earlier, in the silence before its line.
+SLACK_BEFORE_MAX = float(os.environ.get("SLACK_BEFORE_MAX", "0.5"))
 SLACK_GUARD = 0.15
 
 # Consecutive lines of the same speaker are merged only across this short a pause and up to this length.

@@ -214,3 +214,32 @@ class TestSubtitleDiscovery(unittest.TestCase):
         self.touch(".pl.srt")
         self.touch("-thumb.srt")
         self.assertIsNone(self.pipeline._find_external_subtitles(self.video))
+
+
+class TestPauseBeforeLine(unittest.TestCase):
+    def test_script_records_the_silence_before_each_line(self):
+        pipeline = DubbingPipeline.__new__(DubbingPipeline)
+        diar = [{"speaker": "A", "start": 0.0, "end": 3.0}, {"speaker": "B", "start": 3.0, "end": 9.0}]
+        trans = [
+            {"start": 1.0, "end": 3.0, "text": "This is the first line."},
+            {"start": 3.3, "end": 5.0, "text": "This is the second one."},
+            {"start": 7.0, "end": 9.0, "text": "And this is the third."},
+        ]
+        with patch("core.pipeline.SLACK_BEFORE_MAX", 0.5), patch("core.pipeline.SLACK_GUARD", 0.15):
+            script = pipeline._create_script(diar, trans)
+        self.assertAlmostEqual(script[0]["min_start"], 0.5)
+        self.assertAlmostEqual(script[1]["min_start"], 3.15)  # only 0.3 s pause, minus the guard
+        self.assertAlmostEqual(script[2]["min_start"], 6.5)
+
+    def test_take_starts_early_only_when_it_would_overrun(self):
+        item = {"start": 10.0, "end": 12.0, "max_end": 12.5, "min_start": 9.5}
+        self.assertEqual(DubbingPipeline._place_take(item, 2.3, 0.0), (10.0, 1.0))
+        start, speed = DubbingPipeline._place_take(item, 2.8, 0.0)
+        self.assertAlmostEqual(start, 9.7)
+        self.assertEqual(speed, 1.0)
+
+    def test_early_start_never_overlaps_the_previous_take(self):
+        item = {"start": 10.0, "end": 12.0, "max_end": 12.5, "min_start": 9.5}
+        start, speed = DubbingPipeline._place_take(item, 3.0, 9.9)
+        self.assertAlmostEqual(start, 9.9)
+        self.assertAlmostEqual(speed, 3.0 / 2.6)  # what does not fit is sped up instead

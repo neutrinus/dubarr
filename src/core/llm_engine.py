@@ -364,7 +364,7 @@ class LLMManager:
     def syllable_budget(line: Dict) -> Dict:
         """Spoken-syllable budget of a line from its time budget (Spec 001, 2.5a)."""
         speech = max(0.0, line["end"] - line["start"])
-        limit = max(speech, line.get("max_end", line["end"]) - line["start"])
+        limit = max(speech, line.get("max_end", line["end"]) - line.get("min_start", line["start"]))
         target = max(1, round(speech * DUB_SYLLABLES_PER_SECOND))
         return {
             "min_syllables": max(1, round(target * 0.75)),
@@ -390,6 +390,7 @@ class LLMManager:
             "start": script[idx]["start"],
             "end": script[idx]["end"],
             "max_end": script[idx].get("max_end", script[idx]["end"]),
+            "min_start": script[idx].get("min_start", script[idx]["start"]),
             "text_en": script[idx]["text_en"],  # Keep original for reference
             "speaker_label": speaker_label(speaker_info, script[idx]["speaker"]),
         }
