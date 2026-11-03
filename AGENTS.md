@@ -21,11 +21,21 @@ configured only through environment variables.
 ## Workflow for behaviour changes
 
 1. Read the matching spec in `specification/specs/` (and `specification/ARCHITECTURE.md` for layering).
-2. Update the spec first when a request changes behaviour, and get it accepted before writing the code.
+2. Update the spec first when a request changes behaviour, and get it accepted before writing the code. The spec
+   change goes in the same PR as the code.
 3. Implement, with tests, following the conventions below.
 4. Run the checks (below) and, for pipeline changes, the E2E script.
 
 Small bug fixes that do not change intended behaviour (typos, crashes) need no spec change, but must not regress one.
+
+| Spec | Covers |
+| --- | --- |
+| `001_video_processing_pipeline.md` | Stages 1-8: separation, ASR, dialogue units, metadata, analysis, voice references, drafts, mix, mux. |
+| `002_synchronization_engine.md` | Stage 5 sync loop: length variants, duration control, take judge, voice audition, reference order. |
+| `003_task_management.md` | SQLite queue, step caching, resumption. |
+| `004_api_interface.md` | HTTP endpoints, auth, dashboard. |
+| `005_deployment_and_configuration.md` | Docker, volumes, GPU handling, **the full env var table**. |
+| `006_series_memory.md` | Cross-episode glossary and voice bank. |
 
 ## Repository map
 
@@ -37,13 +47,14 @@ src/
   config.py                Env-var config, paths, LANG_MAP. Has import-time side effects (see Gotchas).
   prompts.py               LLM prompt templates (analysis, ASR editor, translation, duration refinement).
   utils.py                 JSON parsing, SRT cleaning, ZCR, syllable counting, output cleaning.
+  duration_policy.py       OmniVoice duration control (TTS_FILL_RATIO / TTS_MIN_SPEED / TTS_MAX_SPEEDUP), shared with the server.
   omnivoice_server.py      Flask OmniVoice TTS server. Separate process on the app's interpreter, 127.0.0.1:5051.
   verify_output.py         Manual QA helper (faster-whisper re-transcription of generated segments).
   core/
     pipeline.py            DubbingPipeline: stages 1-7, step caching, Stage 5 checkpointing, final mix/mux.
     synchronizer.py        Per-segment loop: pick length variant by estimate -> TTS -> measure -> other variant / LLM -> retry.
     llm_engine.py          LLMManager (llama-cpp-python Gemma 3 12B GGUF, or an external server): analysis, ASR fix, drafts, refinement.
-    tts_manager.py         TTSManager: voice reference selection (dynamic / golden / last good) + TTS calls.
+    tts_manager.py         TTSManager: reference order per line (line clip, speaker refs, last good, designed voice) + TTS calls.
     whisper_engine.py      WhisperManager (faster-whisper, large-v3-turbo).
     diarization_engine.py  DiarizationManager (pyannote speaker-diarization-community-1, needs HF_TOKEN).
     audio.py               Demucs separation, analysis orchestration, ffmpeg mixing (ducking, ambient ghost).
@@ -66,7 +77,7 @@ src/
     monitor.py             Periodic CPU/RAM/GPU/queue logging thread.
   templates/index.html     Dashboard.
 tests/                     pytest unit tests (everything heavy is mocked).
-scripts/                   smoke_test.py (used by CI against a MOCK_MODE container), demo/LLM helpers.
+scripts/                   smoke_test.py (CI, MOCK_MODE container), e2e_test.py (CPU E2E), demo/LLM helpers.
 specification/             ARCHITECTURE.md + numbered feature specs (the intended behaviour).
 ```
 
@@ -74,20 +85,26 @@ specification/             ARCHITECTURE.md + numbered feature specs (the intende
 
 1. **Separation**: ffmpeg extracts stereo, Demucs `htdemucs_ft` isolates vocals.
 2. **Analysis**: pyannote diarization on the vocals, then faster-whisper transcription of the original mix (models are loaded and unloaded one at a time).
-   `DubbingPipeline._create_script` assigns speakers to Whisper segments and merges short same-speaker lines.
+   A second Whisper pass without VAD fills long gaps (speech under noise). With series memory on, speakers are matched
+   against the series voice bank. `DubbingPipeline._create_script` assigns speakers to Whisper segments and joins them
+   into dialogue units (whole sentences, each with a time budget).
 2b. **Media metadata**: `core/media_context.py` identifies the show/episode or movie from the path (Sonarr/Radarr naming)
    and fetches synopsis and cast (character, actor, gender) from `.nfo` files, TVmaze or TMDB. Failures only log.
-3. **Global analysis**: the LLM writes a summary, a phonetic glossary and speaker profiles, then corrects ASR errors in
-   chunks (reference subtitles from `<video>.srt` or the first embedded subtitle stream are used as ground truth).
-4. **Voice references**: picks a "golden" reference clip per speaker (scored, ZCR-checked). Despite the step name
-   "Transcription Correction", this stage does not correct text.
+3. **Global analysis**: the LLM writes a summary, a phonetic glossary (reading-tested, fixed across a series) and
+   speaker profiles, then corrects ASR errors in chunks (reference subtitles from `<video>.srt` or the first embedded
+   subtitle stream are used as ground truth).
+4. **Voice references**: up to `REF_AUDITION_CANDIDATES` scored, ZCR-checked clips per speaker, plus voice-bank clips
+   from earlier episodes. Despite the step name "Transcription Correction", this stage does not correct text.
 5. **Production**: draft translations per language (windows of 20 lines with surrounding context and per-line syllable
-   budgets, then a completeness review pass), then a flat pool of (segment, language) jobs runs
-   through `SegmentSynchronizer` on 4 orchestrator threads. LLM and TTS calls go through `LLMService`/`TTSService`.
-   Progress is checkpointed to `TEMP_DIR/stage5_checkpoint_<task_id>.json`.
+   budgets and short/long variants, then a completeness review pass), a designed voice per speaker and the voice
+   audition (the take judge ranks each speaker's references), then a flat pool of (segment, language) jobs runs
+   through `SegmentSynchronizer` on 4 orchestrator threads; every synthesis makes `TAKE_VERSIONS` takes and the judge
+   keeps the best. LLM and TTS calls go through `LLMService`/`TTSService`.
+   Progress is checkpointed to `stage5_checkpoint_<task_id>.json` in the task's workspace.
 6. **Mix**: per-language mastering (pan, echo, atempo), then sidechain ducking against the original track.
 7. **Mux**: the new tracks (AAC by default, `AUDIO_CODEC`) are added in front of the original audio, which is copied;
-   the source file is swapped in place.
+   the source file is swapped in place (the original stays as `<file>.bak`). After a successful task the series memory
+   (glossary, voice bank) is updated.
 
 Stages run through `DubbingPipeline._run_step`, which caches each result in `job_steps` and reuses it on retry.
 
@@ -103,7 +120,8 @@ uv sync --group dev --python 3.10
 # Point DATA_DIR somewhere writable; the default is /app/data.
 MOCK_MODE=1 DATA_DIR=/tmp/dubarr-data PYTHONPATH=.:src uv run pytest tests/
 
-# Lint (all three run in CI; ruff and flake8 must pass, pylint is informational)
+# Lint: CI runs ruff check and flake8 (both must pass) and pylint (informational).
+# Keep ruff format clean too; CI does not check it.
 uv run ruff check .
 uv run ruff format --check .
 uv run flake8 .
@@ -120,84 +138,39 @@ muxed tracks (count, tags, duration, not silent). It also builds `demo.mp4` (one
 touch `src/`, dependencies, the workflow or the script. Without the `HF_TOKEN` secret, diarization is replaced by a single speaker. It tests
 plumbing, not translation quality.
 
-Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the LLM, about 4 GB each for Whisper and the TTS),
-`HF_TOKEN` with access to the pyannote models, and the Docker image. The image has a single Python 3.12 venv
-(`/app/.venv`) with everything, OmniVoice included; the TTS server is started as a subprocess on that same interpreter.
-Use `docker compose up --build`. XTTS (Coqui) was removed in favour of OmniVoice; it pinned `transformers<5`, which is
-why the image used to need separate venvs.
+Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the in-process LLM, about 4 GB for Whisper, up to
+6 GB for OmniVoice on long lines), `HF_TOKEN` with access to the pyannote models, and the Docker image. The image has a
+single Python 3.12 venv (`/app/.venv`) with everything, OmniVoice included; the TTS server is started as a subprocess
+on that same interpreter. Use `docker compose up --build`. OmniVoice is the only TTS: XTTS was removed, don't bring
+back per-tool venvs.
 
 ## Configuration (environment variables)
 
+All settings are environment variables, read in `src/config.py` (duration control in `src/duration_policy.py`).
+The full reference is the table in `specification/specs/005_deployment_and_configuration.md`; the feature specs list
+the settings that belong to them. When you add or change a variable, update that table (and `README.md` if users need
+it) in the same PR. The ones you need most often while developing:
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `TARGET_LANGS` | `pl` | Comma-separated target language codes. |
+| `MOCK_MODE` | `0` | Skip all model loading; engines return canned output. Required for tests. |
+| `DATA_DIR` | `/app/data` | DB (`queue.db`), logs, models, temp files, series memory. Point it somewhere writable in tests. |
 | `HF_TOKEN` | none | Required unless `MOCK_MODE=1` (pyannote). |
-| `DATA_DIR` | `/app/data` | DB (`queue.db`), logs, models, temp files. |
-| `MOCK_MODE` | `0` | Skip all model loading; engines return canned output. Used by tests and the smoke test. |
-| `DEBUG` | `0` | Keep intermediate artifacts in `videos/debug_<name>/`. |
-| `VERBOSE` | `0` | DEBUG log level. |
-| `API_USER` / `API_PASS` | `dubarr` / `dubarr` | Basic auth for `/webhook`, `/upload`, `/download`, `/debug`. |
-| `PUID` / `PGID` | `1000` | Container user, handled by `entrypoint.sh`. |
-| `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
-| `DEMUCS_TIMEOUT` | `1800` | Seconds allowed for Demucs separation of one file (a 45-minute 720p episode takes ~8 min on a 3060). |
-| `ASR_SOURCE` | `original` | What Whisper transcribes: the original mix or the Demucs `vocals`. Diarization and voice references always use the vocals. |
-| `ASR_GAP_PASS` / `ASR_GAP_MIN` | `on` / `2.0` | Second Whisper pass without VAD over gaps of at least this length (speech under noise); only confident segments are kept. |
-| `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |
-| `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |
-| `LLM_API_MODEL` / `LLM_API_KEY` / `LLM_TIMEOUT` | none / none / `600` | Model name, key and per-request timeout for that server. |
-| `AUDIO_CODEC` / `AUDIO_BITRATE` | `aac` / `192k` | Codec of the dubbed tracks (`aac`, `ac3`, `eac3`, `opus`). Original audio is copied, not re-encoded. |
-| `METADATA_LOOKUP` | `on` | Show/movie context for the LLM: `on` (.nfo, then TVmaze / TMDB), `local` (.nfo only), `off`. No network in `MOCK_MODE`. |
-| `TMDB_API_KEY` / `METADATA_TIMEOUT` | none / `10` | Optional TMDB key (movies; v3 key or v4 token) and per-request timeout. |
-| `LLM_N_CTX` | `8192` | Context size of the in-process model. |
-| `LLM_MAX_TOKENS` | `4096` | Completion budget for the bulk calls (analysis, editor, drafts); a truncated answer is retried once with double the budget. |
-| `MERGE_MAX_GAP` / `MERGE_MAX_DURATION` | `0.3` / `10` | Consecutive lines of one speaker are merged only across this pause and up to this length, so the dub stays aligned with the original pauses. |
-| `MIN_SEGMENT_DURATION` | `1.2` | Lines shorter than this are joined with a same-speaker neighbour; a sub-second slot can only produce a clipped fragment. |
-| `MAX_ACCEPT_SPEEDUP` | `1.08` | A take may overrun its slot by this much; the mix speeds it up instead of the LLM deleting words. |
-| `SENTENCE_MAX_GAP` / `SENTENCE_MAX_DURATION` | `1.5` / `20` | A same-speaker line that does not end a sentence is joined with the next across this pause, up to this length, so whole sentences get translated. |
-| `SLACK_AFTER_MAX` / `SLACK_BEFORE_MAX` | `1.5` / `0.5` | How far a take may run into the silence after its line, and how much earlier a still-too-long take may start in the silence before it. |
-| `DUB_SYLLABLES_PER_SECOND` | `5.0` | Pace of the synthesized voice; turns each line's time budget into a syllable budget for the translator. |
-| `TRANSLATION_WINDOW` / `TRANSLATION_REVIEW` | `20` / `on` | Lines per translation request; second LLM pass that restores missing information. |
-| `TTS_FILL_RATIO` / `TTS_MIN_SPEED` / `TTS_MAX_SPEEDUP` | `0.9` / `0.88` / `1.2` | OmniVoice duration control: slow short takes down towards the original's timing, speed long ones up, both only within this range. |
-| `MIN_FILL_RATIO` | `0.7` | A take shorter than this share of the original's speech goes back to the LLM to restore content. |
-| `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence) and is synthesized again with another voice reference. |
-| `REF_MIN_CLARITY_DB` | `3.0` | A voice reference whose voice is less than this many dB above the rest of the mix (crowd, engines) is avoided; OmniVoice would clone the noise. |
-| `TAKE_CHECK` / `TAKE_VERSIONS` | `judge` / `4` | `judge`: the take judge (squeaks/clipping/gaps on the signal, voiceprint match with the cloned reference, CTC text match: what a wav2vec2 model reads in the take against the text) decides on the voice audition and every take; each synthesis makes this many takes (the first two from different references) and keeps the best. `whisper`: the same plus the Whisper similarity in the report, for calibration (and as the text check when the CTC model does not load). `off`: only the swallowed and signal checks, no audition. |
-| `TAKE_VERSIONS_SHORT` / `SHORT_LINE_SYLLABLES` / `TAKE_GOOD_SCORE` | `6` / `10` / `0.95` | Lines of 4 to 10 syllables (shouts, names: where OmniVoice slurs most) get more takes. Takes after the first two resample the reference of the best sound take. A sound take scoring at least `TAKE_GOOD_SCORE` ends the search early. |
-| `JUDGE_MIN_TEXT` / `JUDGE_MIN_VOICE` / `JUDGE_HF_MAX_DB` | `0.5` / `0.35` / `12` | Judge thresholds (text and voice calibrated on S01E03 with `TAKE_CHECK=whisper`: clones of the right person score 0.41-0.59). |
-| `JUDGE_ALIGN_MODEL` / `JUDGE_DEVICE` | per language / `cpu` | CTC model of the text match (Polish: `jonatasgrosman/wav2vec2-large-xlsr-53-polish`, others `facebook/mms-1b-all`) and where it runs. |
-| `TAKE_MIN_SIMILARITY` | `0.7` | Whisper similarity reported in `whisper` mode. |
-| `SERIES_MEMORY` | `on` | Episodes of a series share settled name spellings and a voice bank in `DATA_DIR/series/<show>/` (Spec 006). |
-| `VOICE_MATCH_MIN` / `VOICE_BANK_CLIPS` | `0.6` / `5` | Voiceprint similarity from which a speaker is a known person of the series; clips kept per person. |
-| `GLOSSARY_MODE` | `respell` | `respell`: names get a phonetic spelling that must pass a reading check (Polish: by spelling rules against the name's English phonemes, `w` for English W becomes `ł`; other languages: an LLM reading test). `phonemes` (experiment): names stay as written and the TTS gets their English CMU phonemes. |
-| `VOICE_DESIGN` | `on` | One OmniVoice voice-design clip per speaker (gender/age/pitch from the speaker profile, the gender measured from the clips' pitch when it is clear, a generic voice when nothing is known) joins the reference candidates; it is used only when none of the speaker's clips reaches `AUDITION_LINE_REF_MIN` in the voice audition, and then a speaker keeps that kind of voice (clone or designed) for all lines. A speaker never borrows another speaker's voice. |
-| `ASR_VERIFY` | `on` | Stage 2c script check: unsure segments are heard again (vocals, prompted with names, subtitles), every segment's speaker is checked by its voiceprint, and the LLM corrector picks or reconstructs the text (marked `guessed`), drops Whisper hallucinations and notes speaker doubts (a signal only). |
-| `ASR_UNSURE_LOGPROB` / `ASR_UNSURE_WORD` | `-0.6` / `0.3` | A segment below this average log-probability, or with a word below this probability, is unsure. |
-| `SPEAKER_RECHECK_MIN` / `SPEAKER_RECHECK_MARGIN` | `0.5` / `0.1` | A segment of at least 1.5 s moves to another speaker only when its voice matches that speaker's centroid at least this well and this much better than its own. |
-| `EMOTION_REFS` | `on` | Every line gets an energy class (calm / lively / shout, relative to its speaker's level, pitch and pace); reference clips are picked per class and a line starts from a clip of its own class. |
-| `SHOUT_MERGE_MIN` | `0.3` | A shouting cluster joins the same person's calm one when the LLM names them alike, it is ≥3 dB louder and ≥3 semitones higher, no measured gender differs and the voiceprints are at least this alike. |
-| `VOICE_BANK_CLASS_CLIPS` | `2` | Series voice bank clips kept per energy class (with `EMOTION_REFS`). |
-| `TAKE_DROP_SIMILARITY` | `0.5` | A line whose every take is broken and unintelligible below this (the better of the CTC text match and the Whisper similarity; a wrong voice alone never drops a line) is left undubbed (the original stays audible). |
-| `REF_AUDITION_CANDIDATES` / `AUDITION_LINE_REF_MIN` | `3` / `0.8` | Reference clips kept per speaker for the voice audition; a speaker scoring below this does not clone from line clips. |
-| `TAKE_CHECK_DEVICE` | `cpu` | Where the Whisper of `TAKE_CHECK=whisper` runs. `auto` uses a GPU only with 8.5 GB free; on the TTS card it starves OmniVoice. |
-| `TAKE_CHECK_THREADS` | all cores | CPU threads of that Whisper (faster-whisper would use 4). |
-| `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
-| `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
-| `TTS_CPU_THREADS` | all cores | Threads used when synthesis runs on the CPU. |
-| `TTS_MAX_CHUNK_SECONDS` | `10` | Lines longer than this are synthesized in chunks at sentence boundaries (keeps sync and caps the VRAM peak). |
-| `TTS_REF_TEXT` | `off` | Send the reference clip's transcript to OmniVoice. `off` avoids English pronunciation leaking into the target language. |
-| `TTS_TIMEOUT` | `60` | Seconds per TTS request (raise it on CPU). |
+| `DEBUG` / `VERBOSE` | `0` / `0` | Keep intermediate artifacts in `videos/debug_<name>/` (incl. `report_<lang>.tsv`); DEBUG log level. |
+| `LLM_API_URL` / `LLM_API_MODEL` | none | Use an OpenAI-compatible server instead of the in-process GGUF. |
+| `TAKE_CHECK` | `judge` | `judge` / `whisper` (judge plus Whisper similarity, for calibration) / `off`. |
+| `SERIES_MEMORY` | `on` | Cross-episode glossary and voice bank in `DATA_DIR/series/<show>/` (Spec 006). |
 
 ## Development utilities
 
 - `python src/main.py` (with `PYTHONPATH=.:src`) processes everything in `videos/` without the API or the DB worker —
   handy for debugging one file.
-- `src/verify_output.py` re-transcribes generated segments with faster-whisper to check audio integrity by ear-free QA.
+- `src/verify_output.py` re-transcribes generated segments with faster-whisper, a quick check of the audio without listening.
 - `scripts/e2e_test.py` dubs a short clip end to end and verifies the muxed tracks (used by `.github/workflows/e2e-cpu.yml`).
 
 ## Conventions
 
-- **Spec first for behaviour changes.** `specification/specs/*.md` describes intended behaviour. When a change alters
-  behaviour, update the matching spec in the same PR. Pure bug fixes don't need a spec change.
+- **Spec first for behaviour changes** (see the workflow above).
 - **Layering** (see `specification/ARCHITECTURE.md`): HTTP and auth only in `src/api`; pipeline logic in `src/core`;
   subprocesses, DB and HTTP clients in `src/infrastructure`. In practice `core/` still calls `subprocess`/ffmpeg directly
   in several places; prefer adding to `FFmpegWrapper` over adding more of that.
@@ -209,8 +182,7 @@ why the image used to need separate venvs.
 - **GPU work goes through the services.** In Stage 5, LLM and TTS calls must be submitted via `LLMService`/`TTSService`.
   `LLMService` must stay at 1 worker: llama-cpp-python segfaults with concurrent CUDA inference.
 - **GPU selection**: never use `nvidia-smi` indices as torch device indices; use `GPUManager.get_best_gpu`.
-- Style: ruff, line length 127. Commit messages use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `ux:` prefixes,
-  in small, focused commits.
+- Style: ruff, line length 127.
 - Tests live in `tests/test_<module>.py`, use `unittest.mock` heavily, and must not need a GPU, network or model files.
   Add or update tests together with logic changes.
 - **Commits:** small, logically cohesive changes with `feat:` / `fix:` / `refactor:` / `docs:` / `test:` / `ux:`
@@ -230,6 +202,9 @@ why the image used to need separate venvs.
   per-task workspace keeps those paths from pointing at another task's files.
 - Prompts in `prompts.py` are system prompts sent as chat messages with `response_format=json_object`; the model's chat
   template (applied by llama-cpp-python or the server) adds the special tokens. Don't put ChatML tokens in them.
+- The mux maps only the video and audio streams (`-map 0:v`, `-map 0:a`) and encodes all audio to AC3, so embedded
+  subtitles are not carried over and the original audio is re-encoded. Known gap, not intended behaviour.
+- `SERIES_CONTEXT` is read in `config.py` but nothing uses it; the series comes from the media metadata.
 - The OmniVoice server is restarted automatically on HTTP 500s and connection errors, then the request is retried once.
 - `omnivoice_server.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before importing torch. It usually
   runs next to another GPU process (a shared `llama-server`), where the default allocator dies on 20 MB

@@ -46,6 +46,7 @@ Configuration is only through environment variables (read in `src/config.py`, th
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
+| `DEMUCS_TIMEOUT` | `1800` | Seconds allowed for the Demucs separation of one file (a 45-minute 720p episode takes ~8 min on a 3060). |
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | `bartowski/google_gemma-3-12b-it-GGUF` / `google_gemma-3-12b-it-Q4_K_M.gguf` | GGUF downloaded to `DATA_DIR/models` on first use (in-process LLM only). |
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |
 | `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |
@@ -74,6 +75,10 @@ Configuration is only through environment variables (read in `src/config.py`, th
 | --- | --- | --- |
 | `ASR_SOURCE` | `original` | What Whisper transcribes: the original mix or the Demucs `vocals`. Diarization and voice references always use the vocals. |
 | `ASR_GAP_PASS` / `ASR_GAP_MIN` | `on` / `2.0` | Second Whisper pass without VAD over gaps of at least this length; only confident segments are kept. |
+| `ASR_VERIFY` | `on` | Stage 2c script check: unsure segments are heard again (vocals, prompted with names, subtitles), every segment's speaker is checked by its voiceprint, and the LLM corrector picks or reconstructs the text (marked `guessed`), drops Whisper hallucinations and notes speaker doubts (a signal only). |
+| `ASR_UNSURE_LOGPROB` / `ASR_UNSURE_WORD` | `-0.6` / `0.3` | A segment below this average log-probability, or with a word below this probability, is unsure. |
+| `SPEAKER_RECHECK_MIN` / `SPEAKER_RECHECK_MARGIN` | `0.5` / `0.1` | A segment of at least 1.5 s moves to another speaker only when its voice matches that speaker's centroid at least this well and this much better than its own. |
+| `SHOUT_MERGE_MIN` | `0.3` | A shouting cluster joins the same person's calm one when the LLM names them alike, it is ≥3 dB louder and ≥3 semitones higher, no measured gender differs and the voiceprints are at least this alike. |
 | `MERGE_MAX_GAP` / `MERGE_MAX_DURATION` | `0.3` / `10` | Same-speaker lines are merged only across this pause and up to this length. |
 | `SENTENCE_MAX_GAP` / `SENTENCE_MAX_DURATION` | `1.5` / `20` | A same-speaker line that does not end a sentence is joined with the next across this pause, up to this length. |
 | `MIN_SEGMENT_DURATION` | `1.2` | Shorter lines are joined with a same-speaker neighbour. |
@@ -85,7 +90,7 @@ Configuration is only through environment variables (read in `src/config.py`, th
 | `DUB_SYLLABLES_PER_SECOND` | `5.0` | Pace of the synthesized voice; turns time budgets into syllable budgets. |
 | `TRANSLATION_WINDOW` | `20` | Lines per translation request. |
 | `TRANSLATION_REVIEW` | `on` | Second LLM pass that restores missing information. |
-| `GLOSSARY_MODE` | `respell` | `respell`: names get a phonetic spelling checked by an LLM reading test; `phonemes` (experiment): English CMU phonemes for the TTS (Spec 006, 3). |
+| `GLOSSARY_MODE` | `respell` | `respell`: names get a phonetic spelling that must pass a reading check (Polish: by spelling rules against the name's English phonemes; other languages: an LLM reading test); `phonemes` (experiment): English CMU phonemes for the TTS (Spec 006, 3). |
 
 ### 2.6 Synthesis, sync loop and take judge (Spec 002)
 | Variable | Default | Meaning |
@@ -96,19 +101,22 @@ Configuration is only through environment variables (read in `src/config.py`, th
 | `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence). |
 | `REF_MIN_CLARITY_DB` | `3.0` | A voice reference less than this many dB above the rest of the mix is avoided. |
 | `REF_AUDITION_CANDIDATES` / `AUDITION_LINE_REF_MIN` | `3` / `0.8` | Reference clips kept per speaker for the voice audition; a speaker scoring below this does not clone from line clips. |
-| `VOICE_DESIGN` | `on` | One OmniVoice voice-design clip per speaker joins the reference candidates. |
-| `TAKE_CHECK` | `judge` | `judge`: the take judge decides on the audition and every take; `whisper`: the same plus the Whisper similarity in the report, for calibration; `off`: only the swallowed and signal checks, no audition. The old values `on` and `audition` read as `judge`. |
-| `TAKE_VERSIONS` | `2` | Takes per synthesis, from different references; the best is kept. |
-| `JUDGE_MIN_TEXT` / `JUDGE_MIN_VOICE` / `JUDGE_HF_MAX_DB` | `0.5` / `0.5` / `12` | Judge thresholds (first guesses, to be tuned with `TAKE_CHECK=whisper`). |
+| `VOICE_DESIGN` | `on` | One OmniVoice voice-design clip per speaker (gender/age/pitch from the profile, the gender measured from the clips' pitch when it is clear) joins the candidates; it is used only when none of the speaker's clips reaches `AUDITION_LINE_REF_MIN`, and a speaker then keeps that kind of voice (clone or designed) for all lines. |
+| `EMOTION_REFS` | `on` | Every line gets an energy class (calm / lively / shout, relative to its speaker's level, pitch and pace); reference clips are picked per class and a line starts from a clip of its own class. |
+| `TAKE_CHECK` | `judge` | `judge`: the take judge decides on the audition and every take; `whisper`: the same plus the Whisper similarity in the report, for calibration (and as the text check when the CTC model does not load); `off`: only the swallowed and signal checks, no audition. The old values `on` and `audition` read as `judge`. |
+| `TAKE_VERSIONS` | `4` | Takes per synthesis (the first two from different references); the best is kept. |
+| `TAKE_VERSIONS_SHORT` / `SHORT_LINE_SYLLABLES` / `TAKE_GOOD_SCORE` | `6` / `10` / `0.95` | Lines of 4 to 10 syllables get more takes. Takes after the first two resample the reference of the best sound take. A sound take scoring at least `TAKE_GOOD_SCORE` ends the search early. |
+| `JUDGE_MIN_TEXT` / `JUDGE_MIN_VOICE` / `JUDGE_HF_MAX_DB` | `0.5` / `0.35` / `12` | Judge thresholds (text and voice calibrated on S01E03 with `TAKE_CHECK=whisper`: clones of the right person score 0.41-0.59). |
 | `JUDGE_ALIGN_MODEL` / `JUDGE_DEVICE` | per language / `cpu` | CTC model of the text match and where the judge runs. |
-| `TAKE_DROP_SIMILARITY` | `0.3` | A line whose every take is broken below this score is left undubbed. |
+| `TAKE_DROP_SIMILARITY` | `0.5` | A line whose every take is broken and unintelligible below this (the better of the CTC text match and the Whisper similarity; a wrong voice alone never drops a line) is left undubbed. |
 | `TAKE_MIN_SIMILARITY` / `TAKE_CHECK_DEVICE` / `TAKE_CHECK_THREADS` | `0.7` / `cpu` / all cores | Whisper similarity of `TAKE_CHECK=whisper`, its device (`auto` uses a GPU only with 8.5 GB free) and CPU threads. |
 
 ### 2.7 Series memory (Spec 006)
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SERIES_MEMORY` | `on` | Episodes of a series share settled name spellings and a voice bank in `DATA_DIR/series/<show>/`. |
+| `SERIES_MEMORY` | `on` | Episodes of a series share settled name spellings, subtitle terms and a voice bank in `DATA_DIR/series/<show>/`. |
 | `VOICE_MATCH_MIN` / `VOICE_BANK_CLIPS` | `0.6` / `5` | Voiceprint similarity from which a speaker is a known person; clips kept per person. |
+| `VOICE_BANK_CLASS_CLIPS` | `2` | Bank clips kept per energy class (with `EMOTION_REFS`). |
 
 ## 3. GPU Resource Management
 -   **Lazy loading:** Demucs, pyannote and Whisper are loaded for their stage and unloaded right after it, so the LLM
