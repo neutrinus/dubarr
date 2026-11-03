@@ -604,8 +604,9 @@ class DubbingPipeline:
             self.voice_matches = self.series.match(self.voiceprints)
             diar, self.voiceprints, self.voice_matches = merge_matched_speakers(diar, self.voiceprints, self.voice_matches)
         fixed_glossary = self.series.glossary(self._glossary_key()) if self.series else {}
-        fixed_phonemes = fixed_glossary if GLOSSARY_MODE == "phonemes" else {}
-        if fixed_phonemes:
+        # Settled English phonemes: the TTS input in phonemes mode, what Polish respellings are checked against otherwise
+        fixed_phonemes = self.series.glossary("cmu") if self.series else {}
+        if GLOSSARY_MODE == "phonemes":
             fixed_glossary = {t: t for t in fixed_phonemes}
 
         script = self._create_script(diar, trans)
@@ -723,7 +724,9 @@ class DubbingPipeline:
             glossary = (ctx.get("phonemes") if GLOSSARY_MODE == "phonemes" else ctx.get("glossary")) or {}
             text = " ".join(s.get("text_en", "") for s in script).lower()
             used = [t for t in glossary if t.lower() in text]
-            self.series.save_glossary(self._glossary_key(), glossary, used)
+            self.series.save_glossary(self._glossary_key(), glossary, used, replace=ctx.get("glossary_replaced") or [])
+            if GLOSSARY_MODE != "phonemes" and ctx.get("name_phonemes"):
+                self.series.save_glossary("cmu", ctx["name_phonemes"], used)
         except Exception as e:
             logger.warning(f"Series memory: could not save the glossary ({e})")
         try:

@@ -390,7 +390,18 @@ class TestRememberSeries(unittest.TestCase):
         pipe.series = MagicMock()
         pipe.global_context = {"glossary": {"Razorback": "Rejzorbek", "Ice Wave": "Ajs Łejw"}}
         pipe._remember_series([{"text_en": "Razorback spins up."}])
-        pipe.series.save_glossary.assert_called_once_with("pl", pipe.global_context["glossary"], ["Razorback"])
+        pipe.series.save_glossary.assert_called_once_with("pl", pipe.global_context["glossary"], ["Razorback"], replace=[])
+
+        # The names' English phonemes are kept too, and a settled spelling that failed the check is replaced
+        pipe.series.reset_mock()
+        pipe.global_context = {
+            "glossary": {"Ice Wave": "Ajs Łejw"},
+            "name_phonemes": {"Ice Wave": "AY1 S W EY1 V"},
+            "glossary_replaced": ["Ice Wave"],
+        }
+        pipe._remember_series([{"text_en": "Ice Wave wins."}])
+        pipe.series.save_glossary.assert_any_call("pl", {"Ice Wave": "Ajs Łejw"}, ["Ice Wave"], replace=["Ice Wave"])
+        pipe.series.save_glossary.assert_any_call("cmu", {"Ice Wave": "AY1 S W EY1 V"}, ["Ice Wave"])
 
         pipe.series.save_glossary.side_effect = OSError("disk full")
         pipe._remember_series([])  # logged, not raised
@@ -429,3 +440,16 @@ class TestBankUpdate(unittest.TestCase):
         self.assertEqual(list(update), ["A"])
         self.assertEqual(update["A"]["clips"], [("ref_A.wav", 0.9)])
         self.assertEqual((update["A"]["person"], update["A"]["profile"]["name"]), ("V001", "Host"))
+
+
+class TestAuditionScore(unittest.TestCase):
+    def test_whisper_stands_in_for_a_missing_text_check(self):
+        pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        pipe.judge = MagicMock()
+        pipe.judge.judge.return_value = {"score": 1.0, "problem": None, "voice": None, "text_match": None}
+        pipe.synchronizer = MagicMock()
+        pipe.synchronizer._intelligibility.return_value = (0.1, "Wawianca 5,3,3")
+        self.assertEqual(pipe._audition_score("a.wav", "Po wielu długich godzinach w warsztacie", "pl", "ref.wav"), 0.1)
+
+        pipe.judge.judge.return_value = {"score": 0.8, "problem": None, "voice": 0.7, "text_match": 0.8}
+        self.assertEqual(pipe._audition_score("a.wav", "Po wielu długich godzinach w warsztacie", "pl", "ref.wav"), 0.8)

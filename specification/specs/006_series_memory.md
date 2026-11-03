@@ -27,7 +27,8 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
     names join the prompt as names that occur in this episode, so the corrector of the transcript can match a misheard
     name against them.
 3.  **Fixed entries.** Terms already in the memory are given to the analysis as fixed: the model must reuse them as they
-    are and only add new terms. Its answer cannot change a stored spelling.
+    are and only add new terms. Its answer cannot change a stored spelling; only the check by spelling rules (5)
+    can, when the stored spelling fails it.
 4.  **Reading test** for every new or changed spelling that differs from the term: a separate short LLM request gets
     only the spellings (not the terms) and writes, in English spelling, what an English speaker would hear when a
     native speaker of the target language reads each of them aloud. The answer is compared with the term
@@ -36,10 +37,22 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
     A spelling that loses or changes more than one consonant in six fails ("Rayorbeck" keeps `rrpk` of `rsrpk`): the
     model is asked for a new spelling of the failed terms, with the failed spelling and what it sounded like, at most
     twice. A term that still fails keeps its original spelling (the TTS reads it as written, which beats a wrong name).
-5.  Acronyms of up to 6 capitals (`S.T.C.W.R.`) skip the test. Only checked entries are stored. A stored entry counts
+5.  **Check by spelling rules** (Polish target): the LLM writes each name's English pronunciation in CMU ARPAbet
+    once (stored under the key `cmu`, shared with 7), and the respelling is read by Polish spelling rules: `w` is
+    V, `ł` is W, `sz`/`ś`/`si`+vowel SH, `cz`/`ć`/`ci`+vowel CH, `rz`/`ż`/`ź` ZH, `dż`/`dź`/`dzi` JH, `c` TS,
+    `ch`/`h` HH, `j` and the vowels no consonant. The consonants of both are aligned (voiced and voiceless pairs
+    folded, ER counts as R, TH and DH match T, F or S, a consonant the spelling adds costs little). A Polish `w`
+    standing for an English W becomes `ł` in place, and an `ł` for an English V becomes `w` ("Ajs Wejv" ->
+    "Ajs Łejv", "Worehed" -> "Łorehed"): the model wrote `w` for W in nearly every name of the first measured run,
+    and its own reading test passed them. Then one lost or changed consonant per six may remain, W read as V
+    never. A failed spelling is respelled as in 4, the respelling prompt carrying the Polish rules (English w is
+    `ł`, v is `w`, sh `sz`, ch `cz`, j `dż`, y `j`, th `t` or `f`) and what was lost. Stored spellings go through
+    this check too; one that changes or fails is replaced in the memory. Names without phonemes, and other target
+    languages, keep the LLM reading test of 4.
+6.  Acronyms of up to 6 capitals (`S.T.C.W.R.`) skip the test. Only checked entries are stored. A stored entry counts
     the episodes that used it.
 
-6.  **Phonemes instead** (`GLOSSARY_MODE=phonemes`, an experiment): the translation keeps the original names, the
+7.  **Phonemes instead** (`GLOSSARY_MODE=phonemes`, an experiment): the translation keeps the original names, the
     LLM writes each name's English pronunciation in CMU ARPAbet (`R EY1 Z ER0 B AE2 K`; answers with anything but
     ARPAbet tokens are dropped), and the TTS text gets the phonemes in brackets in place of the name, a Polish ending
     staying after them (`[R EY1 Z ER0 B AE2 K]owi`). OmniVoice documents bracketed CMU phonemes for English text

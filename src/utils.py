@@ -212,3 +212,151 @@ def apply_phonemes(text: str, phonemes: dict) -> str:
             continue
         text = re.sub(rf"(?<!\w){re.escape(name)}", lambda _m, a=arpabet: f"[{a}]", text, flags=re.IGNORECASE)
     return text
+
+
+# --- Glossary reading check by spelling rules (Spec 006, 3) ---
+
+# Polish spelling -> sounds (ARPAbet consonants), longest letter groups first; vowels give no consonant
+_PL_GROUPS = (
+    ("dzi", "JH"), ("dż", "JH"), ("dź", "JH"), ("dz", "Z"), ("sz", "SH"), ("rz", "ZH"), ("cz", "CH"), ("ch", "HH"),
+    ("si", "SH"), ("zi", "ZH"), ("ci", "CH"), ("ni", "N"),
+    ("ś", "SH"), ("ź", "ZH"), ("ż", "ZH"), ("ć", "CH"), ("ń", "N"), ("ł", "W"), ("w", "V"), ("v", "V"), ("c", "T S"),
+    ("h", "HH"), ("x", "K S"), ("q", "K"), ("ą", "N"),
+    ("b", "B"), ("p", "P"), ("d", "D"), ("t", "T"), ("g", "G"), ("k", "K"), ("f", "F"), ("s", "S"), ("z", "Z"),
+    ("m", "M"), ("n", "N"), ("l", "L"), ("r", "R"),
+)  # fmt: skip
+_PL_VOWELS = set("aeiouyóęj")  # "j" is the English "y", a glide the check ignores like the vowels
+
+# Sounds a listener does not tell apart in a name: voiced and voiceless pairs (Polish devoices word ends)
+_SOUND_CLASS = {"B": "P", "D": "T", "G": "K", "V": "F", "Z": "S", "ZH": "SH", "JH": "CH", "NG": "N", "ER": "R"}
+# English sounds Polish has no letters for: "th" is respelled as t, f, s or d
+_SOUND_ALSO = {"TH": {"T", "F", "S"}, "DH": {"T", "F", "S"}}
+
+
+def polish_reading(spelling: str):
+    """The consonant sounds of a Polish spelling as read aloud: [(ARPAbet sound, letter start, letter end)].
+
+    "Ajs Wejv" -> V and F where the English name has two W sounds; that is what the reading check catches.
+    """
+    text = (spelling or "").lower()
+    out, i = [], 0
+    while i < len(text):
+        ch = text[i]
+        if not ch.isalpha() or ch in _PL_VOWELS:
+            i += 1
+            continue
+        for group, sounds in _PL_GROUPS:
+            if text.startswith(group, i):
+                # "si", "ni" before a vowel are one soft consonant; before a consonant the "i" is a vowel
+                if group[-1] == "i" and len(group) > 1 and group not in ("dzi",):
+                    nxt = text[i + len(group)] if i + len(group) < len(text) else ""
+                    if nxt not in _PL_VOWELS or nxt in ("i", "j"):
+                        continue
+                for sound in sounds.split():
+                    out.append((sound, i, i + len(group)))
+                # the "i" of "si" + vowel only softens: the vowel after it is still read
+                i += len(group) - 1 if group[-1] == "i" and len(group) > 1 else len(group)
+                break
+        else:
+            i += 1  # a letter Polish does not read (foreign spelling): no sound
+    return out
+
+
+def english_consonants(arpabet: str):
+    """Consonant sounds of ARPAbet phonemes; "ER" (as in "Razor") counts as an R, "Y" is a glide like Polish "j"."""
+    out = []
+    for tok in (arpabet or "").upper().split():
+        base = tok.rstrip("012")
+        if base == "ER":
+            out.append("R")
+        elif base in ARPABET and base not in (
+            "AA",
+            "AE",
+            "AH",
+            "AO",
+            "AW",
+            "AY",
+            "EH",
+            "EY",
+            "IH",
+            "IY",
+            "OW",
+            "OY",
+            "UH",
+            "UW",
+            "Y",
+        ):
+            out.append(base)
+    return out
+
+
+def _same_sound(english: str, read: str) -> bool:
+    if english in _SOUND_ALSO:
+        return _SOUND_CLASS.get(read, read) in _SOUND_ALSO[english]
+    return _SOUND_CLASS.get(english, english) == _SOUND_CLASS.get(read, read)
+
+
+def _align_sounds(english, read):
+    """Edit alignment of two sound lists: [(op, english index, read index)], op in match/sub/del/ins.
+
+    A sound the spelling adds costs little (Polish spells "x" as "ks"); one it drops or changes costs a full step.
+    """
+    n, m = len(english), len(read)
+    INS = 0.3
+    cost = [[0.0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        cost[i][0] = float(i)
+    for j in range(1, m + 1):
+        cost[0][j] = j * INS
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            sub = 0.0 if _same_sound(english[i - 1], read[j - 1]) else 1.0
+            cost[i][j] = min(cost[i - 1][j - 1] + sub, cost[i - 1][j] + 1.0, cost[i][j - 1] + INS)
+    ops, i, j = [], n, m
+    while i > 0 or j > 0:
+        if i > 0 and j > 0:
+            sub = 0.0 if _same_sound(english[i - 1], read[j - 1]) else 1.0
+            if cost[i][j] == cost[i - 1][j - 1] + sub:
+                ops.append(("match" if sub == 0 else "sub", i - 1, j - 1))
+                i, j = i - 1, j - 1
+                continue
+        if i > 0 and cost[i][j] == cost[i - 1][j] + 1.0:
+            ops.append(("del", i - 1, None))
+            i -= 1
+        else:
+            ops.append(("ins", None, j - 1))
+            j -= 1
+    return list(reversed(ops))
+
+
+def check_polish_spelling(spelling: str, arpabet: str):
+    """Whether a Polish respelling, read by Polish rules, keeps the consonants of the name's English phonemes.
+
+    Returns (ok, fixed spelling, what is lost). A Polish "w" where English has W, or "ł" where it has V, is changed
+    in place ("Ajs Wejv" -> "Ajs Łejw"), the one mistake models make every time. Of the other consonants one may
+    be lost or changed per 6; a W read as V never passes (the name would sound like another word).
+    """
+    english = english_consonants(arpabet)
+    if not english:
+        return True, spelling, ""
+    letters = list(spelling)
+    for op, ei, ri in _align_sounds(english, [s for s, _a, _b in polish_reading(spelling)]):
+        if op != "sub":
+            continue
+        sound, start, end = polish_reading("".join(letters))[ri]
+        word = "".join(letters[start:end])
+        if english[ei] == "W" and word.lower() == "w":
+            letters[start] = "Ł" if word.isupper() else "ł"
+        elif english[ei] == "V" and word.lower() == "ł":
+            letters[start] = "W" if word.isupper() else "w"
+    fixed = "".join(letters)
+    read = [s for s, _a, _b in polish_reading(fixed)]
+    lost = [
+        (english[ei], read[ri] if ri is not None else "-")
+        for op, ei, ri in _align_sounds(english, read)
+        if op in ("sub", "del")
+    ]
+    hard = any(e in ("W", "V") and r in ("W", "V") and e != r for e, r in lost)
+    ok = not hard and len(lost) <= len(english) // 6
+    lost_text = ", ".join(f"{e} read as {r}" if r != "-" else f"{e} missing" for e, r in lost)
+    return ok, fixed, lost_text

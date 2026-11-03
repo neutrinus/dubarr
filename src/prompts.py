@@ -17,6 +17,8 @@ Analyze the movie script provided by the user. Return A SINGLE JSON object conta
 2. 'glossary': A dictionary of the names and brands that keep their original sound (people, robots, teams, shows),
    each with a PHONETIC SPELLING in the target language(s) ({langs}) that a native speaker reads aloud as the original.
    - Example (for Polish): 'James' -> 'Dżejms', 'Razorback' -> 'Rejzorbek', 'Hyneman' -> 'Hajneman'.
+   - In Polish the English "w" is written "ł" and the English "v" is written "w": 'Warhead' -> 'Łorhed',
+     'Ice Wave' -> 'Ajs Łejw', 'Beaver' -> 'Biwer'. A Polish "w" is read as "v".
    - Keep EVERY consonant sound of the original: a spelling that drops one names something else.
    - This is crucial for the TTS engine to pronounce them correctly. Words that are translated do not belong here.
    - Include the entries of the FIXED GLOSSARY that occur in the script, unchanged.
@@ -58,10 +60,17 @@ INPUT (JSON): "names", each with "id", "name" (the original name), "spelling" (a
 
 TASK: For each name, write a new {lang_name} phonetic spelling that a native speaker reads aloud as the ORIGINAL
 name. Keep every consonant sound of the original; fix what "sounds_like" shows is lost or wrong.
+{rules}
 
 OUTPUT FORMAT (JSON):
 {{"spellings": [{{"id": 0, "spelling": "..."}}]}}
 """
+
+# Spelling rules the respelling prompt adds for a target language (keyed by LANG_MAP name)
+RESPELL_RULES = {
+    "Polish": 'Polish spelling: English "w" is "ł" (Warhead -> Łorhed), English "v" is "w", "sh" is "sz", "ch" is "cz", '
+    '"j" is "dż", "y" is "j", "th" is "t" or "f".',
+}
 
 T_GLOSSARY_CMU = """You write English pronunciations for a text-to-speech voice in CMU dictionary notation (ARPAbet).
 

@@ -6,7 +6,7 @@ import threading
 import gc
 import re
 from typing import List, Dict, Optional, Any
-from utils import parse_json, clean_output, count_syllables, respelling_heard_as, clean_arpabet
+from utils import parse_json, clean_output, count_syllables, respelling_heard_as, clean_arpabet, check_polish_spelling
 from prompts import (
     T_ANALYSIS,
     T_ED,
@@ -16,6 +16,7 @@ from prompts import (
     T_GLOSSARY_READ,
     T_GLOSSARY_RESPELL,
     T_GLOSSARY_CMU,
+    RESPELL_RULES,
 )
 from config import (
     LANG_MAP,
@@ -353,7 +354,20 @@ class LLMManager:
             global_context["glossary"] = names_only
             global_context["phonemes"] = self.glossary_phonemes(list(names_only), fixed_phonemes)
         else:
-            global_context["glossary"] = self.check_glossary(glossary, fixed_glossary)
+            # Polish respellings are checked by spelling rules against the names' English phonemes (Spec 006, 3)
+            name_phonemes = {}
+            if self.target_langs and self.target_langs[0] == "pl":
+                spellings = {
+                    str(t): str(sp) for t, sp in {**glossary, **fixed_glossary}.items() if isinstance(sp, (str, int, float))
+                }
+                terms = [t for t, sp in spellings.items() if sp.strip() != t.strip() and not (t.isupper() and len(t) <= 6)]
+                name_phonemes = self.glossary_phonemes(terms, fixed_phonemes) if terms else {}
+            replaced: set = set()
+            global_context["glossary"] = self.check_glossary(
+                glossary, fixed_glossary, phonemes=name_phonemes, replaced=replaced
+            )
+            global_context["name_phonemes"] = name_phonemes
+            global_context["glossary_replaced"] = sorted(replaced)
 
         # 2. ASR Correction
         logging.info("LLM: Starting ASR Correction (Editor)")
@@ -423,7 +437,10 @@ class LLMManager:
     def _respell(self, failed: List[Dict], lang_name: str) -> Dict[str, str]:
         res = self._run_inference(
             [
-                {"role": "system", "content": T_GLOSSARY_RESPELL.format(lang_name=lang_name)},
+                {
+                    "role": "system",
+                    "content": T_GLOSSARY_RESPELL.format(lang_name=lang_name, rules=RESPELL_RULES.get(lang_name, "")),
+                },
                 {"role": "user", "content": json.dumps({"names": failed}, ensure_ascii=False)},
             ],
             priority=2,
@@ -437,40 +454,75 @@ class LLMManager:
                 continue
         return out
 
-    def check_glossary(self, glossary: Dict, fixed: Optional[Dict[str, str]] = None, rounds: int = 2) -> Dict[str, str]:
-        """Settled spellings stay; every new respelling must pass the reading test (Spec 006, 3).
+    def check_glossary(
+        self,
+        glossary: Dict,
+        fixed: Optional[Dict[str, str]] = None,
+        rounds: int = 2,
+        phonemes: Optional[Dict[str, str]] = None,
+        replaced: Optional[set] = None,
+    ) -> Dict[str, str]:
+        """Every respelling must pass the reading check; settled ones too when they can be checked (Spec 006, 3).
 
-        A respelling is read back by the model as English and must keep the term's consonants ("Rej-or-bek" is heard
-        as "Rayorbeck" and loses the "z" of "Razorback"). A failed one is respelled up to ``rounds`` times; a term that
-        still fails keeps its original spelling, which the TTS reads as written.
+        With the name's English phonemes (``phonemes``) and Polish as the target, the respelling is read by Polish
+        spelling rules and must keep the consonants of the phonemes; a "w" where English has W becomes "ł" in place.
+        Otherwise the model reads it back as English and that must keep the term's consonants ("Rej-or-bek" is heard
+        as "Rayorbeck" and loses the "z" of "Razorback"). A failed respelling is respelled up to ``rounds`` times; a
+        term that still fails keeps its original spelling, which the TTS reads as written. Settled spellings are
+        only checked by rules: one that fails is replaced, and its term is added to ``replaced``.
         """
         fixed = fixed or {}
+        phonemes = phonemes or {}
+        replaced = replaced if replaced is not None else set()
         result = {str(k): str(v) for k, v in glossary.items() if isinstance(v, (str, int, float)) and str(v).strip()}
         result.update(fixed)  # a stored spelling cannot be changed by the analysis
-        lang_name = LANG_MAP.get(self.target_langs[0], self.target_langs[0]) if self.target_langs else "target language"
-        pending = {
-            t: sp
-            for t, sp in result.items()
-            if t not in fixed and sp.strip() != t.strip() and not (t.isupper() and len(t.replace(".", "")) <= 6)
-        }
+        lang = self.target_langs[0] if self.target_langs else ""
+        lang_name = LANG_MAP.get(lang, lang) or "target language"
+        by_rules = lang == "pl"
+
+        def checkable(t, sp):
+            return sp.strip() != t.strip() and not (t.isupper() and len(t.replace(".", "")) <= 6)
+
+        def by_rule(term):
+            return by_rules and term in phonemes
+
+        pending = {t: sp for t, sp in result.items() if checkable(t, sp) and (t not in fixed or by_rule(t))}
         if MOCK_MODE or not pending:
             return result
         for attempt in range(rounds + 1):
-            terms = list(pending)
-            heard = self._hear_spellings([pending[t] for t in terms], lang_name)
             failed = []
-            for term, sounds in zip(terms, heard):
-                if sounds and respelling_heard_as(term, sounds):
-                    result[term] = pending.pop(term)
+            heard_terms = [t for t in pending if not by_rule(t)]
+            heard = (
+                dict(zip(heard_terms, self._hear_spellings([pending[t] for t in heard_terms], lang_name)))
+                if heard_terms
+                else {}
+            )
+            for term in list(pending):
+                spelling = pending[term]
+                if by_rule(term):
+                    ok, spelling, lost = check_polish_spelling(spelling, phonemes[term])
+                    if spelling != pending[term]:
+                        logging.info(f"Glossary: '{pending[term]}' -> '{spelling}' for '{term}' (a Polish w is read as v)")
+                    sounds = f"read in {lang_name}: {lost}; the name is {phonemes[term]}"
+                else:
+                    sounds = heard.get(term, "")
+                    ok = bool(sounds) and respelling_heard_as(term, sounds)
+                if ok:
+                    pending.pop(term)
+                    if term in fixed and spelling != fixed[term]:
+                        replaced.add(term)
+                    result[term] = spelling
                     continue
-                logging.info(f"Glossary: '{pending[term]}' for '{term}' sounds like '{sounds}', rejected")
-                failed.append({"id": len(failed), "name": term, "spelling": pending[term], "sounds_like": sounds})
+                logging.info(f"Glossary: '{spelling}' for '{term}' sounds like '{sounds}', rejected")
+                failed.append({"id": len(failed), "name": term, "spelling": spelling, "sounds_like": sounds})
             if not failed:
                 break
             if attempt == rounds:
                 for f in failed:
                     logging.info(f"Glossary: keeping the original spelling of '{f['name']}'")
                     result[f["name"]] = f["name"]
+                    if f["name"] in fixed:
+                        replaced.add(f["name"])
                 break
             for term, spelling in self._respell(failed, lang_name).items():
                 if spelling:

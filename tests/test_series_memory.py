@@ -127,3 +127,12 @@ class TestVoiceBank(unittest.TestCase):
         self.assertEqual(matches, {"SPEAKER_01": "V001"})
         self.assertEqual(prints["SPEAKER_01"], [0.9, 0.1])
         self.assertIn("SPEAKER_03", prints)
+
+
+def test_a_spelling_that_failed_the_check_is_replaced(tmp_path):
+    from core.series_memory import SeriesMemory
+
+    mem = SeriesMemory("battlebots", root=str(tmp_path))
+    mem.save_glossary("pl", {"Warhead": "Worehed", "Razorback": "Rejzorbek"})
+    mem.save_glossary("pl", {"Warhead": "Łorhed", "Razorback": "Rej-zor-bek"}, replace=["Warhead"])
+    assert mem.glossary("pl") == {"Warhead": "Łorhed", "Razorback": "Rejzorbek"}
