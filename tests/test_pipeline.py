@@ -211,7 +211,8 @@ class TestDubbingPipeline(unittest.TestCase):
             refs = self.pipeline._extract_refs(script, "vocals.wav", "/tmp/ddir")
 
         self.assertEqual(list(refs.keys()), ["A"])
-        self.assertTrue(refs["A"].endswith("ref_A.wav"))
+        self.assertEqual(len(refs["A"]), 1)
+        self.assertTrue(refs["A"][0].endswith("ref_A.wav"))
         self.assertIs(refs, self.pipeline.speaker_refs)
         with open(os.path.join(self.pipeline.temp_dir, "ref_A.txt"), encoding="utf-8") as f:
             self.assertEqual(f.read(), script[0]["text_en"])
@@ -234,6 +235,25 @@ class TestDubbingPipeline(unittest.TestCase):
 
         with open(os.path.join(self.pipeline.temp_dir, "ref_A.txt"), encoding="utf-8") as f:
             self.assertEqual(f.read(), script[1]["text_en"])
+        # The noisy line stays as a lower candidate for the voice audition
+        with open(os.path.join(self.pipeline.temp_dir, "ref_A_2.txt"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), script[0]["text_en"])
+        shutil.rmtree(self.pipeline.temp_dir)
+
+    def test_extract_refs_keeps_up_to_the_audition_candidates(self):
+        script = [
+            {"speaker": "A", "start": 10.0 + 10 * n, "end": 18.0 + 10 * n, "text_en": f"Line number {n} of a calm talk here"}
+            for n in range(5)
+        ]
+        self.pipeline.temp_dir = tempfile.mkdtemp()
+        with (
+            patch("core.pipeline.run_cmd"),
+            patch("core.pipeline.measure_zcr", return_value=0.05),
+            patch("core.pipeline.shutil.move"),
+            patch("core.pipeline.REF_AUDITION_CANDIDATES", 3),
+        ):
+            refs = self.pipeline._extract_refs(script, "vocals.wav", "/tmp/ddir")
+        self.assertEqual([os.path.basename(p) for p in refs["A"]], ["ref_A.wav", "ref_A_2.wav", "ref_A_3.wav"])
         shutil.rmtree(self.pipeline.temp_dir)
 
     def test_extract_refs_keeps_the_speakers_own_voice_when_every_clip_is_noisy(self):
@@ -259,6 +279,44 @@ class TestDubbingPipeline(unittest.TestCase):
         # The second tested clip had the lower ZCR
         self.assertIn("test_A_30.0", move.call_args.args[0])
         shutil.rmtree(self.pipeline.temp_dir)
+
+
+class TestVoiceAuditionStep(unittest.TestCase):
+    def build(self, mode):
+        with patch("core.pipeline.TAKE_CHECK", mode):
+            return DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+
+    def test_take_check_modes(self):
+        on, audition, off = self.build("on"), self.build("audition"), self.build("off")
+        self.assertIsNotNone(on.synchronizer.take_checker)
+        self.assertIsNone(audition.synchronizer.take_checker)
+        self.assertIsNotNone(audition.take_checker)
+        self.assertIsNone(off.take_checker)
+
+    def test_audition_ranks_references_before_production(self):
+        pipeline = self.build("audition")
+        scores = {"A": {"a.wav": 0.9}}
+        with patch("core.pipeline.MOCK_MODE", False), patch("core.pipeline.audition_voices", return_value=scores) as run:
+            pipeline._audition_voices({"pl": [{"speaker": "A", "text": "x"}]})
+        self.assertEqual(run.call_args.args[3], "pl")
+        pipeline.tts_manager.apply_audition.assert_called_once_with(scores, 0.8)
+
+    def test_no_audition_when_the_take_check_is_off(self):
+        pipeline = self.build("off")
+        with patch("core.pipeline.MOCK_MODE", False), patch("core.pipeline.audition_voices") as run:
+            pipeline._audition_voices({"pl": []})
+        run.assert_not_called()
+
+
+class TestTakeCheckMode(unittest.TestCase):
+    def test_values(self):
+        from config import _take_check_mode
+
+        self.assertEqual(_take_check_mode("on"), "on")
+        self.assertEqual(_take_check_mode("1"), "on")
+        self.assertEqual(_take_check_mode("Audition"), "audition")
+        self.assertEqual(_take_check_mode("off"), "off")
+        self.assertEqual(_take_check_mode("false"), "off")
 
 
 if __name__ == "__main__":

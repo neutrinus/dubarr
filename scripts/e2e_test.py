@@ -182,6 +182,8 @@ def main():
         for label, pattern in [
             ("segments accepted", r"\] ACCEPTED"),
             ("segments in fallback", r"_FALLBACK: Selection"),
+            ("segments dropped (gibberish on every voice)", r"\] DROPPED"),
+            ("takes broken and synthesized again", r"(?:UNINTELLIGIBLE|SWALLOWED|MISSING) take"),
             ("segments failed", r"failed completely|TIMED OUT|All synthesis attempts failed"),
             ("draft batches with untranslated lines", r"translation for lines|Draft generation failed"),
         ]:

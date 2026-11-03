@@ -142,8 +142,19 @@ class TestTTSManager(unittest.TestCase):
     def test_set_speaker_refs_resets_last_good(self):
         self.manager.last_good_samples["SPK1"] = "old.wav"
         self.manager.set_speaker_refs({"SPK3": "ref_SPK3.wav"})
-        self.assertEqual(self.manager.speaker_refs, {"SPK3": "ref_SPK3.wav"})
+        self.assertEqual(self.manager.speaker_refs, {"SPK3": ["ref_SPK3.wav"]})
         self.assertEqual(self.manager.last_good_samples, {})
+
+    def test_synthesize_item_reports_the_reference_of_a_missing_take(self):
+        item = {"speaker": "SPK1", "index": 0, "text": "Hello", "start": 0, "end": 2}
+        with (
+            patch.object(self.manager, "_select_reference", return_value=("ref.wav", "GOLDEN")),
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=100),
+        ):
+            res = self.manager.synthesize_sync(item, "pl", "vocals.wav", [])
+        self.assertIsNone(res["audio_path"])
+        self.assertEqual(res["ref"], "ref.wav")
 
     def test_synthesize_item_success(self):
         item = {"speaker": "SPK1", "index": 0, "text": "Hello", "start": 0, "end": 2}
@@ -166,6 +177,66 @@ class TestTTSManager(unittest.TestCase):
             res = self.manager.synthesize_sync(item, "en", "vocals.wav", [])
             self.assertEqual(res["audio_path"], "out.wav")
             self.assertEqual(res["voice_type"], "GOLDEN")
+
+
+class TestReferenceOrder(unittest.TestCase):
+    """Spec 002, 2.3: own references by audition score, then a same-gender voice, never a broken clone first."""
+
+    def setUp(self):
+        self.manager = TTSManager(inference_lock=None, temp_dir="/tmp/tts_test", speaker_refs={}, abort_event=MagicMock())
+        self.manager.set_speaker_refs(
+            {
+                "ANNOUNCER": ["ann1.wav", "ann2.wav", "ann3.wav"],
+                "HOST": ["host1.wav"],
+                "EXPERT": ["exp1.wav"],
+            },
+            {"ANNOUNCER": "male", "HOST": "female", "EXPERT": "male"},
+        )
+        self.exists = patch("os.path.exists", return_value=True)
+        self.exists.start()
+
+    def tearDown(self):
+        self.exists.stop()
+
+    def pick(self, speaker="ANNOUNCER", skip=(), end=12.0):
+        item = {"speaker": speaker, "index": 7, "start": 0.0, "end": end}
+        return self.manager._select_reference(item, "vocals.wav", "pl", skip=skip)
+
+    def test_audition_ranks_the_candidates(self):
+        self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.6, "ann2.wav": 0.95, "ann3.wav": 0.7}}, 0.8)
+        self.assertEqual(self.manager.speaker_refs["ANNOUNCER"], ["ann2.wav", "ann3.wav", "ann1.wav"])
+        self.assertEqual(self.pick(), ("ann2.wav", "GOLDEN"))
+        self.assertEqual(self.pick(skip={"ann2.wav"}), ("ann3.wav", "GOLDEN"))
+        self.assertNotIn("ANNOUNCER", self.manager.line_refs_off)
+
+    def test_a_badly_cloning_voice_borrows_a_same_gender_one(self):
+        self.manager.apply_audition(
+            {"ANNOUNCER": {"ann1.wav": 0.2, "ann2.wav": 0.3, "ann3.wav": 0.1}, "HOST": {"host1.wav": 0.99}}, 0.8
+        )
+        # Never the female host for the male announcer while a male voice exists
+        self.assertEqual(self.pick(), ("exp1.wav", "BORROWED"))
+        self.assertEqual(self.pick(skip={"exp1.wav"}), ("ann2.wav", "GOLDEN"))
+        self.assertIn("ANNOUNCER", self.manager.line_refs_off)
+
+    def test_weak_speaker_skips_line_clips(self):
+        self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.7}}, 0.8)
+        with patch.object(self.manager, "_extract_line_ref") as line_ref:
+            self.assertEqual(self.pick(end=5.0), ("ann1.wav", "GOLDEN"))
+        line_ref.assert_not_called()
+
+    def test_fallback_after_own_references_keeps_the_gender(self):
+        tried = {"ann1.wav", "ann2.wav", "ann3.wav"}
+        self.assertEqual(self.pick(skip=tried), ("exp1.wav", "BORROWED"))
+        self.assertEqual(self.pick(skip=tried | {"exp1.wav"}), ("host1.wav", "FALLBACK_GOLDEN"))
+
+    def test_without_audition_the_stage4_order_is_kept(self):
+        self.assertEqual(self.pick(), ("ann1.wav", "GOLDEN"))
+
+    def test_set_speaker_refs_forgets_the_previous_audition(self):
+        self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.1}}, 0.8)
+        self.manager.set_speaker_refs({"ANNOUNCER": "a.wav"})
+        self.assertEqual(self.manager.audition, {})
+        self.assertEqual(self.manager.line_refs_off, set())
 
 
 class TestTTSDeviceSelection(unittest.TestCase):

@@ -5,6 +5,7 @@ import wave
 from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
 from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND, TAKE_MIN_SIMILARITY
+from config import TAKE_DROP_SIMILARITY
 from utils import count_syllables, text_similarity
 from duration_policy import MAX_SPEEDUP as TTS_MAX_SPEEDUP
 
@@ -43,12 +44,34 @@ class SegmentSynchronizer:
             return None
         return text_similarity(text, heard), heard
 
+    def _judge(self, text: str, result: Dict, lang: str):
+        """(result, duration, None) for a sound take, or (result, duration, (score, problem)) for a broken one.
+
+        Higher scores are less broken: a missing take scores -2, a swallowed one -1, an unintelligible one its similarity.
+        """
+        if not result.get("audio_path"):
+            return result, 0.0, (-2.0, "MISSING take (no audio from the TTS)")
+        try:
+            duration = FFmpegWrapper.get_duration(result["audio_path"])
+        except Exception:
+            duration = result["duration"]
+        if self.is_swallowed(text, duration, lang):
+            return result, duration, (-1.0, f"SWALLOWED take ({duration:.2f}s for '{text[:40]}')")
+        # Interjections ("Wow.", "O!") are spelled too freely by the ASR to compare
+        check = self._intelligibility(text, result["audio_path"], lang) if count_syllables(text, lang) >= 4 else None
+        if check is None:
+            return result, duration, None
+        result = dict(result, similarity=round(check[0], 2), heard=check[1])
+        if check[0] >= TAKE_MIN_SIMILARITY:
+            return result, duration, None
+        return result, duration, (check[0], f"UNINTELLIGIBLE take (similarity {check[0]:.2f}, heard '{check[1][:60]}')")
+
     def _synthesize_sound(self, tts_item: Dict, lang: str, vocals_path: str, full_script: List[Dict]):
         """Synthesizes a take and re-synthesizes it with other references while it comes out broken.
 
-        Broken means swallowed (far too short for its text) or unintelligible (the ASR hears something else: noise,
-        screams, mangled words). Returns (result, duration, broken) or None when synthesis failed; when every reference
-        gives a broken take, the least broken one is returned.
+        Broken means missing (no audio), swallowed (far too short for its text) or unintelligible (the ASR hears
+        something else: noise, screams, mangled words). Returns (result, duration, broken) or None when synthesis
+        failed; when every reference gives a broken take, the least broken one is returned.
         """
         idx = tts_item["index"]
         text = tts_item["text"]
@@ -59,23 +82,10 @@ class SegmentSynchronizer:
             result = self.tts.synthesize_sync(item, lang, vocals_path, full_script)
             if not result:
                 return best[1] if best else None
-            try:
-                duration = FFmpegWrapper.get_duration(result["audio_path"])
-            except Exception:
-                duration = result["duration"]
-
-            if self.is_swallowed(text, duration, lang):
-                score = -1.0
-                problem = f"SWALLOWED take ({duration:.2f}s for '{text[:40]}')"
-            else:
-                # Interjections ("Wow.", "O!") are spelled too freely by the ASR to compare
-                check = self._intelligibility(text, result["audio_path"], lang) if count_syllables(text, lang) >= 4 else None
-                if check is not None:
-                    result = dict(result, similarity=round(check[0], 2), heard=check[1])
-                if check is None or check[0] >= TAKE_MIN_SIMILARITY:
-                    return result, duration, False
-                score = check[0]
-                problem = f"UNINTELLIGIBLE take (similarity {check[0]:.2f}, heard '{check[1][:60]}')"
+            result, duration, problem = self._judge(text, result, lang)
+            if problem is None:
+                return result, duration, False
+            score, problem = problem
 
             if retry < SWALLOW_RETRIES:
                 logger.warning(
@@ -85,12 +95,12 @@ class SegmentSynchronizer:
                 logger.warning(f"[ID: {idx}] {problem}, no voice reference left")
             # Skip what was used: the line clip as a whole, any other reference by its path
             skip.append("DYNAMIC" if result.get("voice_type") == "DYNAMIC" else result.get("ref") or "")
-            if best is None or score > best[0]:
+            if result.get("audio_path") and (best is None or score > best[0]):
                 # The take file is rewritten by the next call; keep the least broken one as the last resort
                 kept = os.path.join(self.temp_dir, f"broken_{lang}_{idx}_{retry}.wav")
                 shutil.copy(result["audio_path"], kept)
                 best = (score, (dict(result, audio_path=kept), duration, True))
-        return best[1]
+        return best[1] if best else None
 
     @staticmethod
     def _miss(estimate: float, speech: float, limit: float) -> float:
@@ -297,6 +307,18 @@ class SegmentSynchronizer:
                 "final_text": segment.get("text_en", "..."),
                 "duration": speech_dur,
                 "status": "FAILED_FALLBACK",
+            }
+
+        # Every take broken beyond use (gibberish, screams, silence): leave the original audible (Spec 002, 2.2 step 8)
+        if all(a["broken"] for a in attempts) and max(a.get("similarity") or 0.0 for a in attempts) < TAKE_DROP_SIMILARITY:
+            logger.warning(f"[ID: {idx}] DROPPED: every take was broken, the original stays audible")
+            self._cleanup(attempts, None)
+            return {
+                "audio_path": None,
+                "final_text": attempts[-1]["text"],
+                "duration": 0.0,
+                "status": "DROPPED",
+                **self._report_fields(max(attempts, key=lambda a: a.get("similarity") or 0.0), len(attempts)),
             }
 
         # Final selection: sound takes first; among those that fit the limit, the one closest to the target
