@@ -20,6 +20,13 @@ class TestFFmpeg(unittest.TestCase):
         mock_check_output.assert_called_once()
 
     @patch("subprocess.run")
+    def test_mean_volume(self, mock_run):
+        mock_run.return_value.stderr = "[Parsed_volumedetect_0] mean_volume: -23.4 dB\n[...] max_volume: -3.0 dB"
+        self.assertEqual(FFmpegWrapper.mean_volume("a.mp3", 1.0, 2.0), -23.4)
+        mock_run.return_value.stderr = "[Parsed_volumedetect_0] mean_volume: -inf dB"
+        self.assertIsNone(FFmpegWrapper.mean_volume("a.mp3", 1.0, 2.0))
+
+    @patch("subprocess.run")
     def test_convert_audio(self, mock_run):
         FFmpegWrapper.convert_audio("in.wav", "out.wav", ac=1, ar=24000)
         mock_run.assert_called_once()

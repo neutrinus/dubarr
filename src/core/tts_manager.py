@@ -9,7 +9,7 @@ import subprocess
 from typing import List, Dict, Optional, Any, Tuple
 from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
 from utils import measure_zcr, count_syllables
-from config import MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS
+from config import MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS, REF_MIN_CLARITY_DB
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
 
@@ -374,7 +374,14 @@ class TTSManager:
         audio_processor.extract_clean_segment(vocals_path, item["start"], item["end"], dyn_path)
         zcr = measure_zcr(dyn_path)
 
-        if os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25:
+        clean = os.path.exists(dyn_path) and os.path.getsize(dyn_path) > 4000 and zcr < 0.25
+        if clean:
+            # A line shouted over a cheering crowd would be cloned with the crowd (Spec 002, 2.3)
+            clarity = audio_processor.clarity_db(vocals_path, item["start"], item["end"])
+            if clarity is not None and clarity < REF_MIN_CLARITY_DB:
+                logging.info(f"TTS: [ID: {item['index']}] Line clip too noisy as a reference ({clarity:.1f} dB)")
+                clean = False
+        if clean:
             write_ref_text(dyn_path, item.get("source_text", ""))
             # Update Last Good Sample
             last_good_path = os.path.join(self.temp_dir, f"last_good_{lang}_{spk}.wav")

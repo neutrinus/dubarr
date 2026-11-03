@@ -44,6 +44,21 @@ class TestTTSManager(unittest.TestCase):
             self.assertEqual(ref, "golden.wav")
             mock_extract.assert_not_called()
 
+    def test_noisy_line_clip_falls_back_to_golden(self):
+        dyn_path = os.path.join(self.temp_dir, "dyn__0.wav")
+        with (
+            patch("core.tts_manager.audio_processor.extract_clean_segment"),
+            patch("core.tts_manager.audio_processor.clarity_db", return_value=1.5),
+            patch("core.tts_manager.measure_zcr", return_value=0.1),
+            patch("os.path.getsize", return_value=10000),
+            patch("os.path.exists", side_effect=lambda p: p in (dyn_path, "golden.wav")),
+            patch("os.remove"),
+        ):
+            ref, voice_type = self.manager._select_reference(
+                {"speaker": "SPK1", "index": 0, "start": 0, "end": 5}, "vocals.wav"
+            )
+        self.assertEqual((ref, voice_type), ("golden.wav", "GOLDEN"))
+
     def test_select_reference_dynamic_without_golden(self):
         dyn_path = os.path.join(self.temp_dir, "dyn__0.wav")
         with (

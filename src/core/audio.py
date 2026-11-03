@@ -3,7 +3,7 @@ import glob
 import logging
 import shutil
 import time
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional, Tuple
 from config import TEMP_DIR, MOCK_MODE, ASR_SOURCE
 from infrastructure.ffmpeg import FFmpegWrapper
 from core.gpu_manager import GPUManager
@@ -199,6 +199,24 @@ def get_audio_languages(vpath: str) -> List[str]:
         return langs
     except Exception:
         return []
+
+
+def clarity_db(vocals_path: str, start: float, end: float) -> Optional[float]:
+    """How much louder the separated voice is than the rest of the mix in a span (dB); None without the stems.
+
+    Demucs writes ``no_vocals`` next to ``vocals``. A low value means crowd, engines or music as loud as the speaker:
+    a poor voice reference, because OmniVoice clones the noise as well (Spec 001, 2.4).
+    """
+    other = os.path.join(os.path.dirname(vocals_path), "no_vocals" + os.path.splitext(vocals_path)[1])
+    if end <= start or not os.path.exists(vocals_path) or not os.path.exists(other):
+        return None
+    voice = FFmpegWrapper.mean_volume(vocals_path, start, end - start)
+    rest = FFmpegWrapper.mean_volume(other, start, end - start)
+    if voice is None:
+        return None
+    if rest is None:  # digital silence under the voice
+        return 60.0
+    return voice - rest
 
 
 def extract_clean_segment(input_path: str, start: float, end: float, output_path: str):
