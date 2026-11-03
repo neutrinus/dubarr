@@ -44,6 +44,10 @@ print(f"DEBUG: config.OUTPUT_FOLDER={OUTPUT_FOLDER}", flush=True)
 print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
+# Second transcription pass without VAD over the gaps the first pass left (commentary under arena noise, which VAD
+# drops); only confident, non-hallucinated segments are kept (Spec 001, 2.2).
+ASR_GAP_PASS = os.environ.get("ASR_GAP_PASS", "on").lower() not in ("0", "off", "false", "no")
+ASR_GAP_MIN = float(os.environ.get("ASR_GAP_MIN", "2.0"))
 
 # Seconds per TTS request (raise it on CPU, synthesis is slow there)
 TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))

@@ -131,6 +131,7 @@ why the image used to need separate venvs.
 | `API_USER` / `API_PASS` | `dubarr` / `dubarr` | Basic auth for `/webhook`, `/upload`, `/download`, `/debug`. |
 | `PUID` / `PGID` | `1000` | Container user, handled by `entrypoint.sh`. |
 | `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
+| `ASR_GAP_PASS` / `ASR_GAP_MIN` | `on` / `2.0` | Second Whisper pass without VAD over gaps of at least this length (speech under noise); only confident segments are kept. |
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |
 | `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |
 | `LLM_API_MODEL` / `LLM_API_KEY` / `LLM_TIMEOUT` | none / none / `600` | Model name, key and per-request timeout for that server. |
