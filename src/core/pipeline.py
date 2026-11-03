@@ -20,7 +20,7 @@ from config import (
     REF_AUDITION_CANDIDATES,
     AUDITION_LINE_REF_MIN,
 )
-from config import VOICE_DESIGN
+from config import VOICE_DESIGN, GLOSSARY_MODE
 from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
@@ -603,7 +603,10 @@ class DubbingPipeline:
         if self.series and self.voiceprints:
             self.voice_matches = self.series.match(self.voiceprints)
             diar, self.voiceprints, self.voice_matches = merge_matched_speakers(diar, self.voiceprints, self.voice_matches)
-        fixed_glossary = self.series.glossary(SeriesMemory.lang_key(self.target_langs)) if self.series else {}
+        fixed_glossary = self.series.glossary(self._glossary_key()) if self.series else {}
+        fixed_phonemes = fixed_glossary if GLOSSARY_MODE == "phonemes" else {}
+        if fixed_phonemes:
+            fixed_glossary = {t: t for t in fixed_phonemes}
 
         script = self._create_script(diar, trans)
         if self.debug_mode:
@@ -626,6 +629,7 @@ class DubbingPipeline:
             media_text,
             fixed_glossary,
             episode_names(media_info),
+            fixed_phonemes,
         )
         self.global_context = analysis_results["context"]
         if media_info:
@@ -648,6 +652,7 @@ class DubbingPipeline:
                 logger.info(f"Series memory: {spk} gets {len(bank)} reference clips of {pid} from earlier episodes")
         genders = {spk: (info or {}).get("gender", "") for spk, info in (self.speaker_info or {}).items()}
         self.tts_manager.set_speaker_refs(self.speaker_refs, genders)
+        self.tts_manager.phonemes = self.global_context.get("phonemes") or {}
 
         # 5. Production (Per Language / Global Task Pool)
         # Initialize GPU RPC Services
@@ -714,16 +719,21 @@ class DubbingPipeline:
         if not getattr(self, "series", None):
             return
         try:
-            glossary = (self.global_context or {}).get("glossary") or {}
+            ctx = self.global_context or {}
+            glossary = (ctx.get("phonemes") if GLOSSARY_MODE == "phonemes" else ctx.get("glossary")) or {}
             text = " ".join(s.get("text_en", "") for s in script).lower()
             used = [t for t in glossary if t.lower() in text]
-            self.series.save_glossary(SeriesMemory.lang_key(self.target_langs), glossary, used)
+            self.series.save_glossary(self._glossary_key(), glossary, used)
         except Exception as e:
             logger.warning(f"Series memory: could not save the glossary ({e})")
         try:
             self.series.save_voices(self._bank_update(script))
         except Exception as e:
             logger.warning(f"Series memory: could not save the voice bank ({e})")
+
+    def _glossary_key(self) -> str:
+        """Respellings depend on the target languages; English phonemes do not."""
+        return "cmu" if GLOSSARY_MODE == "phonemes" else SeriesMemory.lang_key(self.target_langs)
 
     def _bank_update(self, script):
         """What this episode tells the voice bank: every speaker with at least 3 lines (Spec 006, 4.6)."""

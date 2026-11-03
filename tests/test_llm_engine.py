@@ -124,6 +124,21 @@ class TestLLMManager(unittest.TestCase):
         self.assertEqual(res, {"Razorback": "Rejzorbek", "Ice Wave": "Ice Wave"})
         self.chat.assert_not_called()
 
+    def test_phonemes_mode_keeps_names_and_asks_for_cmu(self):
+        self.chat.side_effect = [
+            reply(json.dumps({"summary": "s", "glossary": {"Razorback": "Rej-or-bek", "Ice Wave": "x"}, "speakers": {}})),
+            reply(json.dumps({"phonemes": [{"id": 0, "arpabet": "AY1 S W EY1 V"}]})),
+            reply("{}"),
+        ]
+        with patch("core.llm_engine.GLOSSARY_MODE", "phonemes"):
+            res = self.manager.analyze_script(
+                [{"speaker": "A", "text_en": "Hi"}], "d", "", "", {}, [], {"Razorback": "R EY1 Z ER0 B AE2 K"}
+            )
+        self.assertEqual(res["context"]["glossary"], {"Razorback": "Razorback", "Ice Wave": "Ice Wave"})
+        self.assertEqual(res["context"]["phonemes"], {"Razorback": "R EY1 Z ER0 B AE2 K", "Ice Wave": "AY1 S W EY1 V"})
+        asked = json.loads(self.chat.call_args_list[1].kwargs["messages"][1]["content"])
+        self.assertEqual([n["name"] for n in asked["names"]], ["Ice Wave"])  # the stored one is not asked again
+
     def test_analyze_script(self):
         script = [{"speaker": "A", "text_en": "Hello world"}]
         # Mock analysis response

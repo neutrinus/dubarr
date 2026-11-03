@@ -155,6 +155,10 @@ VOICE_DESIGN = os.environ.get("VOICE_DESIGN", "on").lower() not in ("0", "off", 
 SERIES_MEMORY = os.environ.get("SERIES_MEMORY", "on").lower() not in ("0", "off", "false", "no")
 VOICE_MATCH_MIN = float(os.environ.get("VOICE_MATCH_MIN", "0.6"))
 VOICE_BANK_CLIPS = max(1, int(os.environ.get("VOICE_BANK_CLIPS", "5")))
+# How names keep their sound: respell = a phonetic spelling in the target language (checked by a reading test);
+# phonemes = the translation keeps the original name and the TTS gets its English CMU phonemes ("[R EY1 Z ER0 ...]").
+# phonemes is an experiment: OmniVoice documents them for English text only.
+GLOSSARY_MODE = "phonemes" if os.environ.get("GLOSSARY_MODE", "respell").strip().lower() == "phonemes" else "respell"
 
 
 # Safe logging setup

@@ -51,7 +51,9 @@ src/
     gpu_manager.py         Picks a CUDA device by free VRAM (maps nvidia-smi -> torch index by name+memory).
     media_context.py       Parses Sonarr/Radarr/scene file names, gathers show/episode or movie info, formats it for prompts.
     worker.py              JobWorker: polls SQLite for QUEUED tasks and runs a fresh pipeline per task.
-    voice_audition.py      Before Stage 5: ranks each speaker's reference clips by how intelligibly OmniVoice clones them.
+    voice_audition.py      Before Stage 5: ranks each speaker's reference clips by the take judge's score of their clones.
+    take_judge.py          Judges takes without Whisper: signal artifacts, voiceprint match, CTC text match (Spec 002).
+    series_memory.py       Between episodes of a series: settled name spellings and the voice bank (Spec 006).
     report.py              Per-line production report: summary in the log, report_<lang>.tsv in the debug folder.
   infrastructure/
     database.py            SQLite: `tasks` queue + `job_steps` (cached JSON results per stage).
@@ -153,12 +155,18 @@ why the image used to need separate venvs.
 | `MIN_FILL_RATIO` | `0.7` | A take shorter than this share of the original's speech goes back to the LLM to restore content. |
 | `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence) and is synthesized again with another voice reference. |
 | `REF_MIN_CLARITY_DB` | `3.0` | A voice reference whose voice is less than this many dB above the rest of the mix (crowd, engines) is avoided; OmniVoice would clone the noise. |
-| `TAKE_CHECK` / `TAKE_MIN_SIMILARITY` | `on` / `0.7` | `on`: Whisper scores the voice audition and every take; one that sounds less like its text than this (noise, screams, gibberish) is synthesized again with another voice reference. `audition`: only the audition (minutes instead of doubling Stage 5). `off`: neither. |
+| `TAKE_CHECK` / `TAKE_VERSIONS` | `judge` / `2` | `judge`: the take judge (squeaks/clipping/gaps on the signal, voiceprint match with the cloned reference, CTC text match) decides on the voice audition and every take; each synthesis makes this many takes from different references and keeps the best. `whisper`: the same plus the Whisper similarity in the report, for calibration. `off`: only the swallowed and signal checks, no audition. |
+| `JUDGE_MIN_TEXT` / `JUDGE_MIN_VOICE` / `JUDGE_HF_MAX_DB` | `0.5` / `0.5` / `12` | Judge thresholds (first guesses, to be tuned with `TAKE_CHECK=whisper`). |
+| `JUDGE_ALIGN_MODEL` / `JUDGE_DEVICE` | per language / `cpu` | CTC model of the text match (Polish: `jonatasgrosman/wav2vec2-large-xlsr-53-polish`, others `facebook/mms-1b-all`) and where it runs. |
+| `TAKE_MIN_SIMILARITY` | `0.7` | Whisper similarity reported in `whisper` mode. |
+| `SERIES_MEMORY` | `on` | Episodes of a series share settled name spellings and a voice bank in `DATA_DIR/series/<show>/` (Spec 006). |
+| `VOICE_MATCH_MIN` / `VOICE_BANK_CLIPS` | `0.6` / `5` | Voiceprint similarity from which a speaker is a known person of the series; clips kept per person. |
+| `GLOSSARY_MODE` | `respell` | `respell`: names get a phonetic spelling that must pass an LLM reading test. `phonemes` (experiment): names stay as written and the TTS gets their English CMU phonemes. |
 | `VOICE_DESIGN` | `on` | One OmniVoice voice-design clip per speaker (gender/age/pitch from the speaker profile, a generic voice when nothing is known) joins the reference candidates; the voice audition decides whether it is used. A speaker never borrows another speaker's voice. |
-| `TAKE_DROP_SIMILARITY` | `0.3` | A line whose every take is broken below this is left undubbed (the original stays audible). |
+| `TAKE_DROP_SIMILARITY` | `0.3` | A line whose every take is broken below this judge score is left undubbed (the original stays audible). |
 | `REF_AUDITION_CANDIDATES` / `AUDITION_LINE_REF_MIN` | `3` / `0.8` | Reference clips kept per speaker for the voice audition; a speaker scoring below this does not clone from line clips. |
-| `TAKE_CHECK_DEVICE` | `cpu` | Where the take-check Whisper runs. `auto` uses a GPU only with 8.5 GB free; on the TTS card it starves OmniVoice. |
-| `TAKE_CHECK_THREADS` | all cores | CPU threads of the take-check Whisper (faster-whisper would use 4). |
+| `TAKE_CHECK_DEVICE` | `cpu` | Where the Whisper of `TAKE_CHECK=whisper` runs. `auto` uses a GPU only with 8.5 GB free; on the TTS card it starves OmniVoice. |
+| `TAKE_CHECK_THREADS` | all cores | CPU threads of that Whisper (faster-whisper would use 4). |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
 | `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
 | `TTS_CPU_THREADS` | all cores | Threads used when synthesis runs on the CPU. |

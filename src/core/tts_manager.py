@@ -8,7 +8,7 @@ import gc
 import subprocess
 from typing import List, Dict, Optional, Any, Tuple
 from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
-from utils import measure_zcr, count_syllables
+from utils import measure_zcr, count_syllables, apply_phonemes
 from config import MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS, REF_MIN_CLARITY_DB, TAKE_MIN_SIMILARITY
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
@@ -105,6 +105,7 @@ class TTSManager:
         self.audition = {}  # reference path -> audition score, when the voice audition ran
         self.line_refs_off = set()  # speakers whose voice clones badly; they skip line clips
         self.designed = set()  # voice-design clips (from the speaker profile, not from the video)
+        self.phonemes = {}  # name -> English CMU phonemes (GLOSSARY_MODE=phonemes)
         self.set_speaker_refs(speaker_refs)
         self.abort_event = abort_event
         self.service = service
@@ -171,6 +172,8 @@ class TTSManager:
         ref, _ = self._select_reference(item, vocals_path, lang)
         if not ref or not self.engine or not hasattr(self.engine, "estimate"):
             return None
+
+        texts = [apply_phonemes(t, self.phonemes) for t in texts]
 
         def _direct_call(t, r):
             return self.engine.estimate(t, r)
@@ -279,15 +282,15 @@ class TTSManager:
         # 1. Select Reference Audio (Migration Strategy); a retry skips the references already tried
         chosen_ref, voice_type = self._select_reference(item, vocals_path, lang, skip=item.get("skip_refs") or ())
 
-        # 2. Prepare TTS inputs
-        clean_text = item["text"].strip()
+        # 2. Prepare TTS inputs (GLOSSARY_MODE=phonemes: names become their English CMU phonemes)
+        clean_text = apply_phonemes(item["text"].strip(), self.phonemes)
         # Languages are produced concurrently and share segment indexes
         raw_path = os.path.join(self.temp_dir, f"raw_{lang}_{idx}.wav")
 
         # 3. Calculate constraints
         slot_dur = item["end"] - item["start"]
         limit_dur = item.get("max_end", item["end"]) - item.get("min_start", item["start"])
-        syl_count = count_syllables(clean_text, lang)
+        syl_count = count_syllables(item["text"], lang)
         max_allowed_dur = max((syl_count * 0.4) + 1.5, slot_dur + 1.5)
 
         try:

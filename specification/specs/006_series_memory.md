@@ -39,6 +39,13 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
 5.  Acronyms of up to 6 capitals (`S.T.C.W.R.`) skip the test. Only checked entries are stored. A stored entry counts
     the episodes that used it.
 
+6.  **Phonemes instead** (`GLOSSARY_MODE=phonemes`, an experiment): the translation keeps the original names, the
+    LLM writes each name's English pronunciation in CMU ARPAbet (`R EY1 Z ER0 B AE2 K`; answers with anything but
+    ARPAbet tokens are dropped), and the TTS text gets the phonemes in brackets in place of the name, a Polish ending
+    staying after them (`[R EY1 Z ER0 B AE2 K]owi`). OmniVoice documents bracketed CMU phonemes for English text
+    only, so this must be compared with the respellings by ear before it can become the default. The phonemes are
+    stored in the series glossary under the key `cmu`.
+
 ## 4. Voice Bank
 1.  **Voiceprint.** Diarization keeps each speaker's centroid embedding, which pyannote computes anyway (Spec 001,
     2.2). Reference clips and takes are embedded with the same model (`pyannote/wespeaker-voxceleb-resnet34-LM`), so
@@ -62,5 +69,6 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
 
 ## 5. Configuration
 -   `SERIES_MEMORY` (on): series glossary and voice bank.
+-   `GLOSSARY_MODE` (respell): `respell` (phonetic spelling with the reading test) or `phonemes` (CMU phonemes).
 -   `VOICE_MATCH_MIN` (0.6): voiceprint similarity from which a speaker is a known person. To be tuned on measured runs.
 -   `VOICE_BANK_CLIPS` (5): clips kept per person.

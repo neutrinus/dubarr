@@ -63,6 +63,17 @@ OUTPUT FORMAT (JSON):
 {{"spellings": [{{"id": 0, "spelling": "..."}}]}}
 """
 
+T_GLOSSARY_CMU = """You write English pronunciations for a text-to-speech voice in CMU dictionary notation (ARPAbet).
+
+INPUT (JSON): "names", each with "id" and "name" (a name as an English speaker says it).
+
+TASK: For each name, write its pronunciation as ARPAbet phonemes separated by spaces, vowels with a stress digit
+(0, 1 or 2), as in the CMU Pronouncing Dictionary. Example: "Razorback" -> "R EY1 Z ER0 B AE2 K".
+
+OUTPUT FORMAT (JSON):
+{{"phonemes": [{{"id": 0, "arpabet": "R EY1 Z ER0 B AE2 K"}}]}}
+"""
+
 T_ED = """You are a Transcription Corrector. Your task is to fix ASR (speech-to-text) errors in the source text.
 
 CONTEXT GLOSSARY (For name reference only): {glossary}

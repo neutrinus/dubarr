@@ -6,8 +6,17 @@ import threading
 import gc
 import re
 from typing import List, Dict, Optional, Any
-from utils import parse_json, clean_output, count_syllables, respelling_heard_as
-from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_REVIEW, T_REFINE_DURATION, T_GLOSSARY_READ, T_GLOSSARY_RESPELL
+from utils import parse_json, clean_output, count_syllables, respelling_heard_as, clean_arpabet
+from prompts import (
+    T_ANALYSIS,
+    T_ED,
+    T_TRANS_SYSTEM,
+    T_REVIEW,
+    T_REFINE_DURATION,
+    T_GLOSSARY_READ,
+    T_GLOSSARY_RESPELL,
+    T_GLOSSARY_CMU,
+)
 from config import (
     LANG_MAP,
     MOCK_MODE,
@@ -20,6 +29,7 @@ from config import (
     LLM_MAX_TOKENS,
     DUB_SYLLABLES_PER_SECOND,
     TRANSLATION_WINDOW,
+    GLOSSARY_MODE,
 )
 from core.gpu_manager import GPUManager
 from infrastructure.llm_client import OpenAICompatibleClient
@@ -288,6 +298,7 @@ class LLMManager:
         media_info: str = "",
         fixed_glossary: Optional[Dict[str, str]] = None,
         names: Optional[List[str]] = None,
+        fixed_phonemes: Optional[Dict[str, str]] = None,
     ) -> Dict:
         """Phase 1: Global Analysis & Phase 2: Speaker Profiling & Phase 3: ASR Correction.
 
@@ -335,7 +346,14 @@ class LLMManager:
         global_context = {k: v for k, v in analysis.items() if k != "speakers"}
         speaker_info = analysis.get("speakers", {})
         glossary = global_context.get("glossary")
-        global_context["glossary"] = self.check_glossary(glossary if isinstance(glossary, dict) else {}, fixed_glossary)
+        glossary = glossary if isinstance(glossary, dict) else {}
+        if GLOSSARY_MODE == "phonemes":
+            # The translation keeps the original names; the TTS gets their English phonemes
+            names_only = {str(t): str(t) for t in list(glossary) + list(fixed_phonemes or {})}
+            global_context["glossary"] = names_only
+            global_context["phonemes"] = self.glossary_phonemes(list(names_only), fixed_phonemes)
+        else:
+            global_context["glossary"] = self.check_glossary(glossary, fixed_glossary)
 
         # 2. ASR Correction
         logging.info("LLM: Starting ASR Correction (Editor)")
@@ -458,6 +476,35 @@ class LLMManager:
                 if spelling:
                     pending[term] = spelling
         return result
+
+    def glossary_phonemes(self, names: List[str], fixed: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """English CMU phonemes per name (GLOSSARY_MODE=phonemes); stored ones stay, invalid answers are dropped."""
+        out = {t: p for t, p in (fixed or {}).items() if clean_arpabet(p)}
+        todo = [n for n in names if n not in out and not (n.isupper() and len(n.replace(".", "")) <= 6)]
+        if MOCK_MODE or not todo:
+            return out
+        res = self._run_inference(
+            [
+                {"role": "system", "content": T_GLOSSARY_CMU},
+                {
+                    "role": "user",
+                    "content": json.dumps({"names": [{"id": i, "name": n} for i, n in enumerate(todo)]}, ensure_ascii=False),
+                },
+            ],
+            priority=2,
+            temperature=0.0,
+        )
+        for entry in parse_json(res["choices"][0]["text"]).get("phonemes") or []:
+            try:
+                name = todo[int(entry["id"])]
+            except (KeyError, ValueError, TypeError, IndexError):
+                continue
+            arpabet = clean_arpabet(str(entry.get("arpabet") or ""))
+            if arpabet:
+                out[name] = arpabet
+            else:
+                logging.info(f"Glossary: no valid phonemes for '{name}' ('{entry.get('arpabet')}'), it stays as written")
+        return out
 
     @staticmethod
     def syllable_budget(line: Dict) -> Dict:

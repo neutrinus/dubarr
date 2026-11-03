@@ -180,3 +180,35 @@ def respelling_heard_as(term: str, heard: str) -> bool:
     ops = difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
     missing = sum(i2 - i1 for op, i1, i2, _j1, _j2 in ops if op in ("replace", "delete"))
     return missing <= len(a) // 6
+
+
+ARPABET = {
+    "AA", "AE", "AH", "AO", "AW", "AY", "EH", "ER", "EY", "IH", "IY", "OW", "OY", "UH", "UW",
+    "B", "CH", "D", "DH", "F", "G", "HH", "JH", "K", "L", "M", "N", "NG", "P", "R", "S", "SH", "T", "TH", "V", "W",
+    "Y", "Z", "ZH",
+}  # fmt: skip
+
+
+def clean_arpabet(text: str) -> str:
+    """ "R EY1 Z ER0 B AE2 K" when every token is an ARPAbet phoneme (vowels with a stress digit), else ""."""
+    tokens = (text or "").replace("[", " ").replace("]", " ").upper().split()
+    if not tokens:
+        return ""
+    for tok in tokens:
+        base = tok.rstrip("012")
+        if base not in ARPABET or (tok != base and len(tok) - len(base) != 1):
+            return ""
+    return " ".join(tokens)
+
+
+def apply_phonemes(text: str, phonemes: dict) -> str:
+    """Replaces each name with its bracketed CMU phonemes for the TTS ("Razorbacka" -> "[R EY1 ...]a").
+
+    Longer names first, so "Ice Wave" wins over "Ice"; a Polish ending on the name stays after the brackets.
+    """
+    for name in sorted(phonemes or {}, key=len, reverse=True):
+        arpabet = phonemes[name]
+        if not name or not arpabet:
+            continue
+        text = re.sub(rf"(?<!\w){re.escape(name)}", lambda _m, a=arpabet: f"[{a}]", text, flags=re.IGNORECASE)
+    return text
