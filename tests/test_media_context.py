@@ -34,7 +34,14 @@ class TestParseMediaPath(unittest.TestCase):
     def test_sonarr_names(self):
         self.assertEqual(
             parse_media_path(VOX),
-            {"kind": "episode", "title": "The Legend of Vox Machina", "year": None, "season": 2, "episode": 2},
+            {
+                "kind": "episode",
+                "title": "The Legend of Vox Machina",
+                "year": None,
+                "season": 2,
+                "episode": 2,
+                "episode_title": "The Trials of Vasselheim",
+            },
         )
         info = parse_media_path(SNW)
         self.assertEqual((info["title"], info["season"], info["episode"]), ("Star Trek - Strange New Worlds", 3, 3))
@@ -49,6 +56,24 @@ class TestParseMediaPath(unittest.TestCase):
         self.assertEqual((movie["kind"], movie["title"], movie["year"]), ("movie", "Dune Part Two", 2024))
         self.assertEqual(parse_media_path("/m/Inception (2010)/Inception (2010) Bluray-1080p.mkv")["title"], "Inception")
         self.assertEqual(parse_media_path("/m/Alien/Alien.1080p.BluRay.x264.mkv")["title"], "Alien")
+
+
+class TestEpisodeNames(unittest.TestCase):
+    def test_names_from_the_episode_title(self):
+        path = (
+            "/tv/BattleBots/Season 1/BattleBots - S01E09 - Alpha Raptor vs Mouser Mecha Catbot, Backlash vs Das Bot, "
+            "Backlash vs Alpha Raptor (Lightweight Finals) WEBDL-480p.mkv"
+        )
+        info = parse_media_path(path)
+        self.assertTrue(info["episode_title"].startswith("Alpha Raptor vs Mouser"))
+        self.assertEqual(media_context.episode_names(info), ["Alpha Raptor", "Mouser Mecha Catbot", "Backlash", "Das Bot"])
+
+    def test_plain_title_and_cast(self):
+        info = {"episode_title": "Shuttle to Kenfori", "cast": [{"character": "Christopher Pike", "actor": "Anson Mount"}]}
+        self.assertEqual(media_context.episode_names(info), ["Christopher Pike", "Anson Mount"])
+
+    def test_scene_name_has_no_episode_title(self):
+        self.assertNotIn("episode_title", parse_media_path("/t/show.name.1x05.hdtv.mkv"))
 
 
 class TestLookup(unittest.TestCase):

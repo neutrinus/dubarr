@@ -17,6 +17,9 @@ COLUMNS = [
     "fill",
     "status",
     "voice",
+    "score",
+    "voice_match",
+    "text_match",
     "similarity",
     "attempts",
     "source",
@@ -28,6 +31,10 @@ COLUMNS = [
 def _ts(seconds: float) -> str:
     minutes, rest = divmod(max(seconds, 0.0), 60)
     return f"{int(minutes):02d}:{rest:05.2f}"
+
+
+def _num(value) -> str:
+    return "" if value is None else f"{value:.2f}"
 
 
 def report_rows(script: List[Dict], results: List[Dict]) -> List[Dict]:
@@ -49,7 +56,10 @@ def report_rows(script: List[Dict], results: List[Dict]) -> List[Dict]:
                 "fill": f"{res.get('duration', 0.0) / slot:.0%}" if slot > 0 else "",
                 "status": res.get("status", ""),
                 "voice": res.get("voice_type") or "",
-                "similarity": "" if res.get("similarity") is None else f"{res['similarity']:.2f}",
+                "score": _num(res.get("score")),
+                "voice_match": _num(res.get("voice_match")),
+                "text_match": _num(res.get("text_match")),
+                "similarity": _num(res.get("similarity")),
                 "attempts": res.get("attempts", ""),
                 "source": line.get("text_en", line.get("text", "")),
                 "dub": res.get("final_text", ""),
@@ -69,8 +79,11 @@ def summary(rows: List[Dict]) -> str:
     for r in rows:
         statuses[r["status"]] = statuses.get(r["status"], 0) + 1
     sims = [float(r["similarity"]) for r in rows if r["similarity"]]
+    scores = [float(r["score"]) for r in rows if r["score"]]
     parts = [f"{len(rows)} lines", f"fill {spoken / slots:.0%}" if slots else "fill n/a"]
     parts += [f"{k} {v}" for k, v in sorted(statuses.items())]
+    if scores:
+        parts.append(f"judge min {min(scores):.2f} mean {sum(scores) / len(scores):.2f}")
     if sims:
         parts.append(f"similarity min {min(sims):.2f} mean {sum(sims) / len(sims):.2f}")
     return ", ".join(parts)

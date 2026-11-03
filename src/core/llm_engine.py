@@ -6,8 +6,17 @@ import threading
 import gc
 import re
 from typing import List, Dict, Optional, Any
-from utils import parse_json, clean_output, count_syllables
-from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_REVIEW, T_REFINE_DURATION
+from utils import parse_json, clean_output, count_syllables, respelling_heard_as, clean_arpabet
+from prompts import (
+    T_ANALYSIS,
+    T_ED,
+    T_TRANS_SYSTEM,
+    T_REVIEW,
+    T_REFINE_DURATION,
+    T_GLOSSARY_READ,
+    T_GLOSSARY_RESPELL,
+    T_GLOSSARY_CMU,
+)
 from config import (
     LANG_MAP,
     MOCK_MODE,
@@ -20,6 +29,7 @@ from config import (
     LLM_MAX_TOKENS,
     DUB_SYLLABLES_PER_SECOND,
     TRANSLATION_WINDOW,
+    GLOSSARY_MODE,
 )
 from core.gpu_manager import GPUManager
 from infrastructure.llm_client import OpenAICompatibleClient
@@ -280,9 +290,23 @@ class LLMManager:
             }
         return {"choices": [{"text": "{}"}]}
 
-    def analyze_script(self, script: List[Dict], ddir: str, subtitles: str = "", media_info: str = "") -> Dict:
-        """Phase 1: Global Analysis & Phase 2: Speaker Profiling & Phase 3: ASR Correction."""
+    def analyze_script(
+        self,
+        script: List[Dict],
+        ddir: str,
+        subtitles: str = "",
+        media_info: str = "",
+        fixed_glossary: Optional[Dict[str, str]] = None,
+        names: Optional[List[str]] = None,
+        fixed_phonemes: Optional[Dict[str, str]] = None,
+    ) -> Dict:
+        """Phase 1: Global Analysis & Phase 2: Speaker Profiling & Phase 3: ASR Correction.
+
+        ``fixed_glossary`` holds the series' settled spellings (Spec 006, 3), ``names`` the names known to occur.
+        """
         self.load_model()
+        fixed_glossary = fixed_glossary or {}
+        names_str = ", ".join(names or []) or "(none known)"
 
         # 1. Overview for analysis
         max_overview_lines = 400
@@ -304,7 +328,11 @@ class LLMManager:
                 {
                     "role": "system",
                     "content": T_ANALYSIS.format(
-                        langs=", ".join(lang_names), subtitles=subtitles, media_info=media_info or "(nothing known)"
+                        langs=", ".join(lang_names),
+                        subtitles=subtitles,
+                        media_info=media_info or "(nothing known)",
+                        names=names_str,
+                        fixed_glossary=json.dumps(fixed_glossary, ensure_ascii=False) if fixed_glossary else "(none yet)",
                     ),
                 },
                 {"role": "user", "content": ov},
@@ -317,6 +345,15 @@ class LLMManager:
         analysis = parse_json(res["choices"][0]["text"])
         global_context = {k: v for k, v in analysis.items() if k != "speakers"}
         speaker_info = analysis.get("speakers", {})
+        glossary = global_context.get("glossary")
+        glossary = glossary if isinstance(glossary, dict) else {}
+        if GLOSSARY_MODE == "phonemes":
+            # The translation keeps the original names; the TTS gets their English phonemes
+            names_only = {str(t): str(t) for t in list(glossary) + list(fixed_phonemes or {})}
+            global_context["glossary"] = names_only
+            global_context["phonemes"] = self.glossary_phonemes(list(names_only), fixed_phonemes)
+        else:
+            global_context["glossary"] = self.check_glossary(glossary, fixed_glossary)
 
         # 2. ASR Correction
         logging.info("LLM: Starting ASR Correction (Editor)")
@@ -329,7 +366,7 @@ class LLMManager:
             t0 = time.perf_counter()
             res = self._run_inference(
                 [
-                    {"role": "system", "content": T_ED.format(glossary=glossary_str, subtitles=subtitles)},
+                    {"role": "system", "content": T_ED.format(glossary=glossary_str, subtitles=subtitles, names=names_str)},
                     {"role": "user", "content": txt},
                 ],
                 priority=2,
@@ -359,6 +396,115 @@ class LLMManager:
 
         # The corrections are returned too, so a resumed job can re-apply them from the step cache
         return {"context": global_context, "speakers": speaker_info, "script_fixes": script_fixes}
+
+    def _hear_spellings(self, spellings: List[str], lang_name: str) -> List[str]:
+        """What each spelling sounds like in English spelling ("" when the model gave nothing)."""
+        res = self._run_inference(
+            [
+                {"role": "system", "content": T_GLOSSARY_READ.format(lang_name=lang_name)},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {"spellings": [{"id": i, "spelling": sp} for i, sp in enumerate(spellings)]}, ensure_ascii=False
+                    ),
+                },
+            ],
+            priority=2,
+            temperature=0.0,
+        )
+        heard = [""] * len(spellings)
+        for entry in parse_json(res["choices"][0]["text"]).get("heard") or []:
+            try:
+                heard[int(entry["id"])] = str(entry.get("english") or "")
+            except (KeyError, ValueError, TypeError, IndexError):
+                continue
+        return heard
+
+    def _respell(self, failed: List[Dict], lang_name: str) -> Dict[str, str]:
+        res = self._run_inference(
+            [
+                {"role": "system", "content": T_GLOSSARY_RESPELL.format(lang_name=lang_name)},
+                {"role": "user", "content": json.dumps({"names": failed}, ensure_ascii=False)},
+            ],
+            priority=2,
+            temperature=0.3,
+        )
+        out = {}
+        for entry in parse_json(res["choices"][0]["text"]).get("spellings") or []:
+            try:
+                out[failed[int(entry["id"])]["name"]] = str(entry.get("spelling") or "").strip()
+            except (KeyError, ValueError, TypeError, IndexError):
+                continue
+        return out
+
+    def check_glossary(self, glossary: Dict, fixed: Optional[Dict[str, str]] = None, rounds: int = 2) -> Dict[str, str]:
+        """Settled spellings stay; every new respelling must pass the reading test (Spec 006, 3).
+
+        A respelling is read back by the model as English and must keep the term's consonants ("Rej-or-bek" is heard
+        as "Rayorbeck" and loses the "z" of "Razorback"). A failed one is respelled up to ``rounds`` times; a term that
+        still fails keeps its original spelling, which the TTS reads as written.
+        """
+        fixed = fixed or {}
+        result = {str(k): str(v) for k, v in glossary.items() if isinstance(v, (str, int, float)) and str(v).strip()}
+        result.update(fixed)  # a stored spelling cannot be changed by the analysis
+        lang_name = LANG_MAP.get(self.target_langs[0], self.target_langs[0]) if self.target_langs else "target language"
+        pending = {
+            t: sp
+            for t, sp in result.items()
+            if t not in fixed and sp.strip() != t.strip() and not (t.isupper() and len(t.replace(".", "")) <= 6)
+        }
+        if MOCK_MODE or not pending:
+            return result
+        for attempt in range(rounds + 1):
+            terms = list(pending)
+            heard = self._hear_spellings([pending[t] for t in terms], lang_name)
+            failed = []
+            for term, sounds in zip(terms, heard):
+                if sounds and respelling_heard_as(term, sounds):
+                    result[term] = pending.pop(term)
+                    continue
+                logging.info(f"Glossary: '{pending[term]}' for '{term}' sounds like '{sounds}', rejected")
+                failed.append({"id": len(failed), "name": term, "spelling": pending[term], "sounds_like": sounds})
+            if not failed:
+                break
+            if attempt == rounds:
+                for f in failed:
+                    logging.info(f"Glossary: keeping the original spelling of '{f['name']}'")
+                    result[f["name"]] = f["name"]
+                break
+            for term, spelling in self._respell(failed, lang_name).items():
+                if spelling:
+                    pending[term] = spelling
+        return result
+
+    def glossary_phonemes(self, names: List[str], fixed: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """English CMU phonemes per name (GLOSSARY_MODE=phonemes); stored ones stay, invalid answers are dropped."""
+        out = {t: p for t, p in (fixed or {}).items() if clean_arpabet(p)}
+        todo = [n for n in names if n not in out and not (n.isupper() and len(n.replace(".", "")) <= 6)]
+        if MOCK_MODE or not todo:
+            return out
+        res = self._run_inference(
+            [
+                {"role": "system", "content": T_GLOSSARY_CMU},
+                {
+                    "role": "user",
+                    "content": json.dumps({"names": [{"id": i, "name": n} for i, n in enumerate(todo)]}, ensure_ascii=False),
+                },
+            ],
+            priority=2,
+            temperature=0.0,
+        )
+        for entry in parse_json(res["choices"][0]["text"]).get("phonemes") or []:
+            try:
+                name = todo[int(entry["id"])]
+            except (KeyError, ValueError, TypeError, IndexError):
+                continue
+            arpabet = clean_arpabet(str(entry.get("arpabet") or ""))
+            if arpabet:
+                out[name] = arpabet
+            else:
+                logging.info(f"Glossary: no valid phonemes for '{name}' ('{entry.get('arpabet')}'), it stays as written")
+        return out
 
     @staticmethod
     def syllable_budget(line: Dict) -> Dict:

@@ -33,7 +33,8 @@ The system verifies model presence and downloads missing files. To maximize avai
         compression ratio <= 2.4, mean word probability >= 0.5, and not a known hallucination ("Thank you.",
         "Instruction.").
 *   **Output:**
-    *   `diarization.json` (Time ranges mapped to speakers).
+    *   `diarization.json` (Time ranges mapped to speakers, plus each speaker's centroid embedding for the voice
+        bank, Spec 006, 4).
     *   `transcription.json` (Text segments with timestamps).
 
 #### 2.2a Dialogue units (script creation)
@@ -56,7 +57,8 @@ duplicates content, because the target language orders the sentence differently.
 *   **Input:** Path of the video.
 *   **Action:**
     1.  Parses the path (Sonarr/Radarr naming such as `Show/Season 2/Show - S02E02 - Title WEBDL-1080p.mkv`, scene names,
-        `{tvdb-…}`/`{imdb-…}`/`{tmdb-…}` ids, `Movie (2010)`) into title, year, season and episode.
+        `{tvdb-…}`/`{imdb-…}`/`{tmdb-…}` ids, `Movie (2010)`) into title, year, season and episode, and the episode
+        title that follows `SxxEyy - ` up to the quality tag (`WEBDL-480p`).
     2.  Reads Kodi-style `.nfo` files next to the video (`<video>.nfo`, `tvshow.nfo`, `movie.nfo`) when present.
     3.  Fills the gaps online (`METADATA_LOOKUP=on`): TVmaze for episodes (no account; show synopsis, episode title and
         synopsis, main and guest cast with gender), TMDB for movies (only with `TMDB_API_KEY`).
@@ -67,8 +69,13 @@ duplicates content, because the target language orders the sentence differently.
 *   **Input:** Transcription script, reference subtitles, media metadata.
 *   **Action:**
     1.  LLM analyzes the full script to understand context, tone, and relationships between speakers, using the
-        media metadata (synopsis, cast list) to name speakers after characters and to tell their gender.
-    2.  Generates a glossary or style guide for translation (including the character names).
+        media metadata (synopsis, cast list) to name speakers after characters and to tell their gender. Without a cast
+        entry the gender is a best guess from names, pronouns, forms of address and role; "unknown" only without any
+        hint (it leaves the speaker with a generic designed voice and ungendered translation forms).
+    2.  Generates a glossary for translation: the names that keep their original sound, with a phonetic spelling in
+        the target language for the TTS. In a series the stored spellings are fixed, and every new spelling must pass
+        a reading test before it is used (Spec 006, 3). The names in the episode title and the cast are given to the
+        analysis and to the transcript corrector as names that occur in the episode.
     3.  The translator gets the show/episode, the synopsis and each line's speaker gender, so gendered forms
         (e.g. Polish past tense) match the speaker; the per-line duration refinement gets the speaker and title too.
 *   **Reference subtitles:** `<video>.srt`, else `<video>.<lang>[.hi|.sdh].srt` in a non-target language (English and full
@@ -84,6 +91,10 @@ duplicates content, because the target language orders the sentence differently.
         **clarity**: the level of the Demucs vocals over the level of the rest (`no_vocals`) in the same span, in dB.
         A line under `REF_MIN_CLARITY_DB` (3 dB, crowd or engines as loud as the voice) loses most of its score; above
         12 dB it gains. OmniVoice clones the clip's character, so noise and screaming in a reference come back in the dub.
+        **Calm score:** the loudness of the line's vocals is compared with the median of all lines of the same speaker
+        over the whole episode (calm talk can come before or after the shouting). A line 4 dB or more above that median
+        is shouted and loses 5 points per dB above 3 dB, up to 40; a line within 2 dB of it gains 5. A speaker is only
+        compared with itself, so a loud voice is not penalised for being loud.
     2.  Tests the best candidates (up to 8) for Zero Crossing Rate (ZCR <= 0.15, after denoising) and keeps the first
         `REF_AUDITION_CANDIDATES` (3) that pass, best score first. When none passes, the tested candidate with the
         lowest ZCR is used: the speaker's own voice beats another speaker's reference. Which of the kept clips the TTS

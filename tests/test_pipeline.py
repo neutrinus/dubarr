@@ -287,14 +287,15 @@ class TestVoiceAuditionStep(unittest.TestCase):
             return DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
 
     def test_take_check_modes(self):
-        on, audition, off = self.build("on"), self.build("audition"), self.build("off")
-        self.assertIsNotNone(on.synchronizer.take_checker)
-        self.assertIsNone(audition.synchronizer.take_checker)
-        self.assertIsNotNone(audition.take_checker)
-        self.assertIsNone(off.take_checker)
+        judge, whisper, off = self.build("judge"), self.build("whisper"), self.build("off")
+        self.assertIs(judge.synchronizer.judge, judge.judge)
+        self.assertFalse(judge.judge.signal_only)
+        self.assertIsNone(judge.synchronizer.take_checker)
+        self.assertIsNotNone(whisper.synchronizer.take_checker)
+        self.assertTrue(off.judge.signal_only)
 
     def test_audition_ranks_references_before_production(self):
-        pipeline = self.build("audition")
+        pipeline = self.build("judge")
         scores = {"A": {"a.wav": 0.9}}
         with patch("core.pipeline.MOCK_MODE", False), patch("core.pipeline.audition_voices", return_value=scores) as run:
             pipeline._audition_voices({"pl": [{"speaker": "A", "text": "x"}]})
@@ -312,9 +313,10 @@ class TestTakeCheckMode(unittest.TestCase):
     def test_values(self):
         from config import _take_check_mode
 
-        self.assertEqual(_take_check_mode("on"), "on")
-        self.assertEqual(_take_check_mode("1"), "on")
-        self.assertEqual(_take_check_mode("Audition"), "audition")
+        self.assertEqual(_take_check_mode("judge"), "judge")
+        self.assertEqual(_take_check_mode("on"), "judge")
+        self.assertEqual(_take_check_mode("Audition"), "judge")
+        self.assertEqual(_take_check_mode("whisper"), "whisper")
         self.assertEqual(_take_check_mode("off"), "off")
         self.assertEqual(_take_check_mode("false"), "off")
 
@@ -380,3 +382,50 @@ class TestPauseBeforeLine(unittest.TestCase):
         start, speed = DubbingPipeline._place_take(item, 3.0, 9.9)
         self.assertAlmostEqual(start, 9.9)
         self.assertAlmostEqual(speed, 3.0 / 2.6)  # what does not fit is sped up instead
+
+
+class TestRememberSeries(unittest.TestCase):
+    def test_saves_the_used_names_and_never_fails(self):
+        pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        pipe.series = MagicMock()
+        pipe.global_context = {"glossary": {"Razorback": "Rejzorbek", "Ice Wave": "Ajs Łejw"}}
+        pipe._remember_series([{"text_en": "Razorback spins up."}])
+        pipe.series.save_glossary.assert_called_once_with("pl", pipe.global_context["glossary"], ["Razorback"])
+
+        pipe.series.save_glossary.side_effect = OSError("disk full")
+        pipe._remember_series([])  # logged, not raised
+
+
+class TestCalmReferences(unittest.TestCase):
+    def test_shouted_line_loses_to_calm_talk_after_it(self):
+        pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        lines = [{"start": float(t), "end": float(t) + 8} for t in (10, 30, 50, 70)]
+        # Shouting at 10 s, the calm talk comes later in the episode
+        levels = {10.0: -12.0, 30.0: -20.0, 50.0: -21.0, 70.0: -19.0}
+        with patch("core.pipeline.voice_level", side_effect=lambda v, start, end: levels[start]):
+            scored = pipe._apply_calm_scores([(s, 90) for s in lines], "vocals.wav", "A")
+        best = max(scored, key=lambda x: x[1])[0]
+        self.assertNotEqual(best["start"], 10.0)
+        self.assertLess(dict((s["start"], v) for s, v in scored)[10.0], 90 - 20)
+
+    def test_too_few_lines_leave_scores_alone(self):
+        pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        scored = [({"start": 1.0, "end": 5.0}, 50), ({"start": 9.0, "end": 14.0}, 60)]
+        with patch("core.pipeline.voice_level", return_value=-20.0):
+            self.assertEqual(pipe._apply_calm_scores(scored, "v.wav", "A"), scored)
+
+
+class TestBankUpdate(unittest.TestCase):
+    def test_speakers_with_three_lines_and_their_audited_real_clips(self):
+        pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        pipe.voiceprints = {"A": [1.0, 0.0]}
+        pipe.voice_matches = {"A": "V001"}
+        pipe.speaker_info = {"A": {"name": "Host", "gender": "male", "desc": "commentator"}}
+        pipe.tts_manager.speaker_refs = {"A": ["ref_A.wav", "design_A.wav", "ref_A_2.wav"], "B": ["ref_B.wav"]}
+        pipe.tts_manager.audition = {"ref_A.wav": 0.9, "design_A.wav": 0.95}
+        pipe.tts_manager.designed = {"design_A.wav"}
+        script = [{"speaker": "A"}] * 3 + [{"speaker": "B"}] * 2
+        update = pipe._bank_update(script)
+        self.assertEqual(list(update), ["A"])
+        self.assertEqual(update["A"]["clips"], [("ref_A.wav", 0.9)])
+        self.assertEqual((update["A"]["person"], update["A"]["profile"]["name"]), ("V001", "Host"))

@@ -19,10 +19,12 @@ class TestAudio(unittest.TestCase):
         whisper_mock = MagicMock()
 
         diar_mock.diarize.return_value = [{"speaker": "A", "start": 0, "end": 1}]
+        diar_mock.embeddings = {"A": [0.1, 0.2]}
         whisper_mock.transcribe.return_value = [{"text": "Hello", "start": 0, "end": 1}]
 
         with patch("infrastructure.ffmpeg.FFmpegWrapper.convert_audio"), patch("core.gpu_manager.GPUManager.force_gc"):
-            diar, trans, durs = analyze_audio("vocals.wav", diar_mock, whisper_mock)
+            diar, trans, durs, prints = analyze_audio("vocals.wav", diar_mock, whisper_mock)
+            self.assertEqual(prints, {"A": [0.1, 0.2]})
 
             self.assertEqual(len(diar), 1)
             self.assertEqual(trans[0]["text"], "Hello")
@@ -94,3 +96,13 @@ class TestMixAudio(unittest.TestCase):
                 )
             mix_audio(bg, [(speech, 3.0, 3.0)], out)  # speech ends at 6 s, background at 4 s
             self.assertAlmostEqual(FFmpegWrapper.get_duration(out), 4.0, delta=0.2)
+
+
+def test_calm_bonus():
+    from core.audio import calm_bonus
+
+    assert calm_bonus(-20.0, -20.0) == 5
+    assert calm_bonus(-17.0, -20.0) == 0
+    assert calm_bonus(-15.0, -20.0) == -10
+    assert calm_bonus(-5.0, -20.0) == -40
+    assert calm_bonus(None, -20.0) == 0

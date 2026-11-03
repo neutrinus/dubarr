@@ -91,11 +91,59 @@ class TestLLMManager(unittest.TestCase):
         self.assertIn("KNOWN MEDIA INFO", self.chat.call_args_list[0].kwargs["messages"][0]["content"])
         self.assertIn("TV series: Star Trek", self.chat.call_args_list[0].kwargs["messages"][0]["content"])
 
+    def test_analyze_script_gets_names_and_fixed_glossary(self):
+        self.chat.side_effect = [reply(json.dumps({"summary": "s", "glossary": {}, "speakers": {}})), reply("{}")]
+        self.manager.analyze_script(
+            [{"speaker": "A", "text_en": "Hi"}], "d", "", "", {"Razorback": "Rejzorbek"}, ["Razorback", "Ice Wave"]
+        )
+        system = self.chat.call_args_list[0].kwargs["messages"][0]["content"]
+        self.assertIn('"Razorback": "Rejzorbek"', system)
+        self.assertIn("Razorback, Ice Wave", system)
+        self.assertIn("Razorback, Ice Wave", self.chat.call_args_list[1].kwargs["messages"][0]["content"])
+
+    def test_glossary_reading_test_rejects_a_lost_consonant(self):
+        # "Rej-or-bek" sounds like "Rayorbeck": the "z" of Razorback is gone, so it is respelled and read again
+        self.chat.side_effect = [
+            reply(json.dumps({"heard": [{"id": 0, "english": "Rayorbeck"}, {"id": 1, "english": "Hineman"}]})),
+            reply(json.dumps({"spellings": [{"id": 0, "spelling": "Rejzorbek"}]})),
+            reply(json.dumps({"heard": [{"id": 0, "english": "Rayzorbeck"}]})),
+        ]
+        res = self.manager.check_glossary({"Razorback": "Rej-or-bek", "Hyneman": "Hajneman"})
+        self.assertEqual(res, {"Razorback": "Rejzorbek", "Hyneman": "Hajneman"})
+        respell = json.loads(self.chat.call_args_list[1].kwargs["messages"][1]["content"])
+        self.assertEqual(respell["names"][0]["sounds_like"], "Rayorbeck")
+
+    def test_glossary_keeps_the_original_when_every_spelling_fails(self):
+        bad = reply(json.dumps({"heard": [{"id": 0, "english": "Rayorbeck"}]}))
+        respell = reply(json.dumps({"spellings": [{"id": 0, "spelling": "Rejorbak"}]}))
+        self.chat.side_effect = [bad, respell, bad, respell, bad]
+        self.assertEqual(self.manager.check_glossary({"Razorback": "Rej-or-bek"}), {"Razorback": "Razorback"})
+
+    def test_glossary_fixed_spellings_win_and_skip_the_test(self):
+        res = self.manager.check_glossary({"Razorback": "Rej-or-bek", "Ice Wave": "Ice Wave"}, {"Razorback": "Rejzorbek"})
+        self.assertEqual(res, {"Razorback": "Rejzorbek", "Ice Wave": "Ice Wave"})
+        self.chat.assert_not_called()
+
+    def test_phonemes_mode_keeps_names_and_asks_for_cmu(self):
+        self.chat.side_effect = [
+            reply(json.dumps({"summary": "s", "glossary": {"Razorback": "Rej-or-bek", "Ice Wave": "x"}, "speakers": {}})),
+            reply(json.dumps({"phonemes": [{"id": 0, "arpabet": "AY1 S W EY1 V"}]})),
+            reply("{}"),
+        ]
+        with patch("core.llm_engine.GLOSSARY_MODE", "phonemes"):
+            res = self.manager.analyze_script(
+                [{"speaker": "A", "text_en": "Hi"}], "d", "", "", {}, [], {"Razorback": "R EY1 Z ER0 B AE2 K"}
+            )
+        self.assertEqual(res["context"]["glossary"], {"Razorback": "Razorback", "Ice Wave": "Ice Wave"})
+        self.assertEqual(res["context"]["phonemes"], {"Razorback": "R EY1 Z ER0 B AE2 K", "Ice Wave": "AY1 S W EY1 V"})
+        asked = json.loads(self.chat.call_args_list[1].kwargs["messages"][1]["content"])
+        self.assertEqual([n["name"] for n in asked["names"]], ["Ice Wave"])  # the stored one is not asked again
+
     def test_analyze_script(self):
         script = [{"speaker": "A", "text_en": "Hello world"}]
         # Mock analysis response
         analysis_resp = json.dumps(
-            {"summary": "Greeting", "glossary": {"world": "świat"}, "speakers": {"A": {"name": "Alice", "desc": "Female"}}}
+            {"summary": "Greeting", "glossary": {"World": "World"}, "speakers": {"A": {"name": "Alice", "desc": "Female"}}}
         )
         # Mock correction response
         correction_resp = json.dumps({"L_0": "Hello, world!"})

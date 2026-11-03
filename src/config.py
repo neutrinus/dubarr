@@ -118,20 +118,31 @@ MAX_PLAUSIBLE_SYLLABLES_PER_SECOND = float(os.environ.get("MAX_PLAUSIBLE_SYLLABL
 REF_MIN_CLARITY_DB = float(os.environ.get("REF_MIN_CLARITY_DB", "3.0"))
 
 
-# Take check (Spec 002): a take is transcribed and compared with its text; below TAKE_MIN_SIMILARITY it is
-# unintelligible (noise, screams, mangled words) and synthesized again with another voice reference.
-# on = the voice audition and every take; audition = only the audition (a few minutes); off = neither.
+# Take check (Spec 002, 2.2 step 4): judge = the take judge (signal artifacts, voice match, CTC text match) on the
+# voice audition and every take; whisper = the judge plus the Whisper similarity next to it, for measurement only;
+# off = only the swallowed and artifact checks. The judge is cheap, so the old "on" and "audition" read as judge.
 def _take_check_mode(value: str) -> str:
     value = value.strip().lower()
     if value in ("0", "off", "false", "no"):
         return "off"
-    return "audition" if value == "audition" else "on"
+    return "whisper" if value == "whisper" else "judge"
 
 
-TAKE_CHECK = _take_check_mode(os.environ.get("TAKE_CHECK", "on"))
+TAKE_CHECK = _take_check_mode(os.environ.get("TAKE_CHECK", "judge"))
+# Takes per synthesis, from different voice references; the judge keeps the best
+TAKE_VERSIONS = max(1, int(os.environ.get("TAKE_VERSIONS", "2")))
+# Judge layers. Thresholds are first guesses, to be tuned on runs with TAKE_CHECK=whisper
+JUDGE_HF_MAX_DB = float(os.environ.get("JUDGE_HF_MAX_DB", "12"))
+JUDGE_MIN_VOICE = float(os.environ.get("JUDGE_MIN_VOICE", "0.5"))
+JUDGE_MIN_TEXT = float(os.environ.get("JUDGE_MIN_TEXT", "0.5"))
+JUDGE_ALIGN_MODEL = os.environ.get("JUDGE_ALIGN_MODEL", "")  # empty: per language (core/take_judge.py)
+JUDGE_DEVICE = os.environ.get("JUDGE_DEVICE", "cpu").lower()
 # cpu by default: a check model on the TTS card takes the VRAM OmniVoice needs for its peaks and makes it crash
 TAKE_CHECK_DEVICE = os.environ.get("TAKE_CHECK_DEVICE", "cpu").lower()
-TAKE_MIN_SIMILARITY = float(os.environ.get("TAKE_MIN_SIMILARITY", "0.5"))
+# Every accepted take under 0.7 in the 2026-11 BattleBots run was mangled ("fuego, bo ta", squeaks before the text)
+TAKE_MIN_SIMILARITY = float(os.environ.get("TAKE_MIN_SIMILARITY", "0.7"))
+# CPU threads of the take-check model; faster-whisper uses 4 unless told otherwise
+TAKE_CHECK_THREADS = max(1, int(os.environ.get("TAKE_CHECK_THREADS", str(os.cpu_count() or 4))))
 # A line whose every take is broken below this is left undubbed: the original beats gibberish
 TAKE_DROP_SIMILARITY = float(os.environ.get("TAKE_DROP_SIMILARITY", "0.3"))
 # Voice audition (Spec 002, 2.3): reference candidates kept per speaker, and the score a speaker needs to use line clips
@@ -139,6 +150,15 @@ REF_AUDITION_CANDIDATES = max(1, int(os.environ.get("REF_AUDITION_CANDIDATES", "
 AUDITION_LINE_REF_MIN = float(os.environ.get("AUDITION_LINE_REF_MIN", "0.8"))
 # One OmniVoice voice-design clip per speaker (gender/age/pitch from the profile) joins the reference candidates
 VOICE_DESIGN = os.environ.get("VOICE_DESIGN", "on").lower() not in ("0", "off", "false", "no")
+
+# Series memory (Spec 006): settled name spellings and the voice bank, kept between the episodes of a series
+SERIES_MEMORY = os.environ.get("SERIES_MEMORY", "on").lower() not in ("0", "off", "false", "no")
+VOICE_MATCH_MIN = float(os.environ.get("VOICE_MATCH_MIN", "0.6"))
+VOICE_BANK_CLIPS = max(1, int(os.environ.get("VOICE_BANK_CLIPS", "5")))
+# How names keep their sound: respell = a phonetic spelling in the target language (checked by a reading test);
+# phonemes = the translation keeps the original name and the TTS gets its English CMU phonemes ("[R EY1 Z ER0 ...]").
+# phonemes is an experiment: OmniVoice documents them for English text only.
+GLOSSARY_MODE = "phonemes" if os.environ.get("GLOSSARY_MODE", "respell").strip().lower() == "phonemes" else "respell"
 
 
 # Safe logging setup

@@ -17,7 +17,9 @@ class TestPickTestLine(unittest.TestCase):
                 "text": "Szczątki latają po całej arenie! To dwudziestokilogramowy element, który pędzi bardzo szybko!",
             },
         ]
-        self.assertEqual(pick_test_line(drafts, "A", "pl"), "Ajs-wejw zadaje Rejzor-bakowi poważne obrażenia.")
+        # The line with glossary respellings ("Ajs-wejw") is heard as the English name: a line without one goes first
+        self.assertEqual(pick_test_line(drafts, "A", "pl"), drafts[3]["text"])
+        self.assertEqual(pick_test_line(drafts[:3], "A", "pl"), drafts[2]["text"])
 
     def test_no_line_for_a_speaker_with_only_interjections(self):
         self.assertIsNone(pick_test_line([{"speaker": "A", "text": "O!"}], "A", "pl"))
@@ -30,40 +32,65 @@ class TestAuditionVoices(unittest.TestCase):
         self.tts._run_synthesis = MagicMock()
         self.drafts = [{"speaker": "ANN", "text": "Ajs-wejw zadaje Rejzor-bakowi poważne obrażenia."}]
 
-    def run_audition(self, heard, durations):
-        checker = MagicMock(side_effect=heard)
+    def run_audition(self, scores, durations):
+        scorer = MagicMock(side_effect=scores)
         with (
             patch("core.voice_audition.os.path.exists", return_value=True),
             patch("core.voice_audition.os.remove"),
             patch("core.voice_audition.FFmpegWrapper.get_duration", side_effect=durations),
         ):
-            return audition_voices(self.tts, checker, self.drafts, "pl", "/tmp", SegmentSynchronizer.is_swallowed), checker
+            return audition_voices(self.tts, scorer, self.drafts, "pl", "/tmp", SegmentSynchronizer.is_swallowed), scorer
 
-    def test_ranks_the_candidate_that_clones_intelligibly_first(self):
-        scores, _ = self.run_audition(["Naf! Naf!", "Ajs-wejw zadaje Rejzor-bakowi poważne obrażenia."], [3.0, 3.2])
+    def test_ranks_the_candidate_that_clones_best_first(self):
+        scores, scorer = self.run_audition([0.2, 0.95], [3.0, 3.2])
 
-        self.assertLess(scores["ANN"]["shout.wav"], 0.5)
-        self.assertGreater(scores["ANN"]["calm.wav"], 0.9)
+        self.assertEqual(scores["ANN"], {"shout.wav": 0.2, "calm.wav": 0.95})
+        self.assertEqual(scorer.call_args_list[1].args[1:], (self.drafts[0]["text"], "pl", "calm.wav"))
         self.tts.apply_audition(scores, 0.8)
         self.assertEqual(self.tts.speaker_refs["ANN"], ["calm.wav", "shout.wav"])
         self.assertNotIn("ANN", self.tts.line_refs_off)
 
-    def test_swallowed_audition_take_scores_zero_without_asking_whisper(self):
-        scores, checker = self.run_audition(["Ajs-wejw zadaje Rejzor-bakowi poważne obrażenia."], [0.4, 3.2])
+    def test_swallowed_audition_take_scores_zero_without_asking_the_judge(self):
+        scores, scorer = self.run_audition([0.9], [0.4, 3.2])
 
         self.assertEqual(scores["ANN"]["shout.wav"], 0.0)
-        self.assertEqual(checker.call_count, 1)
+        self.assertEqual(scorer.call_count, 1)
 
     def test_synthesis_error_scores_zero(self):
         self.tts._run_synthesis.side_effect = [RuntimeError("HTTP 500"), None]
-        scores, _ = self.run_audition(["Ajs-wejw zadaje Rejzor-bakowi poważne obrażenia."], [3.2])
+        scores, _ = self.run_audition([1.0], [3.2])
 
         self.assertEqual(scores["ANN"], {"shout.wav": 0.0, "calm.wav": 1.0})
 
-    def test_speaker_is_left_out_when_the_checker_cannot_tell(self):
+    def test_speaker_is_left_out_when_the_judge_cannot_tell(self):
         scores, _ = self.run_audition([None, None], [3.0, 3.2])
 
         self.assertEqual(scores, {})
+
+
+class TestGenericDesignedVoice(unittest.TestCase):
+    def test_speaker_without_profile_or_gender_gets_a_generic_designed_voice(self):
+        from core.voice_audition import design_voices
+
+        tts = TTSManager(inference_lock=None, temp_dir="/tmp", speaker_refs={}, abort_event=MagicMock())
+        tts.set_speaker_refs({"ANN": ["shout.wav"]})
+        tts.engine = MagicMock()
+        tts.engine.design.return_value = True
+        tts.status = "READY"
+        drafts = [
+            {"speaker": "ANN", "text": "Gotowi Strażnicy Gór Skalistych, pokażcie swoją moc!"},
+            {"speaker": "unknown", "text": "Raz, dwa, trzy, gotowi do startu, zaczynamy!"},
+        ]
+        with (
+            patch("core.voice_audition.os.path.exists", return_value=True),
+            patch("core.voice_audition.os.path.getsize", return_value=50000),
+            patch("core.voice_audition.write_ref_text"),
+        ):
+            designed = design_voices(tts, {"ANN": {"gender": "unknown"}}, drafts, "pl", "/tmp")
+
+        self.assertEqual(set(designed), {"ANN", "unknown"})
+        # A single line is spoken in the design clip even though it is also the test line
+        self.assertEqual([c.args[1] for c in tts.engine.design.call_args_list], ["", ""])
 
 
 if __name__ == "__main__":
@@ -79,7 +106,11 @@ class TestVoiceDesign(unittest.TestCase):
             "male, middle-aged, low pitch",
         )
         self.assertEqual(voice_instruct({"gender": "Female", "desc": "Energetic host"}), "female")
-        self.assertIsNone(voice_instruct({"gender": "unknown", "desc": "Crowd"}))
+        # Nothing known: OmniVoice picks a generic voice
+        self.assertEqual(voice_instruct({"gender": "unknown", "desc": "Crowd"}), "")
+        # Whole words only: a man telling his childhood story is no child
+        self.assertEqual(voice_instruct({"gender": "male", "desc": "Recounts his childhood story"}), "male")
+        self.assertEqual(voice_instruct({"gender": "unknown", "desc": "Younger announcer"}), "young adult")
 
     def test_designed_clip_joins_the_candidates_and_is_never_lent(self):
         from core.voice_audition import design_voices

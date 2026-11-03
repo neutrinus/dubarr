@@ -122,3 +122,46 @@ def test_text_similarity_tolerates_phonetic_spellings_but_not_noise():
     assert text_similarity(text, "Aaaa! Aaaa!") < 0.5
     assert text_similarity(text, "") == 0.0
     assert text_similarity("", "anything") == 1.0
+
+
+def test_respelling_that_loses_a_consonant_fails():
+    from utils import respelling_heard_as
+
+    assert not respelling_heard_as("Razorback", "Rayorbeck")  # "Rej-or-bek" lost the z
+    assert not respelling_heard_as("Ice Wave", "Ice Way")
+
+
+@pytest.mark.parametrize(
+    "term,heard",
+    [
+        ("Razorback", "Rayzorbak"),
+        ("Hyneman", "Hineman"),
+        ("Mjollnir", "Myolnir"),
+        ("Disposable Hero", "Dispozebel Hiro"),
+        ("James", "Jayms"),
+        ("Sallad", "Salad"),
+    ],
+)
+def test_close_respellings_pass(term, heard):
+    from utils import respelling_heard_as
+
+    assert respelling_heard_as(term, heard)
+
+
+def test_clean_arpabet():
+    from utils import clean_arpabet
+
+    assert clean_arpabet("R EY1 Z ER0 B AE2 K") == "R EY1 Z ER0 B AE2 K"
+    assert clean_arpabet("[ay1 s] w ey1 v") == "AY1 S W EY1 V"
+    assert clean_arpabet("R EI1 Z") == ""  # EI is not ARPAbet
+    assert clean_arpabet("") == ""
+
+
+def test_apply_phonemes_keeps_polish_endings():
+    from utils import apply_phonemes
+
+    phonemes = {"Razorback": "R EY1 Z ER0 B AE2 K", "Ice Wave": "AY1 S W EY1 V", "Ice": "AY1 S"}
+    assert apply_phonemes("Razorbackowi pękł nos, a Ice Wave wygrywa.", phonemes) == (
+        "[R EY1 Z ER0 B AE2 K]owi pękł nos, a [AY1 S W EY1 V] wygrywa."
+    )
+    assert apply_phonemes("Bez nazw.", {}) == "Bez nazw."

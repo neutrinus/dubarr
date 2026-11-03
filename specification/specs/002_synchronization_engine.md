@@ -37,21 +37,30 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
     -   longer than the limit: speed up to the limit, but not above `TTS_MAX_SPEEDUP` (default 1.2).
     Long lines are synthesized in sentence chunks; each chunk gets its share of the target and of the limit.
 
-4.  **Broken-take check.** A take is broken when it is
-    -   *swallowed*: far shorter than its text can be spoken (more than `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND`, default
-        9 syllables per second); the model produced mostly silence, which OmniVoice then trims; or
-    -   *unintelligible* (only with `TAKE_CHECK=on`, the default): Whisper transcribes the take in the target language
-        (no VAD, no conditioning on previous text) and the letters-only similarity to its text is under
-        `TAKE_MIN_SIMILARITY` (default 0.5). This catches noise, screams and gibberish cloned from a noisy voice
-        reference. Lines under 4 syllables ("Wow!") are not checked, the ASR spells interjections too freely; or
-    -   *missing*: the TTS returned no usable audio (an empty file or an error).
-    A broken take is synthesized again with the next voice reference (2.3), up to 2 extra syntheses. It is never
-    accepted while a sound one exists; when every reference fails, the least broken take is kept (the most similar
-    one; swallowed counts as worst). The check model runs on the CPU by default: on the TTS's GPU it took the VRAM
-    OmniVoice needs for long takes and made it crash. `TAKE_CHECK_DEVICE=auto` puts it on a GPU only when one has
-    8.5 GB free (the model plus the TTS headroom). It is released after Stage 5.
-    `TAKE_CHECK` modes: `on` checks the voice audition (2.3) and every take; `audition` only the audition, which
-    costs a few minutes instead of doubling Stage 5; `off` neither (only the swallowed check stays).
+4.  **Takes and the judge.** Each synthesis makes `TAKE_VERSIONS` (2) takes of the text at once, cloning the
+    speaker's first two references in the order of 2.3. The **judge** scores each take in layers, cheapest first; a
+    take that fails a layer is broken and the later layers skip it:
+    1.  *missing or swallowed*: no usable audio, or far shorter than its text can be spoken (more than
+        `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND`, default 9 syllables per second): mostly silence, trimmed by OmniVoice.
+    2.  *artifacts* (signal only, milliseconds): a squeak, i.e. frames with more than 35% of their energy above
+        3.5 kHz and that band `JUDGE_HF_MAX_DB` (12 dB) above its usual level in the take, for 300 ms or more (the
+        6:53 squeaks of the measured run: +29 dB for 1.08 s, the only such event in the episode); clipping (more than
+        0.1% of samples at full scale); a silence over 1.2 s inside the take.
+    3.  *voice match*: the take's voiceprint (Spec 006, 4.1) against the print of the reference it cloned. Under
+        `JUDGE_MIN_VOICE` (0.5) the clone is not that voice: the model drifted into another voice or into noise.
+    4.  *text match*: a CTC speech model of the target language (`JUDGE_ALIGN_MODEL`; default
+        `jonatasgrosman/wav2vec2-large-xlsr-53-polish` for Polish, 300 M parameters, and `facebook/mms-1b-all` with
+        the language's adapter for other languages; on the CPU) scores how well the take's text fits the audio: the
+        CTC loss of the text per character, turned into a score in [0, 1] (`exp(-loss / chars)`). It writes no
+        transcript and has no fixed 30 s window, so it costs well under Whisper's 10 s per take. Under
+        `JUDGE_MIN_TEXT` (0.5) the take is gibberish or lost words. Lines under 4 syllables skip this layer.
+    A take's **judge score** is its text match (1.0 for lines that skip layer 4), halved when it failed the voice match
+    and 0 when it was swallowed. The sound take with the best judge score goes on; when both versions are broken,
+    one more synthesis is made with the next reference, up to 2 extra. A broken take is never accepted while a sound
+    one exists; when every take is broken the least broken is kept (the best score; swallowed counts as worst).
+    `TAKE_CHECK` modes: `judge` (default) as above, also for the voice audition; `whisper` runs the judge and, for
+    measurement only, the old Whisper similarity next to it (both in the production report); `off` keeps only
+    layers 1 and 2 (and no audition). The judge is cheap, so the earlier values `on` and `audition` read as `judge`. The judge's models are loaded on first use and released after Stage 5.
 
 5.  **Acceptance check.** Accepted when `actual <= limit × MAX_ACCEPT_SPEEDUP + 0.05 s` and
     `actual >= MIN_FILL_RATIO × target` (default 0.7). A short take is kept when the LLM finds nothing to add (it
@@ -78,30 +87,35 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
 ### 2.3 Voice Reference Strategy
 **Voice audition** (before the sync loop, `TAKE_CHECK` `on` or `audition`). Each speaker's reference candidates
 (Spec 001, 2.4) synthesize the same test line: the speaker's own draft line (first target language) closest to
-18 syllables, at natural pace. Whisper scores each take as in 2.2 step 4 (a swallowed take scores 0). The candidates
+18 syllables, at natural pace, preferring a line without glossary respellings ("Ajś-łejw" is heard as "Ice Wave",
+which lowers the score of every candidate alike). The judge scores each take as in 2.2 step 4 (its judge score). The candidates
 are ranked by that score, best first. A speaker whose best score is under `AUDITION_LINE_REF_MIN` (default 0.8) does
 not use line clips: a voice that clones badly from its cleanest clips (announcers shouting over the arena) clones
 worse from an arbitrary line. Without the audition the Stage 4 order is kept and line clips are used.
 
 **Designed voice** (`VOICE_DESIGN`, on by default). Before the audition, OmniVoice voice design synthesizes one clip
-per speaker with a known gender from the attributes it understands: gender, age and pitch, taken from the speaker
-profile (Stage 3; e.g. "male, middle-aged, low pitch"). The clip speaks the speaker's own lines (about 30 syllables,
-not the audition test line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
+per speaker that has lines, from the attributes it understands: gender, age and pitch, taken from the speaker
+profile (Stage 3; e.g. "male, middle-aged, low pitch"; age words match whole words only). With nothing known OmniVoice
+picks a generic voice. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
+it is the speaker's only line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
 other reference, so the voice stays the same across the video. The audition decides whether it beats the speaker's
 own clips (voice design was trained on Chinese and English only and may be unstable in other languages). It gives a
-voice to speakers without any clean clip; it is never lent to another speaker.
+voice to speakers without any clean clip.
+
+A speaker only ever speaks with **its own voice** (its clips, line clips or designed voice): another speaker's voice in
+its mouth confuses the viewer more than a generic voice does.
 
 References are tried in this order; a retry after a broken take skips the ones already tried for that line:
 1.  **Line clip:** a clean clip of the line itself when it is 3-10 s long (carries the scene's emotion). Clean means
     ZCR < 0.25 and a clarity (vocals over the rest, see Spec 001, 2.4) of at least `REF_MIN_CLARITY_DB`; a line shouted
     over a cheering crowd uses the speaker's references instead.
-2.  **Speaker's references:** the candidates that scored at least `TAKE_MIN_SIMILARITY` in the audition (all of them
+2.  **Speaker's references:** the candidates that scored at least `JUDGE_MIN_TEXT` in the audition (all of them
     without an audition), in rank order.
 3.  **Last Good Sample:** the last clean line clip of this speaker.
-4.  **Borrowed voice:** the best reference of another speaker of the **same gender** (speaker profiles from Stage 3),
-    best audition score first. An intelligible voice of the right gender beats a broken clone.
-5.  **Speaker's weak references:** the candidates that scored under `TAKE_MIN_SIMILARITY`.
-6.  **Global fallback:** any other reference, best audition score first.
+4.  **Designed voice**, when it scored under `JUDGE_MIN_TEXT` (a better score ranks it in step 2).
+5.  **Speaker's weak references:** the clips that scored under `JUDGE_MIN_TEXT`.
+When all of these were tried, the least broken take is kept (2.2 step 4). Only a speaker with no voice of its own at all
+(no clip, design off or failed) uses another speaker's last good sample or reference, so the line is still dubbed.
 
 ### 2.4 Post-Processing (Speed Adjustment)
 A take that would run past `max_end` starts earlier in the mix, by its overrun but not before `min_start` and never
@@ -115,8 +129,13 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `MIN_FILL_RATIO` (0.7): below this share of the target a take is refined as too short.
 -   `MAX_ACCEPT_SPEEDUP` (1.08): allowed overrun of the limit, sped up in the mix.
 -   `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` (9): faster than this means a swallowed take.
--   `TAKE_CHECK` (on | audition | off), `TAKE_MIN_SIMILARITY` (0.5), `TAKE_CHECK_DEVICE` (cpu): the intelligibility
-    check of the voice audition and of every take.
+-   `TAKE_CHECK` (judge | whisper | off), `TAKE_VERSIONS` (2): the judge of the voice audition and of every take, and
+    how many takes each synthesis makes.
+-   `JUDGE_HF_MAX_DB` (12), `JUDGE_MIN_VOICE` (0.5), `JUDGE_MIN_TEXT` (0.5), `JUDGE_ALIGN_MODEL`
+    (per language, see 2.2 step 4), `JUDGE_DEVICE` (cpu): the judge's layers. Thresholds to be tuned on measured runs
+    (`TAKE_CHECK=whisper`).
+-   `TAKE_MIN_SIMILARITY` (0.7), `TAKE_CHECK_DEVICE` (cpu), `TAKE_CHECK_THREADS` (all cores): the Whisper similarity
+    reported in `whisper` mode.
 -   `TAKE_DROP_SIMILARITY` (0.3): a line whose every take is broken below this is not dubbed.
 -   `VOICE_DESIGN` (on): one voice-design clip per speaker as an extra reference candidate.
 -   `REF_AUDITION_CANDIDATES` (3), `AUDITION_LINE_REF_MIN` (0.8): reference candidates per speaker, and the audition

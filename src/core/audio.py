@@ -64,8 +64,10 @@ def prep_audio(vpath: str, work_dir: str = TEMP_DIR) -> Tuple[str, str]:
 
 def analyze_audio(
     vocals_path: str, diar_manager, whisper_manager, original_path: str = None, work_dir: str = TEMP_DIR
-) -> Tuple[List, List, Dict]:
+) -> Tuple[List, List, Dict, Dict]:
     """Orchestrates diarization and transcription using provided managers with eager VRAM cleanup.
+
+    Returns (diarization, transcription, durations, speaker voiceprints).
 
     Diarization runs on the separated vocals. Whisper hears the original mix by default (ASR_SOURCE=original): it is
     trained on noisy audio, while Demucs can cut or distort speech under loud effects (Spec 001, 2.2).
@@ -80,6 +82,8 @@ def analyze_audio(
     t0 = time.perf_counter()
     logger.info("Stage 2a: Speaker Diarization...")
     diar_result = diar_manager.diarize(mpath)
+    prints = getattr(diar_manager, "embeddings", None)
+    prints = prints if isinstance(prints, dict) else {}
     durations["2a. Diarization"] = time.perf_counter() - t0
     diar_manager.shutdown()
     GPUManager.force_gc()  # Aggressive cleanup
@@ -99,7 +103,7 @@ def analyze_audio(
     whisper_manager.shutdown()
     GPUManager.force_gc()  # Aggressive cleanup
 
-    return diar_result, trans_result, durations
+    return diar_result, trans_result, durations, prints
 
 
 def mix_audio(bg: str, clips: List, out: str, work_dir: str = TEMP_DIR):
@@ -201,6 +205,27 @@ def get_audio_languages(vpath: str) -> List[str]:
         return langs
     except Exception:
         return []
+
+
+def voice_level(vocals_path: str, start: float, end: float) -> Optional[float]:
+    """Mean level (dB) of the separated voice in a span; None when it cannot be measured."""
+    if end <= start or not os.path.exists(vocals_path):
+        return None
+    return FFmpegWrapper.mean_volume(vocals_path, start, end - start)
+
+
+def calm_bonus(level: Optional[float], median: Optional[float]) -> int:
+    """Reference score for how calm a line is compared with the same speaker's usual level (Spec 001, 2.4).
+
+    Shouting (4 dB or more above the speaker's median) loses 5 points per dB above 3 dB, up to 40; a line within
+    2 dB of the median gains 5. The speaker is only compared with itself, so a loud voice is not penalised.
+    """
+    if level is None or median is None:
+        return 0
+    above = level - median
+    if above >= 4.0:
+        return -min(40, round(5 * (above - 3.0)))
+    return 5 if abs(above) <= 2.0 else 0
 
 
 def clarity_db(vocals_path: str, start: float, end: float) -> Optional[float]:
