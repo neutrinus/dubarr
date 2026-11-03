@@ -153,7 +153,7 @@ why the image used to need separate venvs.
 | `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence) and is synthesized again with another voice reference. |
 | `REF_MIN_CLARITY_DB` | `3.0` | A voice reference whose voice is less than this many dB above the rest of the mix (crowd, engines) is avoided; OmniVoice would clone the noise. |
 | `TAKE_CHECK` / `TAKE_MIN_SIMILARITY` | `on` / `0.5` | Whisper transcribes every take; one that sounds less like its text than this (noise, screams, gibberish) is synthesized again with another voice reference. |
-| `TAKE_CHECK_DEVICE` | `auto` | `auto` loads the check model on a GPU with 2.5 GB free, else the CPU; `cpu` forces the CPU. |
+| `TAKE_CHECK_DEVICE` | `cpu` | Where the take-check Whisper runs. `auto` uses a GPU only with 8.5 GB free; on the TTS card it starves OmniVoice. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
 | `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
 | `TTS_CPU_THREADS` | all cores | Threads used when synthesis runs on the CPU. |

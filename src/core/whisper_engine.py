@@ -17,6 +17,8 @@ except ImportError:
     decode_audio = None
 
 SAMPLE_RATE = 16000
+# Free VRAM a GPU needs before TAKE_CHECK_DEVICE=auto puts the take-check model on it
+TAKE_CHECK_GPU_MB = 8500
 # What Whisper writes over noise or music when nobody speaks; never kept from the gap pass
 HALLUCINATIONS = {
     "you",
@@ -200,10 +202,11 @@ class WhisperManager:
         return sorted(res + added, key=lambda x: x["start"])
 
     def _load_take_model(self):
-        """Loads the take-check model next to the TTS: on a GPU with room to spare, otherwise on the CPU."""
+        """Loads the take-check model on the CPU (default), or with TAKE_CHECK_DEVICE=auto on a GPU with room to spare."""
         device = "cpu"
         if TAKE_CHECK_DEVICE != "cpu":
-            device = GPUManager.get_best_gpu(needed_mb=2500, purpose="Take check", timeout=0, fallback="cpu")
+            # The model (~2.5 GB) plus the headroom OmniVoice needs for long takes on the same card
+            device = GPUManager.get_best_gpu(needed_mb=TAKE_CHECK_GPU_MB, purpose="Take check", timeout=0, fallback="cpu")
         device_type = "cuda" if "cuda" in device else "cpu"
         device_index = int(device.split(":")[-1]) if device_type == "cuda" else 0
         compute_type = "float16" if device_type == "cuda" else "int8"

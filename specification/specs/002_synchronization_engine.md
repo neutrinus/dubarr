@@ -46,8 +46,9 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
         4 syllables ("Wow!") are not checked, the ASR spells interjections too freely.
     A broken take is synthesized again with the next voice reference (line clip -> golden -> last good), up to 2 extra
     syntheses. It is never accepted while a sound one exists; when every reference fails, the least broken take is
-    kept (the most similar one; swallowed counts as worst). The check model is loaded next to the TTS on a GPU with
-    2.5 GB free, otherwise on the CPU (`TAKE_CHECK_DEVICE=cpu` forces it), and released after Stage 5.
+    kept (the most similar one; swallowed counts as worst). The check model runs on the CPU by default: on the TTS's
+    GPU it took the VRAM OmniVoice needs for long takes and made it crash. `TAKE_CHECK_DEVICE=auto` puts it on a GPU
+    only when one has 8.5 GB free (the model plus the TTS headroom). It is released after Stage 5.
 
 5.  **Acceptance check.** Accepted when `actual <= limit × MAX_ACCEPT_SPEEDUP + 0.05 s` and
     `actual >= MIN_FILL_RATIO × target` (default 0.7). A short take is kept when the LLM finds nothing to add (it
@@ -89,5 +90,5 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `MIN_FILL_RATIO` (0.7): below this share of the target a take is refined as too short.
 -   `MAX_ACCEPT_SPEEDUP` (1.08): allowed overrun of the limit, sped up in the mix.
 -   `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` (9): faster than this means a swallowed take.
--   `TAKE_CHECK` (on), `TAKE_MIN_SIMILARITY` (0.5), `TAKE_CHECK_DEVICE` (auto): the intelligibility check of every take.
+-   `TAKE_CHECK` (on), `TAKE_MIN_SIMILARITY` (0.5), `TAKE_CHECK_DEVICE` (cpu): the intelligibility check of every take.
 -   `zcr_threshold` (0.25): Zero Crossing Rate limit for line-clip references.

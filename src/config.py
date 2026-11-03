@@ -120,7 +120,8 @@ REF_MIN_CLARITY_DB = float(os.environ.get("REF_MIN_CLARITY_DB", "3.0"))
 # Take check (Spec 002): every take is transcribed and compared with its text; below TAKE_MIN_SIMILARITY it is
 # unintelligible (noise, screams, mangled words) and synthesized again with another voice reference.
 TAKE_CHECK = os.environ.get("TAKE_CHECK", "on").lower() not in ("0", "off", "false", "no")
-TAKE_CHECK_DEVICE = os.environ.get("TAKE_CHECK_DEVICE", "auto").lower()
+# cpu by default: a check model on the TTS card takes the VRAM OmniVoice needs for its peaks and makes it crash
+TAKE_CHECK_DEVICE = os.environ.get("TAKE_CHECK_DEVICE", "cpu").lower()
 TAKE_MIN_SIMILARITY = float(os.environ.get("TAKE_MIN_SIMILARITY", "0.5"))
 
 

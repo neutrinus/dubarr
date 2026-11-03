@@ -89,5 +89,25 @@ class TestGapPass(unittest.TestCase):
         self.assertAlmostEqual(res[1]["start"], 9.0 + 1.2)
 
 
+class TestTakeCheckDevice(unittest.TestCase):
+    def test_take_check_model_stays_off_the_gpu_by_default(self):
+        mgr = WhisperManager(inference_lock=None)
+        with patch("core.whisper_engine.WhisperModel") as model, patch("core.whisper_engine.GPUManager.get_best_gpu") as gpu:
+            with patch("core.whisper_engine.TAKE_CHECK_DEVICE", "cpu"):
+                mgr._load_take_model()
+        gpu.assert_not_called()
+        self.assertEqual(model.call_args.kwargs["device"], "cpu")
+
+    def test_auto_needs_room_for_the_tts_as_well(self):
+        mgr = WhisperManager(inference_lock=None)
+        with (
+            patch("core.whisper_engine.WhisperModel"),
+            patch("core.whisper_engine.GPUManager.get_best_gpu", return_value="cpu") as gpu,
+        ):
+            with patch("core.whisper_engine.TAKE_CHECK_DEVICE", "auto"):
+                mgr._load_take_model()
+        self.assertGreaterEqual(gpu.call_args.kwargs["needed_mb"], 8000)
+
+
 if __name__ == "__main__":
     unittest.main()
