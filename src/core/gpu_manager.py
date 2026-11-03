@@ -2,6 +2,7 @@ import time
 import logging
 import gc
 import subprocess
+from typing import Optional
 
 try:
     import torch
@@ -56,7 +57,7 @@ class GPUManager:
             torch.cuda.ipc_collect()
 
     @staticmethod
-    def get_best_gpu(needed_mb: int, purpose: str = "Unknown", timeout: int = 600):
+    def get_best_gpu(needed_mb: int, purpose: str = "Unknown", timeout: int = 600, fallback: Optional[str] = None):
         """
         Finds the best GPU for the task and returns its PyTorch device string (e.g. 'cuda:0').
         Uses UUID mapping to ensure correct device selection.
@@ -111,6 +112,8 @@ class GPUManager:
             best_free = all_gpus[0] if all_gpus else {"free": 0, "name": "None"}
             if elapsed > timeout:
                 logger.error(f"GPU Manager: Timeout waiting for {needed_mb}MB for {purpose}.")
+                if fallback:
+                    return fallback
                 # Return the one with most space anyway, or CPU
                 return "cuda:0" if torch.cuda.device_count() > 0 else "cpu"
 

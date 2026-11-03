@@ -19,10 +19,17 @@ The system verifies model presence and downloads missing files. To maximize avai
     *   `vocals.mp3` (Clean speech separated by Demucs)
 
 ### 2.2 Stage 2: Audio Analysis
-*   **Input:** `vocals.wav`.
+*   **Input:** `vocals.wav` (diarization, voice references) and the original mix (transcription).
 *   **Action:**
     1.  **Diarization:** Pyannote identifies speaker segments. Model is unloaded immediately after.
     2.  **Transcription:** Whisper converts speech to text. Model is loaded on-demand and unloaded immediately after.
+        Whisper hears the original mix (`ASR_SOURCE=original`, default; `vocals` uses the Demucs stem): it is
+        trained on noisy audio, while separation can cut or distort speech under loud effects. Diarization and voice
+        references keep using the separated vocals. The first pass uses VAD and word timestamps. VAD also drops speech under loud noise (commentary over a fight,
+        a referee's countdown), so a second pass (`ASR_GAP_PASS`, on) transcribes every gap of at least `ASR_GAP_MIN`
+        (2 s) without VAD and keeps only confident segments: `no_speech_prob < 0.5`, `avg_logprob >= -0.8`,
+        compression ratio <= 2.4, mean word probability >= 0.5, and not a known hallucination ("Thank you.",
+        "Instruction.").
 *   **Output:**
     *   `diarization.json` (Time ranges mapped to speakers).
     *   `transcription.json` (Text segments with timestamps).
@@ -32,7 +39,7 @@ Whisper splits speech into segments that often end mid-sentence. Translating suc
 duplicates content, because the target language orders the sentence differently. The script is therefore built from
 **dialogue units**:
 1.  Each Whisper segment gets the speaker with the largest overlap. A segment whose length is far beyond what its words
-    can take (e.g. one word stretched over 25 s of music) is clamped to `max(2 s, 1 s + syllables / 1.5)`.
+    can take (e.g. one word stretched over 25 s of music) is clamped to `max(2 s, 1 s + syllables / 3)`.
 2.  Consecutive segments of the same speaker are joined when the pause between them is under `MERGE_MAX_GAP` (0.3 s) and
     the unit stays under `MERGE_MAX_DURATION` (10 s), **or** when the earlier one does not end a sentence (no `.`, `!`,
     `?`, `…`), the pause is under `SENTENCE_MAX_GAP` (1.5 s) and the unit stays under `SENTENCE_MAX_DURATION` (20 s).

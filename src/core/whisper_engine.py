@@ -2,7 +2,7 @@ import logging
 import threading
 import gc
 from typing import List, Dict, Optional, Tuple
-from config import WHISPER_MODEL, MOCK_MODE
+from config import WHISPER_MODEL, MOCK_MODE, TAKE_CHECK_DEVICE, ASR_GAP_PASS, ASR_GAP_MIN
 from core.gpu_manager import GPUManager
 
 try:
@@ -11,9 +11,24 @@ except ImportError:
     torch = None
 
 try:
-    from faster_whisper import WhisperModel
+    from faster_whisper import WhisperModel, decode_audio
 except ImportError:
     WhisperModel = None
+    decode_audio = None
+
+SAMPLE_RATE = 16000
+# What Whisper writes over noise or music when nobody speaks; never kept from the gap pass
+HALLUCINATIONS = {
+    "you",
+    "thankyou",
+    "thankyouforwatching",
+    "thanksforwatching",
+    "pleasesubscribe",
+    "instruction",
+    "music",
+    "applause",
+    "bye",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +44,33 @@ def _word_bounds(segment) -> Tuple[float, float]:
     return start, end
 
 
+def _gaps(segments: List[Dict], total: float, min_gap: float) -> List[Tuple[float, float]]:
+    """Spans of at least ``min_gap`` seconds that no segment covers."""
+    gaps, cursor = [], 0.0
+    for seg in sorted(segments, key=lambda x: x["start"]):
+        if seg["start"] - cursor >= min_gap:
+            gaps.append((cursor, seg["start"]))
+        cursor = max(cursor, seg["end"])
+    if total - cursor >= min_gap:
+        gaps.append((cursor, total))
+    return gaps
+
+
+def _plausible(segment) -> bool:
+    """A gap-pass segment Whisper is sure of: real speech, not a hallucination over noise."""
+    letters = "".join(ch for ch in segment.text.lower() if ch.isalnum())
+    if not letters or letters in HALLUCINATIONS:
+        return False
+    if segment.no_speech_prob >= 0.5 or segment.avg_logprob < -0.8:
+        return False
+    if getattr(segment, "compression_ratio", 1.0) > 2.4:  # "Go! Go! Go! Go! ..." loops
+        return False
+    words = getattr(segment, "words", None) or []
+    if words and sum(w.probability for w in words) / len(words) < 0.5:
+        return False
+    return True
+
+
 class WhisperManager:
     def __init__(
         self,
@@ -38,6 +80,10 @@ class WhisperManager:
         self.inference_lock = inference_lock
         self.model = None
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
+        # Separate model for the Stage 5 take check, loaded on first use and released by shutdown_take_check()
+        self.take_model = None
+        self.take_device = "cpu"
+        self._take_lock = threading.Lock()
 
     def load_model(self):
         """Loads the Whisper model into VRAM or RAM. Skips in MOCK_MODE."""
@@ -115,7 +161,85 @@ class WhisperManager:
                     logger.info(f"Whisper Progress: {x.end:.2f}s / {info.duration:.2f}s transcribed...")
 
         logger.info(f"Whisper: Completed transcription. Found {len(res)} segments.")
+        if ASR_GAP_PASS:
+            res = self._fill_gaps(audio_path, res, info.duration, info.language)
         return res
+
+    def _fill_gaps(self, audio_path: str, res: List[Dict], total: float, language: Optional[str]) -> List[Dict]:
+        """Transcribes the gaps of the first pass again, without VAD, and adds the confident segments.
+
+        VAD drops speech under loud noise (commentary over a fight, a referee's countdown); without it Whisper hears
+        it, but also hallucinates over music, hence the strict filter in ``_plausible``.
+        """
+        gaps = _gaps(res, total, ASR_GAP_MIN)
+        if not gaps or decode_audio is None:
+            return res
+        audio = decode_audio(audio_path, sampling_rate=SAMPLE_RATE)
+        added = []
+        for g_start, g_end in gaps:
+            clip = audio[int(g_start * SAMPLE_RATE) : int(g_end * SAMPLE_RATE)]
+            if len(clip) < SAMPLE_RATE // 2:
+                continue
+            segments, _ = self.model.transcribe(
+                clip, language=language, word_timestamps=True, vad_filter=False, condition_on_previous_text=False
+            )
+            for x in segments:
+                if not _plausible(x):
+                    continue
+                start, end = _word_bounds(x)
+                segment = {
+                    "start": g_start + start,
+                    "end": min(g_start + end, g_end),
+                    "text": x.text.strip(),
+                    "avg_logprob": x.avg_logprob,
+                    "no_speech_prob": x.no_speech_prob,
+                }
+                logger.info(f"Whisper gap pass: +[{segment['start']:.2f}-{segment['end']:.2f}] {segment['text']}")
+                added.append(segment)
+        logger.info(f"Whisper gap pass: {len(added)} segments added from {len(gaps)} gaps.")
+        return sorted(res + added, key=lambda x: x["start"])
+
+    def _load_take_model(self):
+        """Loads the take-check model next to the TTS: on a GPU with room to spare, otherwise on the CPU."""
+        device = "cpu"
+        if TAKE_CHECK_DEVICE != "cpu":
+            device = GPUManager.get_best_gpu(needed_mb=2500, purpose="Take check", timeout=0, fallback="cpu")
+        device_type = "cuda" if "cuda" in device else "cpu"
+        device_index = int(device.split(":")[-1]) if device_type == "cuda" else 0
+        compute_type = "float16" if device_type == "cuda" else "int8"
+        logging.info(f"Whisper: Loading take-check model '{WHISPER_MODEL}' on {device}...")
+        self.take_model = WhisperModel(WHISPER_MODEL, device=device_type, device_index=device_index, compute_type=compute_type)
+        self.take_device = device
+
+    def transcribe_take(self, audio_path: str, lang: str) -> Optional[str]:
+        """What Whisper hears in a synthesized take, in the target language; None when it cannot check.
+
+        No VAD (a take is speech by design) and no conditioning on previous text, so a broken take is not "repaired"
+        into plausible words. Thread-safe: the Stage 5 orchestrator threads share one model.
+        """
+        if MOCK_MODE or WhisperModel is None:
+            return None
+        with self._take_lock:
+            if self.take_model is None:
+                try:
+                    self._load_take_model()
+                except Exception as e:
+                    logging.error(f"Whisper: Take-check model failed to load: {e}")
+                    return None
+            segments, _ = self.take_model.transcribe(
+                audio_path, language=lang, vad_filter=False, condition_on_previous_text=False, beam_size=1
+            )
+            return " ".join(s.text.strip() for s in segments).strip()
+
+    def shutdown_take_check(self):
+        """Releases the take-check model after Stage 5."""
+        with self._take_lock:
+            if self.take_model:
+                del self.take_model
+                self.take_model = None
+                gc.collect()
+                if torch and "cuda" in self.take_device:
+                    torch.cuda.empty_cache()
 
     def shutdown(self):
         """Explicitly releases the model from VRAM."""

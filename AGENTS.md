@@ -67,7 +67,7 @@ specification/             ARCHITECTURE.md + numbered feature specs (the intende
 ## Pipeline at a glance
 
 1. **Separation**: ffmpeg extracts stereo, Demucs `htdemucs_ft` isolates vocals.
-2. **Analysis**: pyannote diarization, then faster-whisper transcription (models are loaded and unloaded one at a time).
+2. **Analysis**: pyannote diarization on the vocals, then faster-whisper transcription of the original mix (models are loaded and unloaded one at a time).
    `DubbingPipeline._create_script` assigns speakers to Whisper segments and merges short same-speaker lines.
 2b. **Media metadata**: `core/media_context.py` identifies the show/episode or movie from the path (Sonarr/Radarr naming)
    and fetches synopsis and cast (character, actor, gender) from `.nfo` files, TVmaze or TMDB. Failures only log.
@@ -131,6 +131,8 @@ why the image used to need separate venvs.
 | `API_USER` / `API_PASS` | `dubarr` / `dubarr` | Basic auth for `/webhook`, `/upload`, `/download`, `/debug`. |
 | `PUID` / `PGID` | `1000` | Container user, handled by `entrypoint.sh`. |
 | `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
+| `ASR_SOURCE` | `original` | What Whisper transcribes: the original mix or the Demucs `vocals`. Diarization and voice references always use the vocals. |
+| `ASR_GAP_PASS` / `ASR_GAP_MIN` | `on` / `2.0` | Second Whisper pass without VAD over gaps of at least this length (speech under noise); only confident segments are kept. |
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | Gemma 3 12B Q4_K_M (bartowski) | GGUF downloaded to `DATA_DIR/models` on first use. |
 | `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |
 | `LLM_API_MODEL` / `LLM_API_KEY` / `LLM_TIMEOUT` | none / none / `600` | Model name, key and per-request timeout for that server. |
@@ -148,6 +150,8 @@ why the image used to need separate venvs.
 | `TTS_FILL_RATIO` / `TTS_MIN_SPEED` / `TTS_MAX_SPEEDUP` | `0.9` / `0.88` / `1.2` | OmniVoice duration control: slow short takes down towards the original's timing, speed long ones up, both only within this range. |
 | `MIN_FILL_RATIO` | `0.7` | A take shorter than this share of the original's speech goes back to the LLM to restore content. |
 | `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence) and is synthesized again with another voice reference. |
+| `TAKE_CHECK` / `TAKE_MIN_SIMILARITY` | `on` / `0.5` | Whisper transcribes every take; one that sounds less like its text than this (noise, screams, gibberish) is synthesized again with another voice reference. |
+| `TAKE_CHECK_DEVICE` | `auto` | `auto` loads the check model on a GPU with 2.5 GB free, else the CPU; `cpu` forces the CPU. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
 | `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
 | `TTS_CPU_THREADS` | all cores | Threads used when synthesis runs on the CPU. |

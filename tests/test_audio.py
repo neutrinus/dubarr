@@ -29,6 +29,22 @@ class TestAudio(unittest.TestCase):
             self.assertIn("2a. Diarization", durs)
             self.assertIn("2b. Transcription", durs)
 
+    def test_whisper_hears_the_original_mix(self):
+        diar_mock, whisper_mock = MagicMock(), MagicMock()
+        whisper_mock.transcribe.return_value = []
+
+        with (
+            patch("infrastructure.ffmpeg.FFmpegWrapper.convert_audio") as convert,
+            patch("core.gpu_manager.GPUManager.force_gc"),
+        ):
+            with patch("core.audio.ASR_SOURCE", "original"):
+                analyze_audio("vocals.mp3", diar_mock, whisper_mock, "orig.wav")
+
+        self.assertEqual(convert.call_args_list[1].args[0], "orig.wav")
+        self.assertTrue(whisper_mock.transcribe.call_args.args[0].endswith("asr_mono.wav"))
+        self.assertTrue(diar_mock.diarize.call_args.args[0].endswith("mono.wav"))
+        self.assertFalse(diar_mock.diarize.call_args.args[0].endswith("asr_mono.wav"))
+
     def test_get_audio_languages(self):
         meta = {
             "streams": [

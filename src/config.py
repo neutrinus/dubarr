@@ -44,6 +44,12 @@ print(f"DEBUG: config.OUTPUT_FOLDER={OUTPUT_FOLDER}", flush=True)
 print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
+# Second transcription pass without VAD over the gaps the first pass left (commentary under arena noise, which VAD
+# drops); only confident, non-hallucinated segments are kept (Spec 001, 2.2).
+# What Whisper transcribes: the original mix (default) or the Demucs vocals; diarization always uses the vocals
+ASR_SOURCE = os.environ.get("ASR_SOURCE", "original").lower()
+ASR_GAP_PASS = os.environ.get("ASR_GAP_PASS", "on").lower() not in ("0", "off", "false", "no")
+ASR_GAP_MIN = float(os.environ.get("ASR_GAP_MIN", "2.0"))
 
 # Seconds per TTS request (raise it on CPU, synthesis is slow there)
 TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))
@@ -106,6 +112,12 @@ TRANSLATION_REVIEW = os.environ.get("TRANSLATION_REVIEW", "on").lower() not in (
 # faster than MAX_PLAUSIBLE_SYLLABLES_PER_SECOND was swallowed by the TTS and is synthesized again.
 MIN_FILL_RATIO = float(os.environ.get("MIN_FILL_RATIO", "0.7"))
 MAX_PLAUSIBLE_SYLLABLES_PER_SECOND = float(os.environ.get("MAX_PLAUSIBLE_SYLLABLES_PER_SECOND", "9.0"))
+
+# Take check (Spec 002): every take is transcribed and compared with its text; below TAKE_MIN_SIMILARITY it is
+# unintelligible (noise, screams, mangled words) and synthesized again with another voice reference.
+TAKE_CHECK = os.environ.get("TAKE_CHECK", "on").lower() not in ("0", "off", "false", "no")
+TAKE_CHECK_DEVICE = os.environ.get("TAKE_CHECK_DEVICE", "auto").lower()
+TAKE_MIN_SIMILARITY = float(os.environ.get("TAKE_MIN_SIMILARITY", "0.5"))
 
 
 # Safe logging setup

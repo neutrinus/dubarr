@@ -12,7 +12,7 @@ from typing import List, Optional
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_BEFORE_MAX, SLACK_GUARD
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
 from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION, SENTENCE_MAX_GAP, SENTENCE_MAX_DURATION
-from config import TRANSLATION_REVIEW
+from config import TRANSLATION_REVIEW, TAKE_CHECK
 from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
@@ -72,8 +72,13 @@ class DubbingPipeline:
         self.speaker_pans = {}
         self.abort_event = llm_manager.abort_event
         self.monitor = None
+        take_checker = getattr(whisper_manager, "transcribe_take", None) if TAKE_CHECK else None
         self.synchronizer = SegmentSynchronizer(
-            llm_manager=llm_manager, tts_manager=tts_manager, temp_dir=temp_dir, debug_mode=debug_mode
+            llm_manager=llm_manager,
+            tts_manager=tts_manager,
+            temp_dir=temp_dir,
+            debug_mode=debug_mode,
+            take_checker=take_checker,
         )
 
     def _cleanup_debug(self, fname):
@@ -135,7 +140,7 @@ class DubbingPipeline:
         timed against a slot nobody speaks in.
         """
         words = count_syllables(segment.get("text", ""), "en")
-        cap = max(2.0, 1.0 + words / 1.5)
+        cap = max(2.0, 1.0 + words / 3.0)
         if segment["end"] - segment["start"] > cap:
             segment = dict(segment, end=segment["start"] + cap)
         return segment
@@ -491,7 +496,7 @@ class DubbingPipeline:
 
         a_stereo, vocals = self._run_step("Stage 1: Audio Separation", prep_audio, task_id, vpath)
         analysis_data = self._run_step(
-            "Stage 2: Audio Analysis", analyze_audio, task_id, vocals, self.diar_manager, self.whisper_manager
+            "Stage 2: Audio Analysis", analyze_audio, task_id, vocals, self.diar_manager, self.whisper_manager, a_stereo
         )
         diar, trans, audio_durs = analysis_data[0], analysis_data[1], analysis_data[2]
         self.durations.update(audio_durs)
@@ -642,7 +647,11 @@ class DubbingPipeline:
             self.monitor.orchestrator_queue_size = len(all_sync_tasks)
 
         # 3. Global Concurrent Execution (Flattened)
-        self._run_concurrent_sync(all_sync_tasks, sync_results_by_lang, vocals, script, checkpoint_path)
+        try:
+            self._run_concurrent_sync(all_sync_tasks, sync_results_by_lang, vocals, script, checkpoint_path)
+        finally:
+            if hasattr(self.whisper_manager, "shutdown_take_check"):
+                self.whisper_manager.shutdown_take_check()
 
         # Without any dubbed line the "dubbed" track would only be the ducked original, so fail the task instead
         silent_langs = [lang for lang, drafts in all_drafts_by_lang.items() if drafts and not sync_results_by_lang[lang]]

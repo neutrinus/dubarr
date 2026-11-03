@@ -23,9 +23,12 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
 1.  **Sanitization:** problematic characters (e.g. `…` -> `...`, `„` -> `"`) are replaced before synthesis.
 
 2.  **Pick a length variant (no synthesis).** When the draft has variants, the OmniVoice server estimates the
-    natural length of each (`/estimate`, the model's own text-based estimator; no audio is generated). The variant
-    closest to the target wins; running past the limit counts three times as much as falling short. If there are no
-    variants or the estimate fails, the main translation is used.
+    natural length of each (`/estimate`, the model's own text-based estimator; no audio is generated). Content comes
+    first: a variant *fits* when duration control can bring it into the limit (estimate <= limit x `TTS_MAX_SPEEDUP`).
+    When the main translation fits, the short variant is never picked up front; between the main translation and the
+    long variant, the one closest to the target wins (running past the limit counts three times as much as falling
+    short). When the main translation does not fit, the longest variant that fits is used, or the shortest if none
+    does. If there are no variants or the estimate fails, the main translation is used.
 
 3.  **Synthesize with duration control (OmniVoice).** The server estimates the natural length of the text and asks the
     model for a duration only when needed, within a natural-sounding range:
@@ -34,10 +37,17 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
     -   longer than the limit: speed up to the limit, but not above `TTS_MAX_SPEEDUP` (default 1.2).
     Long lines are synthesized in sentence chunks; each chunk gets its share of the target and of the limit.
 
-4.  **Swallowed-take check.** A take that is far shorter than its text can be spoken (more than
-    `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND`, default 9 syllables per second) is broken: the model produced mostly silence,
-    which OmniVoice then trims. It is synthesized again with the next voice reference (line clip -> golden -> last good),
-    up to 2 extra syntheses. Such a take is never accepted while a sound one exists.
+4.  **Broken-take check.** A take is broken when it is
+    -   *swallowed*: far shorter than its text can be spoken (more than `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND`, default
+        9 syllables per second); the model produced mostly silence, which OmniVoice then trims; or
+    -   *unintelligible* (`TAKE_CHECK`, on by default): Whisper transcribes the take in the target language (no VAD, no
+        conditioning on previous text) and the letters-only similarity to its text is under `TAKE_MIN_SIMILARITY`
+        (default 0.5). This catches noise, screams and gibberish cloned from a noisy voice reference. Lines under
+        4 syllables ("Wow!") are not checked, the ASR spells interjections too freely.
+    A broken take is synthesized again with the next voice reference (line clip -> golden -> last good), up to 2 extra
+    syntheses. It is never accepted while a sound one exists; when every reference fails, the least broken take is
+    kept (the most similar one; swallowed counts as worst). The check model is loaded next to the TTS on a GPU with
+    2.5 GB free, otherwise on the CPU (`TAKE_CHECK_DEVICE=cpu` forces it), and released after Stage 5.
 
 5.  **Acceptance check.** Accepted when `actual <= limit × MAX_ACCEPT_SPEEDUP + 0.05 s` and
     `actual >= MIN_FILL_RATIO × target` (default 0.7). A short take is kept when the LLM finds nothing to add (it
@@ -77,4 +87,5 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `MIN_FILL_RATIO` (0.7): below this share of the target a take is refined as too short.
 -   `MAX_ACCEPT_SPEEDUP` (1.08): allowed overrun of the limit, sped up in the mix.
 -   `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` (9): faster than this means a swallowed take.
+-   `TAKE_CHECK` (on), `TAKE_MIN_SIMILARITY` (0.5), `TAKE_CHECK_DEVICE` (auto): the intelligibility check of every take.
 -   `zcr_threshold` (0.25): Zero Crossing Rate limit for line-clip references.
