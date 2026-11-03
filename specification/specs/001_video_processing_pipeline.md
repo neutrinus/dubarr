@@ -4,24 +4,25 @@
 The **Video Dubbing Pipeline** is the core business process of Dubarr. It transforms a source video into a dubbed version with synchronized audio in one or more target languages.
 
 ## 2. Process Flow
-The pipeline executes sequentially in 8 stages (plus initialization). Each stage is checkpointed in the database to allow resumption.
+The pipeline runs its stages in order (1, 2, 2b, 3, 4, 5, 6, 7, then reporting). Each stage's result is cached in the
+database (`job_steps`, Spec 003) so a retried task resumes where it failed; Stage 5 also checkpoints per line.
 Each task works in its own folder, `TEMP_DIR/task_<id>` (`standalone` without a task): file names inside are fixed,
 and checkpoints point at them, so a shared folder would let a retried task pick up another task's audio.
 
 ### 2.0 Initialization (Startup)
 The system verifies model presence and downloads missing files. To maximize available VRAM, models follow a **Lazy Loading** strategy: they are loaded into memory only when needed and unloaded immediately after their stage completes.
 
-### Stage 1: Audio Separation
+### 2.1 Stage 1: Audio Separation
 *   **Input:** Original video file path.
 *   **Action:**
     1.  Extracts original stereo audio track.
-    2.  Uses an ML model (e.g., Demucs via `prep_audio`) to separate vocals from background music/noise.
+    2.  Demucs (`htdemucs_ft`, via `prep_audio`) separates vocals from background music and noise.
 *   **Output:**
     *   `orig.wav` (Original stereo audio)
     *   `vocals.mp3` (Clean speech separated by Demucs)
 
 ### 2.2 Stage 2: Audio Analysis
-*   **Input:** `vocals.wav` (diarization, voice references) and the original mix (transcription).
+*   **Input:** `vocals.mp3` (diarization, voice references) and the original mix (transcription).
 *   **Action:**
     1.  **Diarization:** Pyannote identifies speaker segments. Model is unloaded immediately after.
     2.  **Transcription:** Whisper converts speech to text. Model is loaded on-demand and unloaded immediately after.
@@ -146,7 +147,8 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
     *   `speakers.json` (Speaker profiles: age, gender, role).
 
 ### 2.4 Stage 4: Voice Reference Extraction
-*   **Input:** `vocals.wav`, `transcription.json`, `diarization.json`.
+*   **Input:** `vocals.mp3`, the script (Stage 2a, corrected in Stage 3). The step is named "Stage 4: Transcription
+    Correction" in the database for historical reasons; it does not change the text.
 *   **Action:**
     1.  Scores every 2-20 s line of each speaker: ASR confidence, speaking rate, length (6-14 s best), position, and
         **clarity**: the level of the Demucs vocals over the level of the rest (`no_vocals`) in the same span, in dB.
@@ -177,8 +179,9 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
 *   **Action:** All segments from all `target_langs` are combined into a single task pool to maximize resource utilization.
 *   **Workflow:**
     1.  **Draft Translation:** LLM generates drafts for all languages (see 2.5a).
-    1b. **Voice audition** (`TAKE_CHECK` `on` or `audition`): each speaker's reference candidates are tried on one of
-        the speaker's own draft lines and ranked by how intelligible the take is (Spec 002, 2.3).
+    1b. **Designed voice and voice audition** (`TAKE_CHECK` `judge` or `whisper`): each speaker's reference candidates
+        (Stage 4 clips, voice-bank clips, the designed voice) are tried on one of the speaker's own draft lines and
+        ranked by the take judge's score (Spec 002, 2.3).
     2.  **Global Task Queue:** A unified list of all segments is created.
     3.  **Concurrent Execution:** A global Thread Pool of orchestrators processes segments.
     4.  **Sync Loop:** Each segment uses `LLMService` and `TTSService` via RPC.
@@ -231,23 +234,25 @@ The goal is a complete translation that fits the timing. Run time is secondary.
     *   `final_{lang}.wav` (Mixed audio track, lossless; it is encoded once, when muxing).
 
 ### 2.7 Stage 7: Muxing
-*   **Input:** Original video, `final_{lang}.wav`.
+*   **Input:** Original video, `final_{lang}.wav` for each target language.
 *   **Action:**
-    1.  FFmpeg adds the dubbed track(s) in front of the original audio, encoded with `AUDIO_CODEC` (default AAC,
-        which plays in browsers and on phones; `ac3`/`eac3` for AV receivers). The original audio is copied unchanged.
-        2. Preserves video stream (copy codec) to avoid re-encoding quality loss.
-    *   **Output:**
-        *   `final_muxed.mkv` (Final video file).
-    
-    ### 2.8 Stage 8: Reporting & Cleanup
-    *   **Action:**
-        1.  Calculates total processing time and individual stage durations.
-        2.  Calculates LLM performance metrics (tokens per second).
-        3.  Generates a detailed performance report logged to the system console.
-        4.  Deletes the task's folder (unless `debug_mode` is enabled). A failed task keeps it, so a retry reuses the
-            checkpointed stages.
-        5.  Updates task status to `DONE`.
-    
-    ## 3. Data Persistence
+    1.  FFmpeg adds the dubbed tracks **in front of** the original audio, encoded once with `AUDIO_CODEC` (default
+        AAC, which plays in browsers and on phones; `ac3`/`eac3` for AV receivers, or `opus`) and tagged with the
+        language code and the title `AI - <Language>`. The video and the original audio are copied unchanged.
+    2.  The result replaces the source file in place: the original is moved to `<file>.bak`, then the new file is moved
+        to the original path (the backup is restored if that fails).
+    3.  The series memory is updated (Spec 006, 2).
+*   **Output:** the source file with the new tracks; `<file>.bak`.
+*   **Known gap:** only video and audio streams are mapped, so embedded subtitles are not carried over.
+
+### 2.8 Stage 8: Reporting & Cleanup
+*   **Action:**
+    1.  Calculates total processing time, stage durations and LLM throughput (tokens per second), and logs a
+        performance report.
+    2.  Deletes the task's folder (unless `DEBUG=1`). A failed task keeps it, so a retry reuses the checkpointed
+        stages.
+    3.  The worker sets the task status to `DONE`.
+
+## 3. Data Persistence
 -   **Task Table:** Tracks overall progress (`QUEUED`, `PROCESSING`, `DONE`, `ERROR`).
 -   **Job Steps Table:** Stores the result of each stage (`result_data` JSON) to enable skipping completed steps on retry.

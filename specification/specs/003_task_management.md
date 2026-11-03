@@ -4,7 +4,7 @@
 Dubarr uses a **Task Queue** system backed by SQLite to manage long-running video processing jobs. This ensures reliability, persistence, and the ability to resume interrupted tasks.
 
 ## 2. Database Schema
-The database is located at `videos/dubarr.db` (default path).
+The database is `DATA_DIR/queue.db` (`/app/data/queue.db` in the container).
 
 ### 2.1 Tasks Table (`tasks`)
 Stores the primary metadata for each video processing request.

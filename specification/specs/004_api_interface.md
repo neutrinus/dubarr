@@ -4,12 +4,13 @@
 The Dubarr API provides a REST interface for submitting video dubbing tasks, monitoring progress, and retrieving results. It also includes a WebSocket endpoint for real-time logs.
 
 ## 2. Base URL
--   **Local:** `http://localhost:8000` (Default)
--   **Production:** `http://dubarr.example.com` (Configurable)
+`http://<host>:8000` (`PORT` changes the port).
 
 ## 3. Authentication
 -   **Mechanism:** Basic Auth (`Authorization: Basic <base64_credentials>`)
--   **Credentials:** `API_USER` and `API_PASS` environment variables.
+-   **Credentials:** `API_USER` and `API_PASS` environment variables (default `dubarr` / `dubarr`).
+-   **Protected:** `/upload`, `/webhook`, `/download`, `/debug`. The dashboard, `/health`, `/ws/logs` and the
+    `/retry`, `/purge`, `/delete` form actions have no auth; dubarr is meant for a trusted home network.
 
 ## 4. Endpoints
 
@@ -22,11 +23,13 @@ Uploads a video file and queues it for processing.
 -   **Response:** `303 See Other` (Redirects to Dashboard).
 -   **Task Metadata:**
     -   Extracts metadata (duration, audio languages) via FFmpeg.
-    -   Stores file in `videos/`.
+    -   Stores the file in `/app/videos/` (the app's `videos` folder); an existing file of the same name is refused.
     -   Creates a `QUEUED` task.
 
 #### `POST /webhook`
-Registers an external file path for processing (e.g., from a shared volume).
+Registers an existing file for processing. The path must exist inside the container; a relative path is resolved
+against `/app/videos`. Only this JSON shape is accepted: the native Sonarr/Radarr webhook payload (which has no
+top-level `path`) is not parsed, so Sonarr/Radarr need a custom script or a proxy that sends `{"path": ...}`.
 -   **Method:** POST (JSON)
 -   **Payload:**
     ```json
@@ -35,16 +38,11 @@ Registers an external file path for processing (e.g., from a shared volume).
         "eventType": "optional_event_type"
     }
     ```
--   **Response:**
-    ```json
-    {
-        "status": "queued",
-        "path": "/absolute/path/to/video.mp4"
-    }
-    ```
+-   **Response:** `{"status": "queued" | "re-queued" | "ignored", "path": "<absolute path>"}`. A known path that is
+    finished or failed is queued again; one that is queued or processing is ignored.
 
 #### `GET /download/{task_id}`
-Downloads the processed video file.
+Downloads the task's file (after a successful task, the dubbed file that replaced the source in place).
 -   **Method:** GET
 -   **Auth Required:** Yes
 -   **Response:**
@@ -75,6 +73,7 @@ Retrieves intermediate processing results (JSON artifacts).
     -   `transcription`: Raw transcription with timestamps.
     -   `context`: Global story context and glossary.
     -   `speakers`: Identified speaker profiles.
+    -   `media`: Media metadata (Stage 2b).
     -   `production`: Final translated segments per language.
 -   **Response:** `200 OK` (JSON).
 
@@ -104,7 +103,7 @@ Returns system health status and queue statistics.
     ```
 
 #### `WS /ws/logs`
-WebSocket endpoint for streaming live logs from `logs/processing.log`.
+WebSocket endpoint for streaming live logs from `DATA_DIR/logs/processing.log`.
 -   **Protocol:** WebSocket
 -   **Behavior:**
     -   Sends last 50 lines on connect.
