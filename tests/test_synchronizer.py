@@ -171,7 +171,8 @@ class TestSyncContentKeeping(unittest.TestCase):
 
         self.assertEqual(self.tts.synthesize_sync.call_count, 3)
         self.llm.refine_translation_by_duration.assert_not_called()
-        self.assertNotEqual(res["status"], "ACCEPTED")
+        # Silence on every voice is not worth mixing in
+        self.assertEqual(res["status"], "DROPPED")
 
     def test_too_short_take_is_expanded(self):
         segment = {
@@ -261,6 +262,48 @@ class TestTakeCheck(unittest.TestCase):
         self.assertTrue(broken)
         # "Ajjs próbuje" is the closest to the text
         self.assertTrue(result["audio_path"].endswith("broken_pl_34_1.wav"))
+
+    def test_gibberish_on_every_reference_is_dropped(self):
+        # 5:17 "Trudno mu skrócić dystans" came out as "Cięty, pary maj ty. Pani win." on every voice
+        self.heard = ["Czytpariwaite! Wreniwe!", "Skye! Chyna win!", "O! Goczyczny!"]
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
+
+        with patch("os.remove"):
+            res = self.run_segment([3.8, 3.8, 3.8])
+
+        self.assertEqual(res["status"], "DROPPED")
+        self.assertIsNone(res["audio_path"])
+        self.llm.refine_translation_by_duration.assert_not_called()
+
+    def test_a_barely_intelligible_take_is_kept_rather_than_dropped(self):
+        self.heard = ["Aaaa!", "Ajjs próbuje zachować dystans", "..."]
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([3.8, 3.8, 3.8])
+
+        self.assertNotEqual(res["status"], "DROPPED")
+        self.assertTrue(res["audio_path"])
+
+    def test_missing_take_is_synthesized_again_with_another_reference(self):
+        # ID 32: "Produced invalid/empty file" used to end the line in silence
+        self.heard = ["Ajjs-wejv próbuje zachować dystans. O mój Boże!"]
+        self.tts.synthesize_sync.side_effect = [
+            {"audio_path": None, "duration": 0.0, "voice_type": "GOLDEN", "ref": "gold.wav"},
+            {"audio_path": "b.wav", "duration": 3.7, "voice_type": "BORROWED", "ref": "other.wav"},
+        ]
+
+        res = self.run_segment([3.7])
+
+        self.assertEqual(res["status"], "ACCEPTED")
+        self.assertEqual(self.tts.synthesize_sync.call_args_list[1].args[0]["skip_refs"], ["gold.wav"])
+
+    def test_missing_take_on_every_reference_falls_back_to_silence(self):
+        self.tts.synthesize_sync.return_value = {"audio_path": None, "duration": 0.0, "voice_type": "GOLDEN", "ref": "g"}
+
+        with patch("wave.open"):
+            res = self.run_segment([])
+
+        self.assertEqual(res["status"], "FAILED_FALLBACK")
 
     def test_without_an_answer_from_the_checker_the_take_is_accepted(self):
         self.sync.take_checker = lambda path, lang: None

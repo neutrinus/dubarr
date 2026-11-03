@@ -235,6 +235,16 @@ class TestFinalizeLanguages(unittest.TestCase):
         first_end = clips[0][1] + clips[0][2]
         self.assertAlmostEqual(clips[1][1], first_end)
 
+    def test_dropped_line_leaves_the_original_audible(self):
+        items = [
+            {"index": 0, "start": 0.0, "end": 2.0, "duration": 0.0, "audio_path": None, "speaker": "A", "status": "DROPPED"},
+            {"index": 1, "start": 2.0, "end": 4.0, "duration": 1.5, "audio_path": "b.wav", "speaker": "A"},
+        ]
+        _, master, clips = self._finalize(items)
+
+        self.assertEqual(len(clips), 1)
+        self.assertEqual(master.call_count, 1)
+
     def test_speedup_uses_trailing_silence_and_is_capped(self):
         items = [
             {"index": 0, "start": 0.0, "end": 2.0, "max_end": 2.5, "duration": 2.6, "audio_path": "a.wav", "speaker": "A"},
