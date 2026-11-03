@@ -209,14 +209,20 @@ class TestReferenceOrder(unittest.TestCase):
         self.assertEqual(self.pick(skip={"ann2.wav"}), ("ann3.wav", "GOLDEN"))
         self.assertNotIn("ANNOUNCER", self.manager.line_refs_off)
 
-    def test_a_badly_cloning_voice_borrows_a_same_gender_one(self):
+    def test_a_badly_cloning_voice_uses_its_designed_voice_not_anothers(self):
+        self.manager.add_designed_ref("ANNOUNCER", "designed_ann.wav")
         self.manager.apply_audition(
-            {"ANNOUNCER": {"ann1.wav": 0.2, "ann2.wav": 0.3, "ann3.wav": 0.1}, "HOST": {"host1.wav": 0.99}}, 0.8
+            {"ANNOUNCER": {"ann1.wav": 0.2, "ann2.wav": 0.3, "ann3.wav": 0.1, "designed_ann.wav": 0.4}}, 0.8
         )
-        # Never the female host for the male announcer while a male voice exists
-        self.assertEqual(self.pick(), ("exp1.wav", "BORROWED"))
-        self.assertEqual(self.pick(skip={"exp1.wav"}), ("ann2.wav", "GOLDEN"))
+        # Never the expert's or the host's voice in the announcer's mouth
+        self.assertEqual(self.pick(), ("designed_ann.wav", "DESIGNED"))
+        self.assertEqual(self.pick(skip={"designed_ann.wav"}), ("ann2.wav", "GOLDEN"))
         self.assertIn("ANNOUNCER", self.manager.line_refs_off)
+
+    def test_good_designed_voice_ranks_with_the_clips(self):
+        self.manager.add_designed_ref("ANNOUNCER", "designed_ann.wav")
+        self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.75, "designed_ann.wav": 0.95}}, 0.8)
+        self.assertEqual(self.pick(), ("designed_ann.wav", "DESIGNED"))
 
     def test_weak_speaker_skips_line_clips(self):
         self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.7}}, 0.8)
@@ -224,10 +230,12 @@ class TestReferenceOrder(unittest.TestCase):
             self.assertEqual(self.pick(end=5.0), ("ann1.wav", "GOLDEN"))
         line_ref.assert_not_called()
 
-    def test_fallback_after_own_references_keeps_the_gender(self):
+    def test_no_other_speakers_voice_after_the_own_references(self):
         tried = {"ann1.wav", "ann2.wav", "ann3.wav"}
-        self.assertEqual(self.pick(skip=tried), ("exp1.wav", "BORROWED"))
-        self.assertEqual(self.pick(skip=tried | {"exp1.wav"}), ("host1.wav", "FALLBACK_GOLDEN"))
+        self.assertEqual(self.pick(skip=tried), (None, "UNKNOWN"))
+
+    def test_speaker_without_any_voice_still_gets_one(self):
+        self.assertEqual(self.pick(speaker="CROWD"), ("ann1.wav", "FALLBACK_GOLDEN"))
 
     def test_without_audition_the_stage4_order_is_kept(self):
         self.assertEqual(self.pick(), ("ann1.wav", "GOLDEN"))

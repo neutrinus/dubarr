@@ -105,7 +105,8 @@ def design():
     """
     data = request.json
     try:
-        audio = model.generate(text=data["text"], language=data.get("language"), instruct=data["instruct"])
+        # No attributes: OmniVoice picks a voice itself (a generic voice for a speaker nothing is known about)
+        audio = model.generate(text=data["text"], language=data.get("language"), instruct=data.get("instruct") or None)
         sf.write(data["output_path"], audio[0], model.sampling_rate)
         return jsonify({"status": "success"})
     except Exception as e:

@@ -357,36 +357,32 @@ class TTSManager:
         return [p for p in refs if p not in self.designed]
 
     def _ref_order(self, spk: str) -> List[Tuple[str, str]]:
-        """Every reference this speaker may use after the line clip, as (path or LAST_GOOD, voice type), in order."""
-        own = self.speaker_refs.get(spk) or []
-        good = [p for p in own if self.audition.get(p, 1.0) >= TAKE_MIN_SIMILARITY]
-        weak = [p for p in own if p not in good]
+        """Every reference this speaker may use after the line clip, as (path or LAST_GOOD, voice type), in order.
 
-        def best_first(paths):
+        Only the speaker's own voice: another speaker's voice in this mouth confuses the viewer, so a speaker without
+        a clip that clones well falls back to its designed (generic) voice instead (Spec 002, 2.3).
+        """
+        own = self.speaker_refs.get(spk) or []
+
+        def by_score(paths):
             return sorted(paths, key=lambda p: -self.audition.get(p, 0.5))
 
-        gender = self.genders.get(spk, "")
-        # Another speaker's real clips only: their designed voice is not "theirs" to lend
-        others = [(o, real[0]) for o, refs in self.speaker_refs.items() if o != spk for real in [self._real(refs)] if real]
-        same = [p for o, p in others if gender and self.genders.get(o) == gender]
-        rest = [p for o, p in others if p not in same]
-        rest += [p for o, refs in self.speaker_refs.items() if o != spk for p in self._real(refs)[1:]]
-
-        def own(p):
+        def entry(p):
             return (p, "DESIGNED" if p in self.designed else "GOLDEN")
 
-        order = [own(p) for p in good] + [("LAST_GOOD", "LAST_GOOD")]
-        order += [(p, "BORROWED") for p in best_first(same)]
-        order += [own(p) for p in weak]
-        order += [(p, "FALLBACK_GOLDEN") for p in best_first(rest)]
+        good = [p for p in own if self.audition.get(p, 1.0) >= TAKE_MIN_SIMILARITY]
+        weak = [p for p in own if p not in good]
+        order = [entry(p) for p in good] + [("LAST_GOOD", "LAST_GOOD")]
+        order += [entry(p) for p in by_score([p for p in weak if p in self.designed])]
+        order += [entry(p) for p in by_score([p for p in weak if p not in self.designed])]
         return order
 
     def _select_reference(self, item: Dict, vocals_path: str, lang: str = "", skip=()):
         """Picks the voice reference for a line (Spec 002, 2.3); a retry skips the references already tried.
 
         OmniVoice clones well from 3-10 s, so a clean clip of the line itself is tried first: it carries the emotion
-        of the scene. Then the speaker's own references, best audition score first; then the voice of another speaker
-        of the same gender, which is better than a broken clone; anything else comes last.
+        of the scene. Then the speaker's own references, best audition score first, the designed voice before a clip
+        that clones badly. Another speaker's voice only for a speaker that has no voice of its own at all.
         """
         spk = item["speaker"]
         idx = item["index"]
@@ -407,16 +403,21 @@ class TTSManager:
                     continue
             if not path or path in skip or not os.path.exists(path):
                 continue
-            if voice_type == "BORROWED":
-                logging.info(f"TTS: [ID: {idx}] Borrowing a same-gender voice for speaker {spk}: {os.path.basename(path)}")
-            elif voice_type == "FALLBACK_GOLDEN":
-                logging.info(f"TTS: [ID: {idx}] Using Global Golden fallback for speaker {spk}")
             return path, voice_type
 
+        if any(os.path.exists(p) for p in self.speaker_refs.get(spk) or []):
+            return None, "UNKNOWN"  # every own voice was tried: no other speaker's voice instead
+        # A speaker with no voice of its own at all (no clip, no designed voice) still gets dubbed
         all_last_goods = [p for p in self.last_good_samples.values() if os.path.exists(p) and p not in skip]
         if all_last_goods:
             logging.info(f"TTS: [ID: {idx}] Using Global LastGood fallback for speaker {spk}")
             return all_last_goods[0], "FALLBACK_LASTGOOD"
+        goldens = [
+            p for refs in self.speaker_refs.values() for p in self._real(refs)[:1] if os.path.exists(p) and p not in skip
+        ]
+        if goldens:
+            logging.info(f"TTS: [ID: {idx}] Using Global Golden fallback for speaker {spk}")
+            return goldens[0], "FALLBACK_GOLDEN"
 
         return None, "UNKNOWN"
 

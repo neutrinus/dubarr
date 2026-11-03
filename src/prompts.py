@@ -18,7 +18,9 @@ Analyze the movie script provided by the user. Return A SINGLE JSON object conta
 3. 'speakers': A dictionary where keys are speaker IDs (e.g. SPEAKER_00) and values are objects with:
    - 'name': The inferred real name of the character/person. Prefer the character names from KNOWN MEDIA INFO
      (identify speakers by how they are addressed and what they talk about).
-   - 'gender': "male", "female" or "unknown". Use the cast list of KNOWN MEDIA INFO when the speaker matches a character.
+   - 'gender': "male" or "female". Use the cast list of KNOWN MEDIA INFO when the speaker matches a character; otherwise
+     give your best guess from names, pronouns, how others address the speaker and the role (announcer, host). Use
+     "unknown" only when nothing at all hints at it.
    - 'desc': A brief profile including GENDER, age, and VOICE traits. Focus on details useful for selecting a TTS model.
    Put the character names from KNOWN MEDIA INFO that appear in the script into the 'glossary' as well.
 
