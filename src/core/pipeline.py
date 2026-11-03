@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import logging
 import time
 import humanfriendly
@@ -8,9 +9,11 @@ import glob
 import subprocess
 from typing import List, Optional
 
-from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_GUARD
+from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_BEFORE_MAX, SLACK_GUARD
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
-from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION
+from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION, SENTENCE_MAX_GAP, SENTENCE_MAX_DURATION
+from config import TRANSLATION_REVIEW
+from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
 from infrastructure.monitor import ResourceMonitor
@@ -124,9 +127,39 @@ class DubbingPipeline:
                 out.pop(0)
         return out
 
+    @staticmethod
+    def _clamp_stretched(segment):
+        """Shortens a segment whose length is far beyond what its words can take.
+
+        Whisper sometimes stretches a short line over music ("Ready for battle" over 25 s); the dub would then be
+        timed against a slot nobody speaks in.
+        """
+        words = count_syllables(segment.get("text", ""), "en")
+        cap = max(2.0, 1.0 + words / 1.5)
+        if segment["end"] - segment["start"] > cap:
+            segment = dict(segment, end=segment["start"] + cap)
+        return segment
+
+    @staticmethod
+    def _ends_sentence(text: str) -> bool:
+        return bool(re.search(r"[.!?…][\"')\]]*\s*$", text.strip()))
+
+    def _joins(self, curr, nxt):
+        """Same speaker, and either a short pause or a sentence that continues (Spec 001, 2.2a)."""
+        if nxt["speaker"] != curr["speaker"] or len(curr["text"]) + len(nxt["text"]) >= 600:
+            return False
+        gap = nxt["start"] - curr["end"]
+        merged_duration = nxt["end"] - curr["start"]
+        if gap < 0:
+            return False
+        if gap < MERGE_MAX_GAP and merged_duration <= MERGE_MAX_DURATION:
+            return True
+        return not self._ends_sentence(curr["text"]) and gap < SENTENCE_MAX_GAP and merged_duration <= SENTENCE_MAX_DURATION
+
     def _create_script(self, diar, trans):
         raw_script = []
         for t in trans:
+            t = self._clamp_stretched(t)
             spk = self._dominant_speaker(diar, t["start"], t["end"])
             raw_script.append({**t, "speaker": spk})
 
@@ -137,14 +170,7 @@ class DubbingPipeline:
         curr = raw_script[0]
         for i in range(1, len(raw_script)):
             nxt = raw_script[i]
-            gap = nxt["start"] - curr["end"]
-            merged_duration = nxt["end"] - curr["start"]
-            if (
-                nxt["speaker"] == curr["speaker"]
-                and 0 <= gap < MERGE_MAX_GAP
-                and merged_duration <= MERGE_MAX_DURATION
-                and len(curr["text"]) + len(nxt["text"]) < 400
-            ):
+            if self._joins(curr, nxt):
                 curr["text"] = curr["text"].strip() + " " + nxt["text"].strip()
                 curr["end"] = nxt["end"]
                 if "avg_logprob" in curr and "avg_logprob" in nxt:
@@ -160,6 +186,9 @@ class DubbingPipeline:
             # Silence until the next speech (any speaker) can absorb a slightly longer translation
             gap_after = merged[i + 1]["start"] - s["end"] if i + 1 < len(merged) else SLACK_AFTER_MAX + SLACK_GUARD
             slack_after = min(max(gap_after - SLACK_GUARD, 0.0), SLACK_AFTER_MAX)
+            # A long take may also start a little early, in the silence before the line
+            gap_before = s["start"] - merged[i - 1]["end"] if i > 0 else s["start"] + SLACK_GUARD
+            slack_before = min(max(gap_before - SLACK_GUARD, 0.0), SLACK_BEFORE_MAX)
             script.append(
                 {
                     **s,
@@ -168,6 +197,7 @@ class DubbingPipeline:
                     "avg_logprob": s.get("avg_logprob", 0),
                     "index": i,
                     "max_end": s["end"] + slack_after,
+                    "min_start": s["start"] - slack_before,
                 }
             )
         return script
@@ -583,6 +613,14 @@ class DubbingPipeline:
             logger.info(f"--- PREPARING DRAFTS FOR LANGUAGE: {lang} ---")
             t_start_draft = time.perf_counter()
             draft_segments = self.llm_manager.generate_drafts(script, lang, self.speaker_info, self.global_context)
+            if TRANSLATION_REVIEW:
+                draft_segments = self.llm_manager.review_drafts(draft_segments, lang, self.speaker_info, self.global_context)
+            # The sync loop shows neighbouring translations to the refinement
+            for seg in draft_segments:
+                script[seg["index"]].setdefault("translations", {})[lang] = seg.get("text", "")
+            if self.debug_mode:
+                with open(os.path.join(ddir, f"drafts_{lang}.json"), "w") as f_dbg:
+                    json.dump(draft_segments, f_dbg, indent=2, ensure_ascii=False)
             self.durations[f"Stage 5a: Draft Translation ({lang})"] = time.perf_counter() - t_start_draft
             all_drafts_by_lang[lang] = draft_segments
 
@@ -689,6 +727,7 @@ class DubbingPipeline:
                             seg_result["start"] = script[idx]["start"]
                             seg_result["end"] = script[idx]["end"]
                             seg_result["max_end"] = script[idx].get("max_end", script[idx]["end"])
+                            seg_result["min_start"] = script[idx].get("min_start", script[idx]["start"])
                             seg_result["speaker"] = script[idx]["speaker"]
                             seg_result["index"] = idx
                             sync_results_by_lang[lang].append(seg_result)
@@ -719,6 +758,27 @@ class DubbingPipeline:
                 logger.error(f"Orchestrator loop error: {e}")
                 raise
 
+    @staticmethod
+    def _place_take(item, dur, last_end_time):
+        """Where a take starts in the mix and how much it is sped up (Spec 002, 2.4).
+
+        A take that would run past its latest end starts earlier, into the silence before the line (down to
+        ``min_start``); it never starts before the previous dubbed line has ended.
+        """
+        start = item["start"]
+        max_end = item.get("max_end", item["end"])
+        min_start = min(item.get("min_start", start), start)
+        overrun = dur - (max_end - start)
+        if overrun > 0:
+            start -= min(overrun, start - min_start)
+        if start < last_end_time and last_end_time - start > 0.05:
+            start = last_end_time
+        available = max(max_end - start, 0.3)
+        speed_factor = 1.0
+        if dur > available + 0.2:
+            speed_factor = min(dur / available, 1.20)
+        return start, speed_factor
+
     def _finalize_all_languages(self, sync_results_by_lang, a_stereo, t_start_sync_all):
         """Processes mastered segments and performs final language mixing."""
         all_audio_tracks = []
@@ -731,22 +791,12 @@ class DubbingPipeline:
             last_end_time = 0
 
             for item in res:
-                start = item["start"]
                 dur = item["duration"]
                 path = item["audio_path"]
-
-                if start < last_end_time:
-                    shift = last_end_time - start
-                    if shift > 0.05:
-                        start = last_end_time
+                start, speed_factor = self._place_take(item, dur, last_end_time)
 
                 final_path = os.path.join(self.temp_dir, f"final_{lang}_{item['index']}.wav")
                 audio_processor.trim_and_pad_silence(path, dur)
-
-                target_dur = item.get("max_end", item["end"]) - item["start"]
-                speed_factor = 1.0
-                if dur > target_dur + 0.2:
-                    speed_factor = min(dur / target_dur, 1.20)
 
                 self._apply_mastering_and_speed(path, final_path, item["speaker"], speed_factor)
                 final_audio_segments.append((final_path, start, dur / speed_factor))

@@ -73,9 +73,11 @@ TTS_MAX_CHUNK_SECONDS = float(os.environ.get("TTS_MAX_CHUNK_SECONDS", "10.0"))
 TTS_REF_TEXT = os.environ.get("TTS_REF_TEXT", "off").lower()
 
 
-# Dubbed speech may run into the silence after a segment (never the silence before it).
+# Dubbed speech may run into the silence after a segment and, when still too long, start early in the one before it.
 # Cap on how much trailing silence a segment may borrow, and the gap kept before the next speech.
-SLACK_AFTER_MAX = float(os.environ.get("SLACK_AFTER_MAX", "1.0"))
+SLACK_AFTER_MAX = float(os.environ.get("SLACK_AFTER_MAX", "1.5"))
+# A take that is still too long may also start this much earlier, in the silence before its line.
+SLACK_BEFORE_MAX = float(os.environ.get("SLACK_BEFORE_MAX", "0.5"))
 SLACK_GUARD = 0.15
 
 # Consecutive lines of the same speaker are merged only across this short a pause and up to this length.
@@ -88,6 +90,22 @@ MIN_SEGMENT_DURATION = float(os.environ.get("MIN_SEGMENT_DURATION", "1.2"))
 # A take may overrun its slot by this much; the final mix speeds it up (pitch-preserving) instead of the LLM
 # cutting words out of the translation.
 MAX_ACCEPT_SPEEDUP = float(os.environ.get("MAX_ACCEPT_SPEEDUP", "1.08"))
+
+# A same-speaker line that does not end a sentence is joined with the next one across this pause and up to this
+# length, so the translator gets whole sentences instead of fragments (Spec 001, 2.2a).
+SENTENCE_MAX_GAP = float(os.environ.get("SENTENCE_MAX_GAP", "1.5"))
+SENTENCE_MAX_DURATION = float(os.environ.get("SENTENCE_MAX_DURATION", "20.0"))
+
+# Translation (Spec 001, 2.5a): pace of the synthesized voice used for the syllable budgets, window size, and the
+# completeness review pass.
+DUB_SYLLABLES_PER_SECOND = float(os.environ.get("DUB_SYLLABLES_PER_SECOND", "5.0"))
+TRANSLATION_WINDOW = int(os.environ.get("TRANSLATION_WINDOW", "20"))
+TRANSLATION_REVIEW = os.environ.get("TRANSLATION_REVIEW", "on").lower() not in ("0", "off", "false", "no")
+
+# Sync loop (Spec 002): a take shorter than MIN_FILL_RATIO of the original's speech is refined as too short; one
+# faster than MAX_PLAUSIBLE_SYLLABLES_PER_SECOND was swallowed by the TTS and is synthesized again.
+MIN_FILL_RATIO = float(os.environ.get("MIN_FILL_RATIO", "0.7"))
+MAX_PLAUSIBLE_SYLLABLES_PER_SECOND = float(os.environ.get("MAX_PLAUSIBLE_SYLLABLES_PER_SECOND", "9.0"))
 
 
 # Safe logging setup

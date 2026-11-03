@@ -241,7 +241,7 @@ class TestChunkedSynthesis(unittest.TestCase):
         self.addCleanup(shutil.rmtree, manager.temp_dir, ignore_errors=True)
         calls = []
 
-        def fake_synthesis(text, ref, out_path, language=None, max_duration=None):
+        def fake_synthesis(text, ref, out_path, language=None, max_duration=None, target_duration=None):
             calls.append((text, max_duration))
             with open(out_path, "wb") as f:
                 f.write(b"RIFF")

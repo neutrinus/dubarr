@@ -4,9 +4,14 @@ import shutil
 import wave
 from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
-from config import MAX_ACCEPT_SPEEDUP
+from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND
+from utils import count_syllables
 
 logger = logging.getLogger(__name__)
+
+
+# Extra syntheses of the same text after a swallowed take, each with another voice reference
+SWALLOW_RETRIES = 2
 
 
 class SegmentSynchronizer:
@@ -16,25 +21,108 @@ class SegmentSynchronizer:
         self.temp_dir = temp_dir
         self.debug_mode = debug_mode
 
+    @staticmethod
+    def is_swallowed(text: str, duration: float, lang: str) -> bool:
+        """True when a take is far shorter than its text can be spoken: the TTS produced mostly silence."""
+        syllables = count_syllables(text, lang)
+        return syllables >= 3 and duration * MAX_PLAUSIBLE_SYLLABLES_PER_SECOND < syllables
+
+    def _synthesize_sound(self, tts_item: Dict, lang: str, vocals_path: str, full_script: List[Dict]):
+        """Synthesizes a take and re-synthesizes it with other references while it comes out swallowed.
+
+        Returns (result, duration, swallowed) or None when synthesis failed.
+        """
+        skip = []
+        last = None
+        for retry in range(SWALLOW_RETRIES + 1):
+            item = dict(tts_item, skip_refs=list(skip))
+            result = self.tts.synthesize_sync(item, lang, vocals_path, full_script)
+            if not result:
+                return last
+            try:
+                duration = FFmpegWrapper.get_duration(result["audio_path"])
+            except Exception:
+                duration = result["duration"]
+            swallowed = self.is_swallowed(tts_item["text"], duration, lang)
+            last = (result, duration, swallowed)
+            if not swallowed:
+                return last
+            logger.warning(
+                f"[ID: {tts_item['index']}] SWALLOWED take ({duration:.2f}s for '{tts_item['text'][:40]}'), "
+                f"synthesizing again with another voice reference ({retry + 1}/{SWALLOW_RETRIES})"
+            )
+            # Skip what was used: the line clip as a whole, any other reference by its path
+            skip.append("DYNAMIC" if result.get("voice_type") == "DYNAMIC" else result.get("ref") or "")
+            if retry < SWALLOW_RETRIES:
+                # The take file is rewritten by the next call; keep the swallowed one only as the last resort
+                kept = os.path.join(self.temp_dir, f"swallowed_{lang}_{tts_item['index']}.wav")
+                shutil.copy(result["audio_path"], kept)
+                last = (dict(result, audio_path=kept), duration, swallowed)
+        return last
+
+    @staticmethod
+    def _miss(estimate: float, speech: float, limit: float) -> float:
+        """How far a length is from the timing; running past the limit weighs three times as much."""
+        if estimate > limit:
+            return (limit - speech) + 3 * (estimate - limit)
+        return abs(estimate - speech)
+
+    def _estimate_variants(self, segment: Dict, lang: str, vocals_path: str, speech: float, limit: float):
+        """[(text, estimated seconds)] of the draft's length variants, best fit first; [] without variants."""
+        options = [t for t in segment.get("variants") or [] if t and t.strip()]
+        if len(options) < 2:
+            return []
+        item = {
+            "index": segment["index"],
+            "speaker": segment["speaker"],
+            "start": segment["start"],
+            "end": segment["end"],
+            "source_text": segment.get("text_en", ""),
+        }
+        try:
+            estimates = self.tts.estimate_durations(item, lang, vocals_path, options)
+        except Exception as e:
+            logger.warning(f"[ID: {segment['index']}] Variant estimate failed: {e}")
+            return []
+        if not estimates or len(estimates) != len(options):
+            return []
+        ranked = sorted(zip(options, estimates), key=lambda x: self._miss(x[1], speech, limit))
+        logger.info(
+            f"[ID: {segment['index']}] Variants (est.): "
+            + ", ".join(f"{e:.2f}s" for _, e in zip(options, estimates))
+            + f" -> picked {ranked[0][1]:.2f}s (target {speech:.2f}s, limit {limit:.2f}s)"
+        )
+        return ranked
+
     def process_segment(
         self, segment: Dict, lang: str, vocals_path: str, full_script: List[Dict], global_context: Dict, attempt_limit: int = 3
     ) -> Optional[Dict]:
         """
-        Orchestrates the feedback loop for a single segment.
-        Returns the final accepted audio path and text.
-        New Strategy: Strictly <= target duration, 3 attempts default.
-        Target duration includes the silence after the segment ("max_end"), if known.
+        Orchestrates the feedback loop for a single segment (Spec 002).
+
+        The target is the time the original speaks (end - start); the limit adds the silence after the line
+        ("max_end") and the short silence before it ("min_start"). A take is accepted when it ends within the limit and fills at least MIN_FILL_RATIO of the target.
         """
         original_text = segment.get("text_en", "")
         current_text = segment.get("text", original_text)
-        target_dur = segment.get("max_end", segment["end"]) - segment["start"]
+        speech_dur = segment["end"] - segment["start"]
+        # The limit: silence after the line, plus (for a take that is still too long) a little silence before it
+        target_dur = segment.get("max_end", segment["end"]) - segment.get("min_start", segment["start"])
         speaker = segment["speaker"]
         idx = segment["index"]
 
         attempts = []
+        # Pick the length variant that fits best before synthesizing anything; the rest stay for retries
+        variants = self._estimate_variants(segment, lang, vocals_path, speech_dur, target_dur)
+        if variants:
+            current_text = variants[0][0]
+        unused = {text: est for text, est in variants[1:]}
+        current_est = variants[0][1] if variants else None
 
         for attempt in range(1, attempt_limit + 1):
-            logger.info(f"[ID: {idx}] Refinement Attempt {attempt}/{attempt_limit} (Target: {target_dur:.2f}s)")
+            logger.info(
+                f"[ID: {idx}] Refinement Attempt {attempt}/{attempt_limit} (Target: {speech_dur:.2f}s, Limit: {target_dur:.2f}s)"
+            )
 
             tts_item = {
                 "index": idx,
@@ -43,29 +131,21 @@ class SegmentSynchronizer:
                 "speaker": speaker,
                 "start": segment["start"],
                 "end": segment["end"],
+                "max_end": segment.get("max_end", segment["end"]),
+                "min_start": segment.get("min_start", segment["start"]),
             }
 
-            result = self.tts.synthesize_sync(tts_item, lang, vocals_path, full_script)
-            if not result:
+            synthesized = self._synthesize_sound(tts_item, lang, vocals_path, full_script)
+            if not synthesized:
                 logger.warning(f"[ID: {idx}] Synthesis failed on attempt {attempt}.")
                 break
-
+            result, actual_dur, swallowed = synthesized
             raw_audio_path = result["audio_path"]
 
-            try:
-                logger.debug(f"[ID: {idx}] Checking duration of {raw_audio_path}")
-                actual_dur = FFmpegWrapper.get_duration(raw_audio_path)
-                logger.debug(f"[ID: {idx}] Duration: {actual_dur}")
-            except Exception:
-                actual_dur = result["duration"]
-
             delta = actual_dur - target_dur
+            too_long = actual_dur > target_dur * MAX_ACCEPT_SPEEDUP + 0.05
+            too_short = actual_dur < speech_dur * MIN_FILL_RATIO
 
-            # Acceptance: not longer than the slot, or only slightly longer — the final mix then speeds the clip
-            # up (pitch-preserving) instead of the LLM deleting words to fit
-            is_acceptable = actual_dur <= target_dur * MAX_ACCEPT_SPEEDUP + 0.05
-
-            # Save attempt
             # The accepted attempt is mixed much later, so it must not be shared between languages
             attempt_path = os.path.join(self.temp_dir, f"attempt_{lang}_{idx}_{attempt}.wav")
             shutil.copy(raw_audio_path, attempt_path)
@@ -76,49 +156,69 @@ class SegmentSynchronizer:
                     "text": current_text,
                     "duration": actual_dur,
                     "delta": delta,
+                    "swallowed": swallowed,
                 }
             )
 
-            if is_acceptable:
-                logger.info(f"[ID: {idx}] ACCEPTED (Duration: {actual_dur:.2f}s, Target: {target_dur:.2f}s)")
-                if not self.debug_mode:
-                    for a in attempts:
-                        if a["audio_path"] != attempt_path and os.path.exists(a["audio_path"]):
-                            os.remove(a["audio_path"])
+            if not too_long and not too_short and not swallowed:
+                logger.info(f"[ID: {idx}] ACCEPTED (Duration: {actual_dur:.2f}s, Target: {speech_dur:.2f}s)")
+                self._cleanup(attempts, attempt_path)
                 return {"audio_path": attempt_path, "final_text": current_text, "duration": actual_dur, "status": "ACCEPTED"}
 
-            # 3. Refine (if not last attempt)
-            if attempt < attempt_limit:
+            if attempt >= attempt_limit:
+                break
+            if swallowed:
+                # Every voice reference came out silent; keep what we have rather than rewording blindly
+                logger.warning(f"[ID: {idx}] REJECTED (Swallowed on every voice reference: {actual_dur:.2f}s).")
+                break
+            if too_long:
                 logger.info(f"[ID: {idx}] REJECTED (Too long: {actual_dur:.2f}s > {target_dur:.2f}s). Refining text...")
+                aim = target_dur
+            else:
+                logger.info(f"[ID: {idx}] REJECTED (Too short: {actual_dur:.2f}s < {speech_dur:.2f}s). Expanding text...")
+                aim = speech_dur
 
-                # Get context from script
-                context_before = ""
-                context_after = ""
-                if idx > 0:
-                    context_before = full_script[idx - 1].get("text_en", "")
-                if idx < len(full_script) - 1:
-                    context_after = full_script[idx + 1].get("text_en", "")
-
-                new_text = self.llm.refine_translation_by_duration(
-                    original_text=original_text,
-                    current_text=current_text,
-                    actual_dur=actual_dur,
-                    target_dur=target_dur,
-                    glossary=global_context.get("glossary", {}),
-                    context_before=context_before,
-                    context_after=context_after,
-                    language=lang,
-                    speaker=segment.get("speaker_label", ""),
-                    media=global_context.get("media", ""),
+            # An unused variant that moves the right way is cheaper and safer than a rewrite
+            alternative = self._next_variant(unused, current_est, actual_dur, too_long)
+            if alternative:
+                logger.info(
+                    f"[ID: {idx}] Trying the {'shorter' if too_long else 'longer'} variant ({unused[alternative]:.2f}s est.)"
                 )
+                current_est = unused.pop(alternative)
+                current_text = alternative
+                continue
 
-                if new_text == current_text:
-                    logger.info(f"[ID: {idx}] LLM made no changes. Stopping early.")
-                    break
+            context_before, context_after = self._neighbours(full_script, idx, lang)
+            new_text = self.llm.refine_translation_by_duration(
+                original_text=original_text,
+                current_text=current_text,
+                actual_dur=actual_dur,
+                target_dur=aim,
+                glossary=global_context.get("glossary", {}),
+                context_before=context_before,
+                context_after=context_after,
+                language=lang,
+                speaker=segment.get("speaker_label", ""),
+                media=global_context.get("media", ""),
+            )
 
-                current_text = new_text
+            if new_text == current_text:
+                if not too_long:
+                    # Nothing to add: a short original ("Wow!") stays short
+                    logger.info(f"[ID: {idx}] ACCEPTED short take, the LLM has nothing to add ({actual_dur:.2f}s)")
+                    self._cleanup(attempts, attempt_path)
+                    return {
+                        "audio_path": attempt_path,
+                        "final_text": current_text,
+                        "duration": actual_dur,
+                        "status": "ACCEPTED",
+                    }
+                logger.info(f"[ID: {idx}] LLM made no changes. Stopping early.")
+                break
 
-        # 4. Final Selection: Closest to target BUT NOT LONGER
+            current_text = new_text
+            current_est = None
+
         if not attempts:
             logger.error(f"[ID: {idx}] All synthesis attempts failed. Using silent fallback.")
             fallback_path = os.path.join(self.temp_dir, f"silent_{lang}_{idx}.wav")
@@ -127,33 +227,29 @@ class SegmentSynchronizer:
                 wav.setnchannels(1)
                 wav.setsampwidth(2)
                 wav.setframerate(sample_rate)
-                wav.writeframes(b"\x00\x00" * max(1, round(target_dur * sample_rate)))
+                wav.writeframes(b"\x00\x00" * max(1, round(speech_dur * sample_rate)))
             return {
                 "audio_path": fallback_path,
                 "final_text": segment.get("text_en", "..."),
-                "duration": target_dur,
+                "duration": speech_dur,
                 "status": "FAILED_FALLBACK",
             }
 
-        # Filter attempts that are within time limit
-        valid_attempts = [a for a in attempts if a["duration"] <= (target_dur + 0.1)]
-
-        if valid_attempts:
-            # Pick the longest one that fits (closest to original duration)
-            best_attempt = max(valid_attempts, key=lambda x: x["duration"])
+        # Final selection: sound takes first; among those that fit the limit, the one closest to the target
+        sound = [a for a in attempts if not a["swallowed"]] or attempts
+        fitting = [a for a in sound if a["duration"] <= target_dur * MAX_ACCEPT_SPEEDUP + 0.1]
+        if fitting:
+            best_attempt = min(fitting, key=lambda a: abs(a["duration"] - speech_dur))
             status = "VALID_FALLBACK"
         else:
-            # If all failed to fit, pick the shortest one available
-            best_attempt = min(attempts, key=lambda x: x["duration"])
+            best_attempt = min(sound, key=lambda a: a["duration"])
             status = "FORCED_SHORT_FALLBACK"
 
-        logger.warning(f"[ID: {idx}] {status}: Selection duration {best_attempt['duration']:.2f}s vs Target {target_dur:.2f}s")
-
-        # Clean up other attempts
-        if not self.debug_mode:
-            for a in attempts:
-                if a["audio_path"] != best_attempt["audio_path"] and os.path.exists(a["audio_path"]):
-                    os.remove(a["audio_path"])
+        logger.warning(
+            f"[ID: {idx}] {status}: Selection duration {best_attempt['duration']:.2f}s vs Target {speech_dur:.2f}s "
+            f"(limit {target_dur:.2f}s)"
+        )
+        self._cleanup(attempts, best_attempt["audio_path"])
 
         return {
             "audio_path": best_attempt["audio_path"],
@@ -161,3 +257,34 @@ class SegmentSynchronizer:
             "duration": best_attempt["duration"],
             "status": status,
         }
+
+    @staticmethod
+    def _next_variant(unused: Dict[str, float], current_est: Optional[float], actual: float, too_long: bool):
+        """The unused variant estimated shorter (too long) or longer (too short) than the current text."""
+        if not unused or current_est is None:
+            return None
+        if too_long:
+            shorter = {t: e for t, e in unused.items() if e < current_est}
+            return max(shorter, key=shorter.get) if shorter else None
+        longer = {t: e for t, e in unused.items() if e > current_est}
+        return min(longer, key=longer.get) if longer else None
+
+    @staticmethod
+    def _neighbours(full_script: List[Dict], idx: int, lang: str = ""):
+        """Previous and next lines as context for the refinement: source text plus translation when known."""
+
+        def describe(line):
+            text = line.get("text_en", "")
+            translated = (line.get("translations") or {}).get(lang)
+            return f"{text} => {translated}" if translated else text
+
+        before = describe(full_script[idx - 1]) if 0 < idx <= len(full_script) else ""
+        after = describe(full_script[idx + 1]) if 0 <= idx < len(full_script) - 1 else ""
+        return before, after
+
+    def _cleanup(self, attempts: List[Dict], keep: str):
+        if self.debug_mode:
+            return
+        for a in attempts:
+            if a["audio_path"] != keep and os.path.exists(a["audio_path"]):
+                os.remove(a["audio_path"])

@@ -147,7 +147,7 @@ class TTSServerClient:
 
         return text.strip()
 
-    def _build_payload(self, text, ref_audio, output_path, language, max_duration):
+    def _build_payload(self, text, ref_audio, output_path, language, max_duration, target_duration=None):
         return {
             "text": text,
             "ref_audio": ref_audio,
@@ -155,10 +155,15 @@ class TTSServerClient:
             "language": language,
         }
 
-    def synthesize(self, text, ref_audio, output_path, language="en", max_duration=None, retry_on_cuda=True):
-        """Sends a synthesis request to the model server."""
+    def synthesize(
+        self, text, ref_audio, output_path, language="en", max_duration=None, retry_on_cuda=True, target_duration=None
+    ):
+        """Sends a synthesis request to the model server.
+
+        ``target_duration`` is how long the original speaks, ``max_duration`` the latest the take may end.
+        """
         text = self.sanitize_text(text)
-        payload = self._build_payload(text, ref_audio, output_path, language, max_duration)
+        payload = self._build_payload(text, ref_audio, output_path, language, max_duration, target_duration)
 
         try:
             logging.info(f"{self.NAME}Client: Sending request for text: {text[:20]}...")
@@ -174,7 +179,13 @@ class TTSServerClient:
                     self._handle_restart()
                     logging.info(f"{self.NAME}: Server restarted. Retrying synthesis...")
                     return self.synthesize(
-                        text, ref_audio, output_path, language=language, max_duration=max_duration, retry_on_cuda=False
+                        text,
+                        ref_audio,
+                        output_path,
+                        language=language,
+                        max_duration=max_duration,
+                        retry_on_cuda=False,
+                        target_duration=target_duration,
                     )
 
                 raise RuntimeError(f"{self.NAME} Server Error: {error_text}")
@@ -184,11 +195,33 @@ class TTSServerClient:
                 logging.warning(f"{self.NAME}: Connection error ({e}). Requesting synchronized restart...")
                 self._handle_restart()
                 return self.synthesize(
-                    text, ref_audio, output_path, language=language, max_duration=max_duration, retry_on_cuda=False
+                    text,
+                    ref_audio,
+                    output_path,
+                    language=language,
+                    max_duration=max_duration,
+                    retry_on_cuda=False,
+                    target_duration=target_duration,
                 )
 
             logging.error(f"{self.NAME} Synthesis Failed: {e}")
             raise e
+
+    def estimate(self, texts, ref_audio):
+        """Estimated natural duration (seconds) of each text with this voice, or None if the server cannot tell."""
+        payload = {
+            "texts": [self.sanitize_text(t) for t in texts],
+            "ref_audio": ref_audio,
+            "ref_text": read_ref_text(ref_audio) if TTS_REF_TEXT == "auto" else "",
+        }
+        try:
+            res = requests.post(f"{self.server_url}/estimate", json=payload, timeout=TTS_TIMEOUT)
+            if res.status_code == 200:
+                return res.json().get("durations")
+            logging.warning(f"{self.NAME}: estimate returned {res.status_code}: {res.text[:200]}")
+        except Exception as e:
+            logging.warning(f"{self.NAME}: estimate failed: {e}")
+        return None
 
     def _handle_restart(self):
         """Synchronized restart of the server."""
@@ -228,9 +261,10 @@ class OmniVoiceClient(TTSServerClient):
     SERVER_SCRIPT = "omnivoice_server.py"
     DEFAULT_PORT = 5051
 
-    def _build_payload(self, text, ref_audio, output_path, language, max_duration):
-        payload = super()._build_payload(text, ref_audio, output_path, language, max_duration)
+    def _build_payload(self, text, ref_audio, output_path, language, max_duration, target_duration=None):
+        payload = super()._build_payload(text, ref_audio, output_path, language, max_duration, target_duration)
         payload["max_duration"] = max_duration
+        payload["target_duration"] = target_duration
         # Cross-lingual cloning: the reference clip is in the source language, and sending its transcript makes
         # OmniVoice apply that language's pronunciation to the target text ("walka" heard as "łalka").
         # An empty string means "no transcript" and keeps the target language's phonetics.
@@ -265,8 +299,13 @@ class TTSWrapper:
         self.client = OmniVoiceClient(gpu_id=gpu_id)
         self.client.start_server()
 
-    def synthesize(self, text, ref_audio, output_path, language="en", max_duration=None):
-        self.client.synthesize(text, ref_audio, output_path, language=language, max_duration=max_duration)
+    def synthesize(self, text, ref_audio, output_path, language="en", max_duration=None, target_duration=None):
+        self.client.synthesize(
+            text, ref_audio, output_path, language=language, max_duration=max_duration, target_duration=target_duration
+        )
+
+    def estimate(self, texts, ref_audio):
+        return self.client.estimate(texts, ref_audio)
 
     def __del__(self):
         if hasattr(self, "client"):

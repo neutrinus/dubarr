@@ -41,7 +41,7 @@ src/
   verify_output.py         Manual QA helper (faster-whisper re-transcription of generated segments).
   core/
     pipeline.py            DubbingPipeline: stages 1-7, step caching, Stage 5 checkpointing, final mix/mux.
-    synchronizer.py        Per-segment loop: TTS -> measure duration -> ask LLM to shorten -> retry (max 3).
+    synchronizer.py        Per-segment loop: pick length variant by estimate -> TTS -> measure -> other variant / LLM -> retry.
     llm_engine.py          LLMManager (llama-cpp-python Gemma 3 12B GGUF, or an external server): analysis, ASR fix, drafts, refinement.
     tts_manager.py         TTSManager: voice reference selection (dynamic / golden / last good) + TTS calls.
     whisper_engine.py      WhisperManager (faster-whisper, large-v3-turbo).
@@ -75,7 +75,8 @@ specification/             ARCHITECTURE.md + numbered feature specs (the intende
    chunks (reference subtitles from `<video>.srt` or the first embedded subtitle stream are used as ground truth).
 4. **Voice references**: picks a "golden" reference clip per speaker (scored, ZCR-checked). Despite the step name
    "Transcription Correction", this stage does not correct text.
-5. **Production**: draft translations per language (batches of 10), then a flat pool of (segment, language) jobs runs
+5. **Production**: draft translations per language (windows of 20 lines with surrounding context and per-line syllable
+   budgets, then a completeness review pass), then a flat pool of (segment, language) jobs runs
    through `SegmentSynchronizer` on 4 orchestrator threads. LLM and TTS calls go through `LLMService`/`TTSService`.
    Progress is checkpointed to `TEMP_DIR/stage5_checkpoint_<task_id>.json`.
 6. **Mix**: per-language mastering (pan, echo, atempo), then sidechain ducking against the original track.
@@ -140,6 +141,13 @@ why the image used to need separate venvs.
 | `MERGE_MAX_GAP` / `MERGE_MAX_DURATION` | `0.3` / `10` | Consecutive lines of one speaker are merged only across this pause and up to this length, so the dub stays aligned with the original pauses. |
 | `MIN_SEGMENT_DURATION` | `1.2` | Lines shorter than this are joined with a same-speaker neighbour; a sub-second slot can only produce a clipped fragment. |
 | `MAX_ACCEPT_SPEEDUP` | `1.08` | A take may overrun its slot by this much; the mix speeds it up instead of the LLM deleting words. |
+| `SENTENCE_MAX_GAP` / `SENTENCE_MAX_DURATION` | `1.5` / `20` | A same-speaker line that does not end a sentence is joined with the next across this pause, up to this length, so whole sentences get translated. |
+| `SLACK_AFTER_MAX` / `SLACK_BEFORE_MAX` | `1.5` / `0.5` | How far a take may run into the silence after its line, and how much earlier a still-too-long take may start in the silence before it. |
+| `DUB_SYLLABLES_PER_SECOND` | `5.0` | Pace of the synthesized voice; turns each line's time budget into a syllable budget for the translator. |
+| `TRANSLATION_WINDOW` / `TRANSLATION_REVIEW` | `20` / `on` | Lines per translation request; second LLM pass that restores missing information. |
+| `TTS_FILL_RATIO` / `TTS_MIN_SPEED` / `TTS_MAX_SPEEDUP` | `0.9` / `0.88` / `1.2` | OmniVoice duration control: slow short takes down towards the original's timing, speed long ones up, both only within this range. |
+| `MIN_FILL_RATIO` | `0.7` | A take shorter than this share of the original's speech goes back to the LLM to restore content. |
+| `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence) and is synthesized again with another voice reference. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
 | `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
 | `TTS_CPU_THREADS` | all cores | Threads used when synthesis runs on the CPU. |

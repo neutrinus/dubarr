@@ -72,7 +72,7 @@ class TestLLMManager(unittest.TestCase):
 
         messages = self.chat.call_args.kwargs["messages"]
         self.assertIn('Star Trek (2022), S03E03 "Shuttle"\nA crash.', messages[0]["content"])
-        batch = json.loads(messages[1]["content"])
+        batch = json.loads(messages[1]["content"])["translate"]
         self.assertEqual(batch[0]["speaker"], "Una")
         self.assertEqual(batch[0]["speaker_gender"], "female")
         self.assertEqual(drafts[0]["speaker_label"], "Una (female)")
@@ -174,3 +174,79 @@ class TestExternalServer(unittest.TestCase):
         self.assertEqual(body["messages"][0]["role"], "system")
         self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
         self.assertEqual(self.manager.llm_stats["tokens"], 5)
+
+
+class TestWindowedTranslation(unittest.TestCase):
+    def setUp(self):
+        patcher = patch("core.llm_engine.MOCK_MODE", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.manager = LLMManager(model_path="fake_model.gguf", inference_lock=None, debug_mode=False, target_langs=["pl"])
+        self.manager.llm = MagicMock()
+        self.chat = self.manager.llm.create_chat_completion
+
+    def test_lines_get_a_syllable_budget_from_speech_and_pause(self):
+        budget = LLMManager.syllable_budget({"start": 0.0, "end": 2.0, "max_end": 3.0})
+        self.assertEqual(budget["target_syllables"], 10)
+        self.assertEqual(budget["max_syllables"], 15)
+        self.assertLess(budget["min_syllables"], 10)
+
+    def test_next_window_sees_previous_translations(self):
+        script = [{"speaker": "A", "text_en": f"Line {i}", "start": i, "end": i + 1} for i in range(25)]
+
+        def answer(messages, **kwargs):
+            request = json.loads(messages[1]["content"])
+            return reply(
+                json.dumps({"translations": [{"id": x["id"], "text": f"Linia {x['id']}"} for x in request["translate"]]})
+            )
+
+        self.chat.side_effect = answer
+        with patch("core.llm_engine.TRANSLATION_WINDOW", 20):
+            drafts = self.manager.generate_drafts(script, "pl", {}, {})
+
+        self.assertEqual([d["text"] for d in drafts][:2], ["Linia 0", "Linia 1"])
+        second = json.loads(self.chat.call_args_list[1].kwargs["messages"][1]["content"])
+        self.assertEqual([x["id"] for x in second["translate"]], list(range(20, 25)))
+        self.assertEqual(second["previous"][-1], {"speaker": "A", "text": "Line 19", "translation": "Linia 19"})
+        first = json.loads(self.chat.call_args_list[0].kwargs["messages"][1]["content"])
+        self.assertEqual(first["next"][0]["text"], "Line 20")
+
+    def test_review_replaces_only_fixed_lines_within_budget(self):
+        drafts = [
+            {"index": 0, "speaker": "A", "text_en": "They have two mini-bots.", "text": "Mają.", "start": 0, "end": 3},
+            {"index": 1, "speaker": "A", "text_en": "Hi.", "text": "Cześć.", "start": 3, "end": 3.5},
+        ]
+        self.chat.return_value = reply(
+            json.dumps(
+                {
+                    "problems": ["L0 lost the mini-bots"],
+                    "fixes": [
+                        {"id": 0, "text": "Mają dwa miniboty."},
+                        {"id": 1, "text": "Cześć wszystkim, bardzo serdecznie witamy was tutaj dzisiaj na arenie."},
+                    ],
+                }
+            )
+        )
+
+        reviewed = self.manager.review_drafts(drafts, "pl", {}, {})
+
+        self.assertEqual(reviewed[0]["text"], "Mają dwa miniboty.")
+        self.assertEqual(reviewed[1]["text"], "Cześć.")  # far over its 0.5 s budget
+
+    def test_drafts_keep_length_variants_and_review_drops_stale_ones(self):
+        script = [{"speaker": "A", "text_en": "They have two mini-bots.", "start": 0, "end": 3}]
+        self.chat.return_value = reply(
+            json.dumps(
+                {
+                    "translations": [
+                        {"id": 0, "text": "Mają dwa miniboty.", "short": "Dwa miniboty.", "long": "Mają aż dwa miniboty."}
+                    ]
+                }
+            )
+        )
+        drafts = self.manager.generate_drafts(script, "pl", {}, {})
+        self.assertEqual(drafts[0]["variants"], ["Mają dwa miniboty.", "Dwa miniboty.", "Mają aż dwa miniboty."])
+
+        self.chat.return_value = reply(json.dumps({"fixes": [{"id": 0, "text": "Mają dwa małe miniboty."}]}))
+        reviewed = self.manager.review_drafts(drafts, "pl", {}, {})
+        self.assertEqual(reviewed[0]["variants"], ["Mają dwa małe miniboty."])

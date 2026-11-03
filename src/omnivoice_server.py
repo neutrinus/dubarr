@@ -11,6 +11,8 @@ import torch  # noqa: E402
 from flask import Flask, request, jsonify  # noqa: E402
 from omnivoice import OmniVoice  # noqa: E402
 
+from duration_policy import choose_duration  # noqa: E402
+
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
@@ -21,8 +23,6 @@ CPU_THREADS = int(os.environ.get("TTS_CPU_THREADS", "0")) or (os.cpu_count() or 
 
 # OmniVoice pads every clip with this much silence per side (OmniVoiceGenerationConfig.pad_duration)
 PAD_DURATION = 0.1
-# Never speed speech up by more than this to fit a slot; longer lines go back to the LLM to be shortened
-MAX_SPEEDUP = 1.25
 PROMPT_CACHE_SIZE = 64
 _prompt_cache = OrderedDict()
 
@@ -55,20 +55,17 @@ def get_voice_prompt(ref_audio, ref_text):
     return prompt
 
 
-def pick_duration(text, prompt, max_duration):
-    """Returns the duration to request, or None to let the model speak at its natural pace.
+def pick_duration(text, prompt, target_duration, max_duration):
+    """Returns the duration to request, or None to let the model speak at its natural pace (Spec 002, 2.2).
 
-    Lines that naturally fit are left alone. Lines that run over are squeezed into the slot,
-    but by at most MAX_SPEEDUP, so speech never sounds rushed.
+    Lines that naturally fit are left alone; short ones are slowed down towards the original's timing and long ones
+    squeezed into the limit, both only within a range that still sounds natural.
     """
-    if not max_duration:
+    if not max_duration and not target_duration:
         return None
-    budget = max(0.3, max_duration - 2 * PAD_DURATION)
     frame_rate = model.audio_tokenizer.config.frame_rate
     natural = model._estimate_target_tokens(text, prompt.ref_text, prompt.ref_audio_tokens.size(-1)) / frame_rate
-    if natural <= budget:
-        return None
-    return max(budget, natural / MAX_SPEEDUP)
+    return choose_duration(natural, target_duration, max_duration, pad=PAD_DURATION)
 
 
 @app.route("/synthesize", methods=["POST"])
@@ -80,6 +77,7 @@ def synthesize():
     output_path = data.get("output_path")
     language = data.get("language")
     max_duration = data.get("max_duration")
+    target_duration = data.get("target_duration")
 
     if not text or not any(c.isalnum() for c in text):
         logging.warning(f"OmniVoice: Received empty or invalid text: '{text}'. Synthesizing a dot.")
@@ -87,7 +85,7 @@ def synthesize():
 
     try:
         prompt = get_voice_prompt(ref_audio, ref_text)
-        duration = pick_duration(text, prompt, max_duration)
+        duration = pick_duration(text, prompt, target_duration, max_duration)
         audio = model.generate(text=text, language=language, voice_clone_prompt=prompt, duration=duration)
         sf.write(output_path, audio[0], model.sampling_rate)
         return jsonify({"status": "success", "duration": duration})
@@ -97,6 +95,24 @@ def synthesize():
     finally:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+
+@app.route("/estimate", methods=["POST"])
+def estimate():
+    """Natural spoken length of each text with this voice, from the model's text-based estimator (no audio)."""
+    data = request.json
+    try:
+        prompt = get_voice_prompt(data.get("ref_audio"), data.get("ref_text"))
+        frame_rate = model.audio_tokenizer.config.frame_rate
+        ref_tokens = prompt.ref_audio_tokens.size(-1)
+        durations = [
+            model._estimate_target_tokens(text or ".", prompt.ref_text, ref_tokens) / frame_rate + 2 * PAD_DURATION
+            for text in data.get("texts", [])
+        ]
+        return jsonify({"status": "success", "durations": durations})
+    except Exception as e:
+        logging.error(f"OmniVoice Estimate Failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 @app.route("/health", methods=["GET"])

@@ -52,10 +52,8 @@ OUTPUT FORMAT:
 """
 
 T_TRANS_SYSTEM = """You are an expert {lang_name} translator adapting a video script for DUBBING.
-TASK: Translate the provided list of lines to {lang_name}.
-
-Each line has a "duration_sec". Your translation MUST be speakable within that time.
-Average speaking rate is 3-4 syllables per second.
+TASK: Translate the lines in "translate" to {lang_name}. The translation will be spoken by a voice actor over the
+original timing, so it must be COMPLETE and it must FIT.
 
 ABOUT THE VIDEO:
 {context}
@@ -63,23 +61,67 @@ ABOUT THE VIDEO:
 GLOSSARY:
 {glossary}
 
-OUTPUT FORMAT (JSON):
-{{
-  "thought": "Your reasoning about the whole batch",
-  "translations": [
-    {{ "id": 0, "text": "Translated text" }},
-    {{ "id": 1, "text": "Translated text" }}
-  ]
-}}
+INPUT (JSON):
+- "previous": lines just before, with their final translations. Read-only: keep terms, forms of address and style consistent.
+- "translate": the lines to translate. Each has "id", "speaker", optional "speaker_gender", "text" and a syllable
+  budget: "min_syllables", "target_syllables", "max_syllables" (spoken syllables in {lang_name}).
+- "next": the lines that follow. Read-only: use them to understand where a sentence is going.
 
 RULES:
-1. Maintain IDs exactly as provided.
-2. Follow the GLOSSARY strictly.
-3. UNIT CONVERSION: Convert Imperial units (miles, pounds, feet, etc.) to Metric units (kilometers, kilograms, meters, etc.) appropriate for the target language. Use natural-sounding rounded values if exact ones are too long to speak.
-4. Be extremely concise. If "duration_sec" is small, use shorter words or omit non-essential parts.
-5. Each line has the "speaker" and, when known, the "speaker_gender". Use grammatical forms that match the speaker's
-   gender (e.g. Polish past tense: "zrobiłem" for a man, "zrobiłam" for a woman). Keep the tone, register and
-   terminology of the show (its genre and setting); keep established in-universe names and terms consistent.
+1. KEEP ALL INFORMATION. Every name, number, result, reason ("because ..."), and who does what to whom must be in the
+   translation. Read the window as one text: lines of one speaker often continue each other.
+2. FIT THE BUDGET. Aim for "target_syllables"; never exceed "max_syllables"; do not go below "min_syllables" unless
+   the source line itself is that short (e.g. "Wow!").
+3. To fit, drop fillers and hesitations first ("you know", "well", "I mean", repetitions), then use shorter words and
+   tighter phrasing. Never cut meaning to save syllables while a filler is left.
+4. If a line still cannot hold everything, MOVE the extra information to the previous or next line of the SAME speaker
+   in "translate" that has spare budget. Never move it to another speaker and never drop it silently.
+5. Use grammatical forms that match the speaker's gender (e.g. Polish past tense: "zrobiłem" for a man, "zrobiłam" for
+   a woman). Keep the tone, register and terminology of the show.
+6. UNIT CONVERSION: convert imperial units (miles, pounds, feet) to metric (kilometers, kilograms, meters), with
+   natural rounded values.
+7. Follow the GLOSSARY. Write natural {lang_name}; never leave a line in the source language.
+8. Return every id of "translate" exactly once.
+9. For each line also give two LENGTH VARIANTS with the same meaning: "short" (towards "min_syllables": only the
+   essentials, still a natural sentence) and "long" (towards "max_syllables": fuller, more natural phrasing; never
+   invent facts). The voice director picks the one that fits the actor's timing best.
+
+OUTPUT FORMAT (JSON):
+{{
+  "thought": "Brief notes: which lines are tight and where you moved information",
+  "translations": [
+    {{ "id": 0, "text": "Translated text", "short": "Shorter variant", "long": "Longer variant" }},
+    {{ "id": 1, "text": "Translated text", "short": "Shorter variant", "long": "Longer variant" }}
+  ]
+}}
+"""
+
+T_REVIEW = """You are the dubbing editor checking a {lang_name} translation against the source before recording.
+
+ABOUT THE VIDEO:
+{context}
+
+GLOSSARY:
+{glossary}
+
+INPUT (JSON): "lines", each with "id", "speaker", "source", "translation" and "max_syllables".
+
+CHECK, reading all lines together as one text:
+1. MISSING: information of the source (names, numbers, results, reasons, actions, who does what) that is in no
+   translation line of that speaker nearby.
+2. WRONG: mistranslations, wrong gender forms, a line left in the source language, duplicated content (the same
+   information said twice in neighbouring lines).
+Fix only real problems. A fix must stay within "max_syllables" of its line; to make room, drop fillers or move
+information to a neighbouring line of the same speaker (and fix that line too).
+
+OUTPUT FORMAT (JSON):
+{{
+  "problems": ["Short description of each problem found"],
+  "fixes": [
+    {{ "id": 3, "text": "Corrected translation of line 3" }}
+  ]
+}}
+Return "fixes": [] when the translation is complete and correct.
 """
 
 T_REFINE_DURATION = """You are a Dubbing Director adjusting a script to match the original actor's timing.
@@ -87,14 +129,17 @@ The current translation does not fit the audio duration constraint.
 
 TASK: Rewrite the text to match the Target Duration while maintaining PERFECT GRAMMAR.
 The answer MUST be written in {language} - never switch to another language.
-- If current duration > target: Shorten the text (remove fillers, use synonyms).
-- If current duration < target: Expand the text (add natural fillers, adjectives, rephrase).
+- If current duration > target: Shorten the text: remove fillers, use shorter synonyms and tighter phrasing.
+  Names, numbers, results and reasons must stay.
+- If current duration < target: First restore any detail of the Original that the draft left out; otherwise phrase it
+  more fully and naturally. NEVER invent facts that are not in the Original. If nothing can be added naturally, return
+  the Current Draft unchanged.
 
 CONTEXT:
 - Video: {media}
 - Speaker: {speaker}
-- Previous line: "{context_before}"
-- Next line: "{context_after}"
+- Previous line (source => translation): "{context_before}"
+- Next line (source => translation): "{context_after}"
 
 GLOSSARY (Use strict phonetic spelling for names):
 {glossary}
