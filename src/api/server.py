@@ -40,8 +40,29 @@ templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
 
 class WebhookPayload(BaseModel):
-    path: str
+    """`{"path": ...}`, or the payload of the Sonarr/Radarr built-in Webhook connection."""
+
+    path: Optional[str] = None
     eventType: Optional[str] = None
+    movieFile: Optional[dict] = None  # Radarr
+    movie: Optional[dict] = None
+    episodeFile: Optional[dict] = None  # Sonarr
+    series: Optional[dict] = None
+
+
+def webhook_file_path(payload: WebhookPayload) -> Optional[str]:
+    """The video file a webhook points at: `path`, else the imported Radarr/Sonarr file."""
+    if payload.path:
+        return payload.path
+    for file_info, parent in ((payload.movieFile, payload.movie), (payload.episodeFile, payload.series)):
+        if not file_info:
+            continue
+        if file_info.get("path"):
+            return file_info["path"]
+        folder = (parent or {}).get("folderPath") or (parent or {}).get("path")
+        if folder and file_info.get("relativePath"):
+            return os.path.join(folder, file_info["relativePath"])
+    return None
 
 
 @asynccontextmanager
@@ -264,12 +285,17 @@ async def upload_video(file: UploadFile = File(...), username: str = Depends(aut
 
 @app.post("/webhook")
 async def receive_webhook(payload: WebhookPayload, username: str = Depends(authenticate)):
-    if not payload.path:
+    # Sonarr/Radarr send "Test" when the connection is saved
+    if (payload.eventType or "").lower() == "test" and not payload.path:
+        return {"status": "test", "path": None}
+    path = webhook_file_path(payload)
+    if not path:
+        if payload.eventType:
+            # Another *arr event (Grab, Rename, ...) without a file: nothing to dub, but not an error for the sender
+            return {"status": "ignored", "path": None}
         raise HTTPException(status_code=400, detail="Path is required")
 
-    full_path = (
-        payload.path if os.path.isabs(payload.path) else os.path.join(VIDEO_FOLDER, payload.path.replace("videos/", ""))
-    )
+    full_path = path if os.path.isabs(path) else os.path.join(VIDEO_FOLDER, path.replace("videos/", ""))
     full_path = os.path.normpath(full_path)
 
     # Get metadata

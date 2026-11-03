@@ -148,8 +148,13 @@ curl -u dubarr:dubarr -X POST http://localhost:8000/webhook \
   -d '{"path": "/movies/Diuna/Dune.mkv"}'
 ```
 
-The webhook expects exactly this `{"path": ...}` body. Sonarr's and Radarr's built-in *Webhook* connection sends a
-different payload, so connect them with a *Custom Script* (or any small proxy) that posts the imported file's path.
+**Sonarr / Radarr:** add a *Webhook* connection (Settings → Connect) with the *On File Import* and *On File Upgrade*
+triggers, URL `http://<dubarr-host>:8000/webhook`, method POST, and the `API_USER` / `API_PASS` credentials. Dubarr
+reads the imported file's path from their payload, so mount the library at the same path in both containers.
+
+![Radarr webhook connection](assets/radarr_config.png)
+
+(The screenshot uses port 8080; the default is 8000. Fill in the username and password.)
 Other endpoints (`/download`, `/retry`, `/debug`, `/health`, `/ws/logs`) are described in
 [Spec 004](specification/specs/004_api_interface.md).
 

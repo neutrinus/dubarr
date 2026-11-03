@@ -28,16 +28,14 @@ Uploads a video file and queues it for processing.
 
 #### `POST /webhook`
 Registers an existing file for processing. The path must exist inside the container; a relative path is resolved
-against `/app/videos`. Only this JSON shape is accepted: the native Sonarr/Radarr webhook payload (which has no
-top-level `path`) is not parsed, so Sonarr/Radarr need a custom script or a proxy that sends `{"path": ...}`.
+against `/app/videos`. Two payloads are accepted:
+-   `{"path": ...}` (scripts, cURL);
+-   the Sonarr/Radarr built-in **Webhook** connection: the file is `movieFile.path` / `episodeFile.path`, else the
+    `relativePath` joined with `movie.folderPath` / `series.path`. The `Test` event (sent when the connection is
+    saved) returns `{"status": "test"}`; other events without a file (Grab, Rename, ...) return `{"status": "ignored"}`.
+    Neither queues anything. Use the *On File Import* and *On File Upgrade* triggers.
 -   **Method:** POST (JSON)
--   **Payload:**
-    ```json
-    {
-        "path": "/absolute/path/to/video.mp4",
-        "eventType": "optional_event_type"
-    }
-    ```
+-   **Payload:** `{"path": "/absolute/path/to/video.mp4"}`, or a Sonarr/Radarr webhook body.
 -   **Response:** `{"status": "queued" | "re-queued" | "ignored", "path": "<absolute path>"}`. A known path that is
     finished or failed is queued again; one that is queued or processing is ignored.
 
