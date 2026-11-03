@@ -44,9 +44,9 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
     2.2). Reference clips and takes are embedded with the same model (`pyannote/wespeaker-voxceleb-resnet34-LM`), so
     all prints compare by cosine similarity.
 2.  **`voices.json`** holds one entry per person: id (`V001`...), the mean voiceprint over its episodes, name, gender,
-    a short description, the number of episodes, and up to `VOICE_BANK_CLIPS` (5) clips in `clips/` with their audition
-    score, clarity (dB) and calm score (Spec 001, 2.4). Clips are ranked by audition score, then calm score; the worst
-    is dropped when a better one arrives.
+    a short description, the number of episodes, and up to `VOICE_BANK_CLIPS` (5) clips in `clips/` (with their
+    transcripts) and their audition score. Clips are ranked by audition score; the worst is dropped when a better one
+    arrives. Only auditioned clips are stored (none with `TAKE_CHECK=off`), and never a designed voice.
 3.  **Matching.** After Stage 2 every diarization speaker is compared with the bank. A speaker is that person when the
     similarity is at least `VOICE_MATCH_MIN` (0.6) and beats the second best person by at least 0.05 (two similar
     commentators must not merge). Two speakers that match the same person are merged into one speaker before the script
@@ -56,7 +56,7 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
 5.  **References.** A matched speaker's bank clips join its reference candidates (Spec 001, 2.4) before the voice
     audition, which ranks all of them as usual: the bank cannot make a speaker worse, since a better clip of this
     episode wins. A speaker who only shouts in this episode gets a calm clip from an earlier one.
-6.  **Update.** After a successful task, every speaker with at least 3 dubbed lines updates its person (or creates a
+6.  **Update.** After a successful task, every speaker with at least 3 lines updates its person (or creates a
     new one): the voiceprint is averaged (weighted by episodes), the profile is filled where it was empty, and the
     episode's audited clips compete for the bank's slots.
 

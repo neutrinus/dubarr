@@ -53,3 +53,77 @@ class TestGlossary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVoiceBank(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.mem = SeriesMemory("battlebots", root=self.root)
+        self.work = tempfile.mkdtemp()
+
+    def clip(self, name, text="Calm talk before the fight."):
+        path = os.path.join(self.work, name)
+        with open(path, "wb") as f:
+            f.write(b"RIFF....WAVE")
+        with open(os.path.splitext(path)[0] + ".txt", "w") as f:
+            f.write(text)
+        return path
+
+    def first_episode(self):
+        self.mem.save_voices(
+            {
+                "SPEAKER_00": {
+                    "person": None,
+                    "print": [1.0, 0.0, 0.0],
+                    "profile": {"name": "Host", "gender": "male", "desc": "commentator"},
+                    "clips": [(self.clip("ref_00.wav"), 0.9), (self.clip("ref_00_2.wav"), 0.4)],
+                },
+                "SPEAKER_01": {"person": None, "print": [0.0, 1.0, 0.0], "profile": {"gender": "unknown"}, "clips": []},
+                "SPEAKER_02": {"person": None, "print": None, "profile": {}, "clips": []},  # no print: skipped
+            }
+        )
+
+    def test_new_persons_and_their_clips(self):
+        self.first_episode()
+        persons = self.mem.persons()
+        self.assertEqual(sorted(persons), ["V001", "V002"])
+        self.assertEqual(persons["V001"]["name"], "Host")
+        self.assertNotIn("gender", persons["V002"])  # "unknown" is not stored
+        clips = self.mem.clips("V001")
+        self.assertEqual(len(clips), 2)
+        self.assertTrue(os.path.exists(os.path.splitext(clips[0])[0] + ".txt"))
+
+    def test_match_needs_a_clear_winner(self):
+        self.first_episode()
+        matches = self.mem.match({"SPEAKER_05": [0.95, 0.1, 0.0], "SPEAKER_06": [0.7, 0.7, 0.0], "X": [0.0, 0.0, 1.0]})
+        # SPEAKER_06 is as close to both persons: not matched; X is nobody known
+        self.assertEqual(matches, {"SPEAKER_05": "V001"})
+
+    def test_hints_and_settled_gender(self):
+        self.first_episode()
+        self.assertIn("SPEAKER_03 is probably Host, male, commentator", self.mem.hints({"SPEAKER_03": "V001"}))
+        self.assertEqual(self.mem.settled_genders({"SPEAKER_03": "V001"}), {})  # one episode is not enough
+        self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": [0.9, 0.1, 0.0], "profile": {}, "clips": []}})
+        self.assertEqual(self.mem.settled_genders({"SPEAKER_03": "V001"}), {"SPEAKER_03": "male"})
+        self.assertEqual(self.mem.persons()["V001"]["episodes"], 2)
+        self.assertAlmostEqual(self.mem.persons()["V001"]["print"][0], 0.95)
+
+    def test_only_the_best_clips_are_kept(self):
+        self.first_episode()
+        with patch.object(series_memory, "VOICE_BANK_CLIPS", 2):
+            self.mem.save_voices(
+                {"S": {"person": "V001", "print": None, "profile": {}, "clips": [(self.clip("calm.wav"), 0.95)]}}
+            )
+        clips = self.mem.persons()["V001"]["clips"]
+        self.assertEqual([c["score"] for c in clips], [0.95, 0.9])
+        self.assertEqual(len(os.listdir(self.mem.clips_dir)), 4)  # two clips with their transcripts
+
+    def test_merge_split_speakers(self):
+        diar = [{"speaker": "SPEAKER_01", "start": 0, "end": 1}, {"speaker": "SPEAKER_02", "start": 1, "end": 2}]
+        prints = {"SPEAKER_01": [1.0, 0.0], "SPEAKER_02": [0.8, 0.2], "SPEAKER_03": [0.0, 1.0]}
+        matches = {"SPEAKER_01": "V001", "SPEAKER_02": "V001"}
+        diar, prints, matches = series_memory.merge_matched_speakers(diar, prints, matches)
+        self.assertEqual({d["speaker"] for d in diar}, {"SPEAKER_01"})
+        self.assertEqual(matches, {"SPEAKER_01": "V001"})
+        self.assertEqual(prints["SPEAKER_01"], [0.9, 0.1])
+        self.assertIn("SPEAKER_03", prints)

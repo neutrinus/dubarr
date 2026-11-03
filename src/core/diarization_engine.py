@@ -31,6 +31,7 @@ class DiarizationManager:
         self.inference_lock = inference_lock
         self.pipeline = None
         self.status = "IDLE"  # IDLE, LOADING, READY, ERROR
+        self.embeddings: Dict[str, List[float]] = {}  # speaker -> centroid voiceprint of the last diarization
 
     def load_model(self):
         """Loads the Pyannote Diarization pipeline. Skips in MOCK_MODE."""
@@ -99,7 +100,21 @@ class DiarizationManager:
         diar_result = [
             {"start": s.start, "end": s.end, "speaker": label} for s, _, label in annotation.itertracks(yield_label=True)
         ]
+        self.embeddings = self._centroids(res, annotation)
         return diar_result
+
+    @staticmethod
+    def _centroids(res, annotation) -> Dict[str, List[float]]:
+        """Each speaker's centroid voiceprint, which pyannote computes anyway (Spec 006, 4.1); empty when absent."""
+        emb = getattr(res, "speaker_embeddings", None)
+        if emb is None:
+            return {}
+        try:
+            labels = list(annotation.labels())
+            return {label: [round(float(x), 6) for x in emb[i]] for i, label in enumerate(labels) if i < len(emb)}
+        except Exception as e:
+            logging.warning(f"Diarization: no speaker embeddings ({e})")
+            return {}
 
     def shutdown(self):
         """Explicitly releases the pipeline from VRAM."""

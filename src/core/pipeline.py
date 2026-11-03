@@ -7,7 +7,7 @@ import humanfriendly
 import shutil
 import glob
 import subprocess
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_BEFORE_MAX, SLACK_GUARD
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
@@ -33,7 +33,7 @@ from core.synchronizer import SegmentSynchronizer
 from core.voice_audition import audition_voices, design_voices
 from core.gpu_services import LLMService, TTSService
 from core.media_context import lookup_media_info, format_media_context, format_short_context, episode_names
-from core.series_memory import SeriesMemory
+from core.series_memory import SeriesMemory, merge_matched_speakers
 from core.take_judge import TakeJudge
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -86,6 +86,8 @@ class DubbingPipeline:
         self.speaker_refs = {}
         self.global_context = {}
         self.series = None  # SeriesMemory of the current episode (Spec 006)
+        self.voiceprints: Dict[str, List[float]] = {}  # speaker -> diarization centroid
+        self.voice_matches: Dict[str, str] = {}  # speaker -> person of the voice bank
         self.available_pans = [-0.10, 0.10, -0.03, 0.03, -0.17, 0.17]
         self.speaker_pans = {}
         self.abort_event = llm_manager.abort_event
@@ -586,7 +588,22 @@ class DubbingPipeline:
             self.temp_dir,
         )
         diar, trans, audio_durs = analysis_data[0], analysis_data[1], analysis_data[2]
+        self.voiceprints = analysis_data[3] if len(analysis_data) > 3 else {}
         self.durations.update(audio_durs)
+
+        # What is this video? (show/episode or movie, synopsis, cast) - context for the analysis and the translator
+        media_info = self._run_step("Stage 2b: Media Metadata", self._lookup_media_info, task_id, vpath)
+        if self.debug_mode and media_info:
+            with open(os.path.join(ddir, "media_info.json"), "w") as f_dbg:
+                json.dump(media_info, f_dbg, indent=2, ensure_ascii=False)
+
+        # Series memory (Spec 006): known persons by voice (merging split speakers), settled name spellings
+        self.series = SeriesMemory.for_media(media_info)
+        self.voice_matches = {}
+        if self.series and self.voiceprints:
+            self.voice_matches = self.series.match(self.voiceprints)
+            diar, self.voiceprints, self.voice_matches = merge_matched_speakers(diar, self.voiceprints, self.voice_matches)
+        fixed_glossary = self.series.glossary(SeriesMemory.lang_key(self.target_langs)) if self.series else {}
 
         script = self._create_script(diar, trans)
         if self.debug_mode:
@@ -595,16 +612,10 @@ class DubbingPipeline:
         if self.abort_event.is_set():
             return
         ref_subs = self._extract_subtitles(vpath)
-
-        # What is this video? (show/episode or movie, synopsis, cast) - context for the analysis and the translator
-        media_info = self._run_step("Stage 2b: Media Metadata", self._lookup_media_info, task_id, vpath)
-        if self.debug_mode and media_info:
-            with open(os.path.join(ddir, "media_info.json"), "w") as f_dbg:
-                json.dump(media_info, f_dbg, indent=2, ensure_ascii=False)
-
-        # Settled spellings of this series and the names known to occur (Spec 006, 3)
-        self.series = SeriesMemory.for_media(media_info)
-        fixed_glossary = self.series.glossary(SeriesMemory.lang_key(self.target_langs)) if self.series else {}
+        media_text = format_media_context(media_info)
+        hints = self.series.hints(self.voice_matches) if self.series else ""
+        if hints:
+            media_text = f"{media_text}\n{hints}".strip()
         analysis_results = self._run_step(
             "Stage 3: Global Analysis",
             self.llm_manager.analyze_script,
@@ -612,7 +623,7 @@ class DubbingPipeline:
             script,
             ddir,
             ref_subs,
-            format_media_context(media_info),
+            media_text,
             fixed_glossary,
             episode_names(media_info),
         )
@@ -620,13 +631,21 @@ class DubbingPipeline:
         if media_info:
             self.global_context["media"] = format_short_context(media_info)
         self.speaker_info = analysis_results["speakers"]
+        for spk, gender in (self.series.settled_genders(self.voice_matches) if self.series else {}).items():
+            self.speaker_info.setdefault(spk, {})["gender"] = gender
         # analyze_script corrects the script in place; on a cached run only its returned fixes carry them over
         for idx_str, text in analysis_results.get("script_fixes", {}).items():
             if 0 <= int(idx_str) < len(script):
                 script[int(idx_str)]["text_en"] = text
 
         refs = self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
-        self.speaker_refs = refs or {}
+        self.speaker_refs = {spk: list(paths) for spk, paths in (refs or {}).items()}
+        # A known person's clips from earlier episodes join the candidates; the voice audition ranks them all
+        for spk, pid in self.voice_matches.items():
+            bank = [p for p in self.series.clips(pid) if p not in self.speaker_refs.get(spk, [])]
+            if bank:
+                self.speaker_refs.setdefault(spk, []).extend(bank)
+                logger.info(f"Series memory: {spk} gets {len(bank)} reference clips of {pid} from earlier episodes")
         genders = {spk: (info or {}).get("gender", "") for spk, info in (self.speaker_info or {}).items()}
         self.tts_manager.set_speaker_refs(self.speaker_refs, genders)
 
@@ -700,7 +719,33 @@ class DubbingPipeline:
             used = [t for t in glossary if t.lower() in text]
             self.series.save_glossary(SeriesMemory.lang_key(self.target_langs), glossary, used)
         except Exception as e:
-            logger.warning(f"Series memory: could not save ({e})")
+            logger.warning(f"Series memory: could not save the glossary ({e})")
+        try:
+            self.series.save_voices(self._bank_update(script))
+        except Exception as e:
+            logger.warning(f"Series memory: could not save the voice bank ({e})")
+
+    def _bank_update(self, script):
+        """What this episode tells the voice bank: every speaker with at least 3 lines (Spec 006, 4.6)."""
+        lines: Dict[str, int] = {}
+        for s in script:
+            lines[s["speaker"]] = lines.get(s["speaker"], 0) + 1
+        tts = self.tts_manager
+        audition = getattr(tts, "audition", {}) or {}
+        designed = getattr(tts, "designed", set()) or set()
+        update = {}
+        for spk, count in lines.items():
+            if count < 3 or spk == "unknown":
+                continue
+            refs = (getattr(tts, "speaker_refs", {}) or {}).get(spk) or []
+            info = (self.speaker_info or {}).get(spk) or {}
+            update[spk] = {
+                "person": self.voice_matches.get(spk),
+                "print": self.voiceprints.get(spk),
+                "profile": {"name": info.get("name"), "gender": info.get("gender"), "desc": info.get("desc")},
+                "clips": [(p, audition.get(p)) for p in refs if p not in designed and audition.get(p) is not None],
+            }
+        return update
 
     def _print_report(self, f, t, avg_tps):
         rep = ["\n" + "=" * 50, f" PROFILING REPORT: {f}", "=" * 50]

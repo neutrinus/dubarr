@@ -19,10 +19,12 @@ class TestAudio(unittest.TestCase):
         whisper_mock = MagicMock()
 
         diar_mock.diarize.return_value = [{"speaker": "A", "start": 0, "end": 1}]
+        diar_mock.embeddings = {"A": [0.1, 0.2]}
         whisper_mock.transcribe.return_value = [{"text": "Hello", "start": 0, "end": 1}]
 
         with patch("infrastructure.ffmpeg.FFmpegWrapper.convert_audio"), patch("core.gpu_manager.GPUManager.force_gc"):
-            diar, trans, durs = analyze_audio("vocals.wav", diar_mock, whisper_mock)
+            diar, trans, durs, prints = analyze_audio("vocals.wav", diar_mock, whisper_mock)
+            self.assertEqual(prints, {"A": [0.1, 0.2]})
 
             self.assertEqual(len(diar), 1)
             self.assertEqual(trans[0]["text"], "Hello")

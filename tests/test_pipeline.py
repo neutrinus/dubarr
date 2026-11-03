@@ -413,3 +413,19 @@ class TestCalmReferences(unittest.TestCase):
         scored = [({"start": 1.0, "end": 5.0}, 50), ({"start": 9.0, "end": 14.0}, 60)]
         with patch("core.pipeline.voice_level", return_value=-20.0):
             self.assertEqual(pipe._apply_calm_scores(scored, "v.wav", "A"), scored)
+
+
+class TestBankUpdate(unittest.TestCase):
+    def test_speakers_with_three_lines_and_their_audited_real_clips(self):
+        pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        pipe.voiceprints = {"A": [1.0, 0.0]}
+        pipe.voice_matches = {"A": "V001"}
+        pipe.speaker_info = {"A": {"name": "Host", "gender": "male", "desc": "commentator"}}
+        pipe.tts_manager.speaker_refs = {"A": ["ref_A.wav", "design_A.wav", "ref_A_2.wav"], "B": ["ref_B.wav"]}
+        pipe.tts_manager.audition = {"ref_A.wav": 0.9, "design_A.wav": 0.95}
+        pipe.tts_manager.designed = {"design_A.wav"}
+        script = [{"speaker": "A"}] * 3 + [{"speaker": "B"}] * 2
+        update = pipe._bank_update(script)
+        self.assertEqual(list(update), ["A"])
+        self.assertEqual(update["A"]["clips"], [("ref_A.wav", 0.9)])
+        self.assertEqual((update["A"]["person"], update["A"]["profile"]["name"]), ("V001", "Host"))

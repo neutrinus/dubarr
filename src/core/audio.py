@@ -64,8 +64,10 @@ def prep_audio(vpath: str, work_dir: str = TEMP_DIR) -> Tuple[str, str]:
 
 def analyze_audio(
     vocals_path: str, diar_manager, whisper_manager, original_path: str = None, work_dir: str = TEMP_DIR
-) -> Tuple[List, List, Dict]:
+) -> Tuple[List, List, Dict, Dict]:
     """Orchestrates diarization and transcription using provided managers with eager VRAM cleanup.
+
+    Returns (diarization, transcription, durations, speaker voiceprints).
 
     Diarization runs on the separated vocals. Whisper hears the original mix by default (ASR_SOURCE=original): it is
     trained on noisy audio, while Demucs can cut or distort speech under loud effects (Spec 001, 2.2).
@@ -80,6 +82,8 @@ def analyze_audio(
     t0 = time.perf_counter()
     logger.info("Stage 2a: Speaker Diarization...")
     diar_result = diar_manager.diarize(mpath)
+    prints = getattr(diar_manager, "embeddings", None)
+    prints = prints if isinstance(prints, dict) else {}
     durations["2a. Diarization"] = time.perf_counter() - t0
     diar_manager.shutdown()
     GPUManager.force_gc()  # Aggressive cleanup
@@ -99,7 +103,7 @@ def analyze_audio(
     whisper_manager.shutdown()
     GPUManager.force_gc()  # Aggressive cleanup
 
-    return diar_result, trans_result, durations
+    return diar_result, trans_result, durations, prints
 
 
 def mix_audio(bg: str, clips: List, out: str, work_dir: str = TEMP_DIR):
