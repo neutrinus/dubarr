@@ -42,7 +42,8 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
         9 syllables per second); the model produced mostly silence, which OmniVoice then trims; or
     -   *unintelligible* (only with `TAKE_CHECK=on`, the default): Whisper transcribes the take in the target language
         (no VAD, no conditioning on previous text) and the letters-only similarity to its text is under
-        `TAKE_MIN_SIMILARITY` (default 0.5). This catches noise, screams and gibberish cloned from a noisy voice
+        `TAKE_MIN_SIMILARITY` (default 0.7; in the first measured run nearly every accepted take under 0.7 was
+        mangled or had squeaks around the text). This catches noise, screams and gibberish cloned from a noisy voice
         reference. Lines under 4 syllables ("Wow!") are not checked, the ASR spells interjections too freely; or
     -   *missing*: the TTS returned no usable audio (an empty file or an error).
     A broken take is synthesized again with the next voice reference (2.3), up to 2 extra syntheses. It is never
@@ -78,18 +79,23 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
 ### 2.3 Voice Reference Strategy
 **Voice audition** (before the sync loop, `TAKE_CHECK` `on` or `audition`). Each speaker's reference candidates
 (Spec 001, 2.4) synthesize the same test line: the speaker's own draft line (first target language) closest to
-18 syllables, at natural pace. Whisper scores each take as in 2.2 step 4 (a swallowed take scores 0). The candidates
+18 syllables, at natural pace, preferring a line without glossary respellings ("Ajś-łejw" is heard as "Ice Wave",
+which lowers the score of every candidate alike). Whisper scores each take as in 2.2 step 4 (a swallowed take scores 0). The candidates
 are ranked by that score, best first. A speaker whose best score is under `AUDITION_LINE_REF_MIN` (default 0.8) does
 not use line clips: a voice that clones badly from its cleanest clips (announcers shouting over the arena) clones
 worse from an arbitrary line. Without the audition the Stage 4 order is kept and line clips are used.
 
 **Designed voice** (`VOICE_DESIGN`, on by default). Before the audition, OmniVoice voice design synthesizes one clip
-per speaker with a known gender from the attributes it understands: gender, age and pitch, taken from the speaker
-profile (Stage 3; e.g. "male, middle-aged, low pitch"). The clip speaks the speaker's own lines (about 30 syllables,
-not the audition test line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
+per speaker that has lines, from the attributes it understands: gender, age and pitch, taken from the speaker
+profile (Stage 3; e.g. "male, middle-aged, low pitch"; age words match whole words only). With nothing known OmniVoice
+picks a generic voice. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
+it is the speaker's only line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
 other reference, so the voice stays the same across the video. The audition decides whether it beats the speaker's
 own clips (voice design was trained on Chinese and English only and may be unstable in other languages). It gives a
-voice to speakers without any clean clip; it is never lent to another speaker.
+voice to speakers without any clean clip.
+
+A speaker only ever speaks with **its own voice** (its clips, line clips or designed voice): another speaker's voice in
+its mouth confuses the viewer more than a generic voice does.
 
 References are tried in this order; a retry after a broken take skips the ones already tried for that line:
 1.  **Line clip:** a clean clip of the line itself when it is 3-10 s long (carries the scene's emotion). Clean means
@@ -98,10 +104,10 @@ References are tried in this order; a retry after a broken take skips the ones a
 2.  **Speaker's references:** the candidates that scored at least `TAKE_MIN_SIMILARITY` in the audition (all of them
     without an audition), in rank order.
 3.  **Last Good Sample:** the last clean line clip of this speaker.
-4.  **Borrowed voice:** the best reference of another speaker of the **same gender** (speaker profiles from Stage 3),
-    best audition score first. An intelligible voice of the right gender beats a broken clone.
-5.  **Speaker's weak references:** the candidates that scored under `TAKE_MIN_SIMILARITY`.
-6.  **Global fallback:** any other reference, best audition score first.
+4.  **Designed voice**, when it scored under `TAKE_MIN_SIMILARITY` (a better score ranks it in step 2).
+5.  **Speaker's weak references:** the clips that scored under `TAKE_MIN_SIMILARITY`.
+When all of these were tried, the least broken take is kept (2.2 step 4). Only a speaker with no voice of its own at all
+(no clip, design off or failed) uses another speaker's last good sample or reference, so the line is still dubbed.
 
 ### 2.4 Post-Processing (Speed Adjustment)
 A take that would run past `max_end` starts earlier in the mix, by its overrun but not before `min_start` and never
@@ -115,8 +121,8 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `MIN_FILL_RATIO` (0.7): below this share of the target a take is refined as too short.
 -   `MAX_ACCEPT_SPEEDUP` (1.08): allowed overrun of the limit, sped up in the mix.
 -   `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` (9): faster than this means a swallowed take.
--   `TAKE_CHECK` (on | audition | off), `TAKE_MIN_SIMILARITY` (0.5), `TAKE_CHECK_DEVICE` (cpu): the intelligibility
-    check of the voice audition and of every take.
+-   `TAKE_CHECK` (on | audition | off), `TAKE_MIN_SIMILARITY` (0.7), `TAKE_CHECK_DEVICE` (cpu),
+    `TAKE_CHECK_THREADS` (all cores): the intelligibility check of the voice audition and of every take.
 -   `TAKE_DROP_SIMILARITY` (0.3): a line whose every take is broken below this is not dubbed.
 -   `VOICE_DESIGN` (on): one voice-design clip per speaker as an extra reference candidate.
 -   `REF_AUDITION_CANDIDATES` (3), `AUDITION_LINE_REF_MIN` (0.8): reference candidates per speaker, and the audition

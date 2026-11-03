@@ -67,7 +67,9 @@ duplicates content, because the target language orders the sentence differently.
 *   **Input:** Transcription script, reference subtitles, media metadata.
 *   **Action:**
     1.  LLM analyzes the full script to understand context, tone, and relationships between speakers, using the
-        media metadata (synopsis, cast list) to name speakers after characters and to tell their gender.
+        media metadata (synopsis, cast list) to name speakers after characters and to tell their gender. Without a cast
+        entry the gender is a best guess from names, pronouns, forms of address and role; "unknown" only without any
+        hint (it leaves the speaker with a generic designed voice and ungendered translation forms).
     2.  Generates a glossary or style guide for translation (including the character names).
     3.  The translator gets the show/episode, the synopsis and each line's speaker gender, so gendered forms
         (e.g. Polish past tense) match the speaker; the per-line duration refinement gets the speaker and title too.
