@@ -32,7 +32,7 @@ Whisper splits speech into segments that often end mid-sentence. Translating suc
 duplicates content, because the target language orders the sentence differently. The script is therefore built from
 **dialogue units**:
 1.  Each Whisper segment gets the speaker with the largest overlap. A segment whose length is far beyond what its words
-    can take (e.g. one word stretched over 25 s of music) is clamped to `max(2 s, 1 s + syllables / 1.5)`.
+    can take (e.g. one word stretched over 25 s of music) is clamped to `max(2 s, 1 s + syllables / 3)`.
 2.  Consecutive segments of the same speaker are joined when the pause between them is under `MERGE_MAX_GAP` (0.3 s) and
     the unit stays under `MERGE_MAX_DURATION` (10 s), **or** when the earlier one does not end a sentence (no `.`, `!`,
     `?`, `…`), the pause is under `SENTENCE_MAX_GAP` (1.5 s) and the unit stays under `SENTENCE_MAX_DURATION` (20 s).

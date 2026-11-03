@@ -135,7 +135,7 @@ class DubbingPipeline:
         timed against a slot nobody speaks in.
         """
         words = count_syllables(segment.get("text", ""), "en")
-        cap = max(2.0, 1.0 + words / 1.5)
+        cap = max(2.0, 1.0 + words / 3.0)
         if segment["end"] - segment["start"] > cap:
             segment = dict(segment, end=segment["start"] + cap)
         return segment

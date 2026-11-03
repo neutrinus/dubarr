@@ -78,6 +78,15 @@ class TestDubbingPipeline(unittest.TestCase):
         self.assertLess(script[0]["end"] - script[0]["start"], 5.0)
         self.assertEqual(script[0]["start"], 3.0)
 
+    def test_create_script_clamps_a_short_sentence_stretched_over_fight_noise(self):
+        # 13 syllables over 9.7 s: the dub would otherwise be expanded with padding to fill the slot
+        diar = [{"speaker": "A", "start": 0.0, "end": 12.0}]
+        trans = [{"start": 1.0, "end": 10.7, "text": "This bot of this match does some serious damage."}]
+
+        script = self.pipeline._create_script(diar, trans)
+
+        self.assertLess(script[0]["end"] - script[0]["start"], 6.0)
+
     def test_create_script_does_not_merge_beyond_the_duration_cap(self):
         # Back-to-back lines are still left separate when the block would get too long to stay in sync
         diar = [{"speaker": "SPEAKER_01", "start": 0.0, "end": 16.0}]
