@@ -104,6 +104,7 @@ class TTSManager:
         self.genders = {}
         self.audition = {}  # reference path -> audition score, when the voice audition ran
         self.line_refs_off = set()  # speakers whose voice clones badly; they skip line clips
+        self.designed = set()  # voice-design clips (from the speaker profile, not from the video)
         self.set_speaker_refs(speaker_refs)
         self.abort_event = abort_event
         self.service = service
@@ -331,7 +332,15 @@ class TTSManager:
         self.genders = {spk: (g or "").lower() for spk, g in (genders or {}).items()}
         self.audition = {}
         self.line_refs_off = set()
+        self.designed = set()
         self.last_good_samples = {}
+
+    def add_designed_ref(self, spk: str, path: str):
+        """Adds a voice-design clip as the speaker's last candidate; the audition may move it up (Spec 002, 2.3)."""
+        refs = self.speaker_refs.setdefault(spk, [])
+        if path not in refs:
+            refs.append(path)
+        self.designed.add(path)
 
     def apply_audition(self, scores: Dict[str, Dict[str, float]], line_ref_min: float):
         """Ranks each speaker's candidates by their audition score (speaker -> {path: score}); Spec 002, 2.3."""
@@ -344,6 +353,9 @@ class TTSManager:
             if best is not None and best < line_ref_min:
                 self.line_refs_off.add(spk)
 
+    def _real(self, refs: List[str]) -> List[str]:
+        return [p for p in refs if p not in self.designed]
+
     def _ref_order(self, spk: str) -> List[Tuple[str, str]]:
         """Every reference this speaker may use after the line clip, as (path or LAST_GOOD, voice type), in order."""
         own = self.speaker_refs.get(spk) or []
@@ -354,14 +366,18 @@ class TTSManager:
             return sorted(paths, key=lambda p: -self.audition.get(p, 0.5))
 
         gender = self.genders.get(spk, "")
-        others = [(o, refs[0]) for o, refs in self.speaker_refs.items() if o != spk and refs]
+        # Another speaker's real clips only: their designed voice is not "theirs" to lend
+        others = [(o, real[0]) for o, refs in self.speaker_refs.items() if o != spk for real in [self._real(refs)] if real]
         same = [p for o, p in others if gender and self.genders.get(o) == gender]
         rest = [p for o, p in others if p not in same]
-        rest += [p for o, refs in self.speaker_refs.items() if o != spk for p in refs[1:]]
+        rest += [p for o, refs in self.speaker_refs.items() if o != spk for p in self._real(refs)[1:]]
 
-        order = [(p, "GOLDEN") for p in good] + [("LAST_GOOD", "LAST_GOOD")]
+        def own(p):
+            return (p, "DESIGNED" if p in self.designed else "GOLDEN")
+
+        order = [own(p) for p in good] + [("LAST_GOOD", "LAST_GOOD")]
         order += [(p, "BORROWED") for p in best_first(same)]
-        order += [(p, "GOLDEN") for p in weak]
+        order += [own(p) for p in weak]
         order += [(p, "FALLBACK_GOLDEN") for p in best_first(rest)]
         return order
 

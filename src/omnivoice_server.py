@@ -97,6 +97,25 @@ def synthesize():
             torch.cuda.empty_cache()
 
 
+@app.route("/design", methods=["POST"])
+def design():
+    """Voice design: speaks the text in a voice described by attributes ("male, middle-aged, low pitch"), no reference.
+
+    dubarr synthesizes one such clip per speaker and clones from it afterwards, so the voice stays the same.
+    """
+    data = request.json
+    try:
+        audio = model.generate(text=data["text"], language=data.get("language"), instruct=data["instruct"])
+        sf.write(data["output_path"], audio[0], model.sampling_rate)
+        return jsonify({"status": "success"})
+    except Exception as e:
+        logging.error(f"OmniVoice Design Failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
 @app.route("/estimate", methods=["POST"])
 def estimate():
     """Natural spoken length of each text with this voice, from the model's text-based estimator (no audio)."""

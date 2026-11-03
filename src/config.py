@@ -137,6 +137,8 @@ TAKE_DROP_SIMILARITY = float(os.environ.get("TAKE_DROP_SIMILARITY", "0.3"))
 # Voice audition (Spec 002, 2.3): reference candidates kept per speaker, and the score a speaker needs to use line clips
 REF_AUDITION_CANDIDATES = max(1, int(os.environ.get("REF_AUDITION_CANDIDATES", "3")))
 AUDITION_LINE_REF_MIN = float(os.environ.get("AUDITION_LINE_REF_MIN", "0.8"))
+# One OmniVoice voice-design clip per speaker (gender/age/pitch from the profile) joins the reference candidates
+VOICE_DESIGN = os.environ.get("VOICE_DESIGN", "on").lower() not in ("0", "off", "false", "no")
 
 
 # Safe logging setup

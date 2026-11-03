@@ -13,6 +13,7 @@ from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_BEFO
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
 from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION, SENTENCE_MAX_GAP, SENTENCE_MAX_DURATION
 from config import TRANSLATION_REVIEW, TAKE_CHECK, REF_MIN_CLARITY_DB, REF_AUDITION_CANDIDATES, AUDITION_LINE_REF_MIN
+from config import VOICE_DESIGN
 from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
@@ -22,7 +23,7 @@ from core.report import report_rows, summary as report_summary, write_report
 from utils import clean_srt, measure_zcr, run_cmd
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
-from core.voice_audition import audition_voices
+from core.voice_audition import audition_voices, design_voices
 from core.gpu_services import LLMService, TTSService
 from core.media_context import lookup_media_info, format_media_context, format_short_context
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -753,10 +754,17 @@ class DubbingPipeline:
 
     def _audition_voices(self, all_drafts_by_lang):
         """Ranks each speaker's reference candidates by how intelligibly they clone (Spec 002, 2.3)."""
-        if MOCK_MODE or not self.take_checker or not self.target_langs:
+        if MOCK_MODE or not self.target_langs:
             return
         lang = self.target_langs[0]
         t0 = time.perf_counter()
+        if VOICE_DESIGN:
+            try:
+                design_voices(self.tts_manager, self.speaker_info, all_drafts_by_lang.get(lang) or [], lang, self.temp_dir)
+            except Exception as e:
+                logger.warning(f"Voice design failed: {e}")
+        if not self.take_checker:
+            return
         try:
             scores = audition_voices(
                 self.tts_manager,

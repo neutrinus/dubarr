@@ -218,6 +218,18 @@ class TTSServerClient:
             logging.error(f"{self.NAME} Synthesis Failed: {e}")
             raise e
 
+    def design(self, text, instruct, output_path, language="en"):
+        """Synthesizes the text in a voice described by attributes (OmniVoice voice design); True on success."""
+        payload = {"text": self.sanitize_text(text), "instruct": instruct, "output_path": output_path, "language": language}
+        try:
+            res = requests.post(f"{self.server_url}/design", json=payload, timeout=TTS_TIMEOUT)
+            if res.status_code == 200:
+                return True
+            logging.warning(f"{self.NAME}: design returned {res.status_code}: {res.text[:200]}")
+        except Exception as e:
+            logging.warning(f"{self.NAME}: design failed: {e}")
+        return False
+
     def estimate(self, texts, ref_audio):
         """Estimated natural duration (seconds) of each text with this voice, or None if the server cannot tell."""
         payload = {
@@ -317,6 +329,9 @@ class TTSWrapper:
 
     def estimate(self, texts, ref_audio):
         return self.client.estimate(texts, ref_audio)
+
+    def design(self, text, instruct, output_path, language="en"):
+        return self.client.design(text, instruct, output_path, language=language)
 
     def __del__(self):
         if hasattr(self, "client"):
