@@ -107,6 +107,12 @@ TRANSLATION_REVIEW = os.environ.get("TRANSLATION_REVIEW", "on").lower() not in (
 MIN_FILL_RATIO = float(os.environ.get("MIN_FILL_RATIO", "0.7"))
 MAX_PLAUSIBLE_SYLLABLES_PER_SECOND = float(os.environ.get("MAX_PLAUSIBLE_SYLLABLES_PER_SECOND", "9.0"))
 
+# Take check (Spec 002): every take is transcribed and compared with its text; below TAKE_MIN_SIMILARITY it is
+# unintelligible (noise, screams, mangled words) and synthesized again with another voice reference.
+TAKE_CHECK = os.environ.get("TAKE_CHECK", "on").lower() not in ("0", "off", "false", "no")
+TAKE_CHECK_DEVICE = os.environ.get("TAKE_CHECK_DEVICE", "auto").lower()
+TAKE_MIN_SIMILARITY = float(os.environ.get("TAKE_MIN_SIMILARITY", "0.5"))
+
 
 # Safe logging setup
 def setup_logging():

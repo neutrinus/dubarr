@@ -1,3 +1,4 @@
+import difflib
 import json
 import re
 import wave
@@ -113,3 +114,22 @@ def run_cmd(cmd, desc):
         if e.stdout:
             logging.error(f"Stdout {desc}: {e.stdout}")
         raise
+
+
+def _letters(text: str) -> str:
+    """Lower-case letters and digits only: punctuation, hyphens of phonetic spellings and spaces do not count."""
+    return "".join(ch for ch in (text or "").lower() if ch.isalnum())
+
+
+def text_similarity(expected: str, heard: str) -> float:
+    """Similarity (0..1) of a take's text and what an ASR heard in it, on letters only.
+
+    Tolerant of punctuation, spacing and spelling ("Ajjs-wejv" vs "Ice Wave" costs a few letters), low for noise,
+    screams or a different text.
+    """
+    a, b = _letters(expected), _letters(heard)
+    if not a:
+        return 1.0
+    if not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()

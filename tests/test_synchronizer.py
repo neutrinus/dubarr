@@ -213,6 +213,72 @@ class TestSyncContentKeeping(unittest.TestCase):
         self.assertEqual(SegmentSynchronizer._neighbours(script, 1, "pl"), ("Before => Przed", "After => Po"))
 
 
+class TestTakeCheck(unittest.TestCase):
+    """Takes the ASR cannot match with their text (noise, screams) are synthesized again (Spec 002, 2.2 step 4)."""
+
+    def setUp(self):
+        self.llm = MagicMock()
+        self.tts = MagicMock()
+        self.heard = []
+        self.sync = SegmentSynchronizer(self.llm, self.tts, "/tmp", take_checker=lambda path, lang: self.heard.pop(0))
+        self.segment = {
+            "index": 34,
+            "text_en": "IceWave's trying to get some distance. Oh, my goodness.",
+            "text": "Ajjs-wejv próbuje zachować dystans. O mój Boże!",
+            "start": 0,
+            "end": 4.0,
+            "speaker": "A",
+        }
+
+    def run_segment(self, durations):
+        with patch("core.synchronizer.FFmpegWrapper.get_duration", side_effect=durations):
+            with patch("shutil.copy"), patch("os.path.exists", return_value=False):
+                return self.sync.process_segment(self.segment, "pl", "voc.wav", [], {})
+
+    def test_unintelligible_take_is_synthesized_again_with_another_reference(self):
+        self.heard = ["Aaaa! Aaaa!", "Ice Wave próbuje zachować dystans. O mój Boże!"]
+        self.tts.synthesize_sync.side_effect = [
+            {"audio_path": "a.wav", "duration": 3.8, "voice_type": "DYNAMIC", "ref": "dyn.wav"},
+            {"audio_path": "b.wav", "duration": 3.7, "voice_type": "GOLDEN", "ref": "gold.wav"},
+        ]
+
+        res = self.run_segment([3.8, 3.7])
+
+        self.assertEqual(res["status"], "ACCEPTED")
+        self.assertEqual(res["duration"], 3.7)
+        self.assertEqual(self.tts.synthesize_sync.call_args_list[1].args[0]["skip_refs"], ["DYNAMIC"])
+
+    def test_least_broken_take_is_kept_when_every_reference_fails(self):
+        self.heard = ["Aaaa!", "Ajjs próbuje", "..."]
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
+
+        with patch("core.synchronizer.FFmpegWrapper.get_duration", return_value=3.8), patch("shutil.copy"):
+            result, _, broken = self.sync._synthesize_sound(dict(self.segment), "pl", "voc.wav", [])
+
+        self.assertEqual(self.tts.synthesize_sync.call_count, 3)
+        self.assertTrue(broken)
+        # "Ajjs próbuje" is the closest to the text
+        self.assertTrue(result["audio_path"].endswith("broken_pl_34_1.wav"))
+
+    def test_without_an_answer_from_the_checker_the_take_is_accepted(self):
+        self.sync.take_checker = lambda path, lang: None
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([3.8])
+
+        self.assertEqual(res["status"], "ACCEPTED")
+
+    def test_interjections_are_not_checked(self):
+        self.segment.update(text="Wow!", text_en="Wow!", end=0.8)
+        self.heard = ["Łał"]
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 0.7, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([0.7])
+
+        self.assertEqual(res["status"], "ACCEPTED")
+        self.assertEqual(self.heard, ["Łał"])
+
+
 class TestLengthVariants(unittest.TestCase):
     def setUp(self):
         self.llm = MagicMock()

@@ -148,6 +148,8 @@ why the image used to need separate venvs.
 | `TTS_FILL_RATIO` / `TTS_MIN_SPEED` / `TTS_MAX_SPEEDUP` | `0.9` / `0.88` / `1.2` | OmniVoice duration control: slow short takes down towards the original's timing, speed long ones up, both only within this range. |
 | `MIN_FILL_RATIO` | `0.7` | A take shorter than this share of the original's speech goes back to the LLM to restore content. |
 | `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence) and is synthesized again with another voice reference. |
+| `TAKE_CHECK` / `TAKE_MIN_SIMILARITY` | `on` / `0.5` | Whisper transcribes every take; one that sounds less like its text than this (noise, screams, gibberish) is synthesized again with another voice reference. |
+| `TAKE_CHECK_DEVICE` | `auto` | `auto` loads the check model on a GPU with 2.5 GB free, else the CPU; `cpu` forces the CPU. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
 | `TTS_DEVICE` | `auto` | `auto` puts synthesis on the GPU with the most free VRAM; `cpu` keeps the GPUs free for other work (much slower). |
 | `TTS_CPU_THREADS` | all cores | Threads used when synthesis runs on the CPU. |

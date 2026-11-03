@@ -4,7 +4,7 @@ import wave
 import struct
 import pytest
 import subprocess
-from utils import clean_output, clean_srt, count_syllables, measure_zcr, parse_json, run_cmd
+from utils import clean_output, clean_srt, count_syllables, measure_zcr, parse_json, run_cmd, text_similarity
 
 
 def test_parse_json_valid():
@@ -114,3 +114,11 @@ def test_measure_zcr_empty():
 
 def test_measure_zcr_invalid_file():
     assert measure_zcr("non_existent.wav") == 0.0
+
+
+def test_text_similarity_tolerates_phonetic_spellings_but_not_noise():
+    text = "Ajjs-wejv próbuje zachować dystans i uderzyć. O mój Boże!"
+    assert text_similarity(text, "Ice Wave próbuje zachować dystans i uderzyć. O mój Boże!") > 0.8
+    assert text_similarity(text, "Aaaa! Aaaa!") < 0.5
+    assert text_similarity(text, "") == 0.0
+    assert text_similarity("", "anything") == 1.0

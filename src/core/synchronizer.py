@@ -4,23 +4,25 @@ import shutil
 import wave
 from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
-from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND
-from utils import count_syllables
+from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND, TAKE_MIN_SIMILARITY
+from utils import count_syllables, text_similarity
 from duration_policy import MAX_SPEEDUP as TTS_MAX_SPEEDUP
 
 logger = logging.getLogger(__name__)
 
 
-# Extra syntheses of the same text after a swallowed take, each with another voice reference
+# Extra syntheses of the same text after a broken take (swallowed or unintelligible), each with another voice reference
 SWALLOW_RETRIES = 2
 
 
 class SegmentSynchronizer:
-    def __init__(self, llm_manager, tts_manager, temp_dir, debug_mode=False):
+    def __init__(self, llm_manager, tts_manager, temp_dir, debug_mode=False, take_checker=None):
         self.llm = llm_manager
         self.tts = tts_manager
         self.temp_dir = temp_dir
         self.debug_mode = debug_mode
+        # (audio_path, lang) -> what an ASR hears in the take, or None when it cannot tell (Spec 002, 2.2 step 4)
+        self.take_checker = take_checker
 
     @staticmethod
     def is_swallowed(text: str, duration: float, lang: str) -> bool:
@@ -28,38 +30,65 @@ class SegmentSynchronizer:
         syllables = count_syllables(text, lang)
         return syllables >= 3 and duration * MAX_PLAUSIBLE_SYLLABLES_PER_SECOND < syllables
 
-    def _synthesize_sound(self, tts_item: Dict, lang: str, vocals_path: str, full_script: List[Dict]):
-        """Synthesizes a take and re-synthesizes it with other references while it comes out swallowed.
+    def _intelligibility(self, text: str, audio_path: str, lang: str):
+        """(similarity 0..1, heard text) of a take; None without a checker or when it cannot tell."""
+        if not self.take_checker:
+            return None
+        try:
+            heard = self.take_checker(audio_path, lang)
+        except Exception as e:
+            logger.warning(f"Take check failed: {e}")
+            return None
+        if not isinstance(heard, str):
+            return None
+        return text_similarity(text, heard), heard
 
-        Returns (result, duration, swallowed) or None when synthesis failed.
+    def _synthesize_sound(self, tts_item: Dict, lang: str, vocals_path: str, full_script: List[Dict]):
+        """Synthesizes a take and re-synthesizes it with other references while it comes out broken.
+
+        Broken means swallowed (far too short for its text) or unintelligible (the ASR hears something else: noise,
+        screams, mangled words). Returns (result, duration, broken) or None when synthesis failed; when every reference
+        gives a broken take, the least broken one is returned.
         """
+        idx = tts_item["index"]
+        text = tts_item["text"]
         skip = []
-        last = None
+        best = None  # (score, (result, duration, True)); higher score = less broken
         for retry in range(SWALLOW_RETRIES + 1):
             item = dict(tts_item, skip_refs=list(skip))
             result = self.tts.synthesize_sync(item, lang, vocals_path, full_script)
             if not result:
-                return last
+                return best[1] if best else None
             try:
                 duration = FFmpegWrapper.get_duration(result["audio_path"])
             except Exception:
                 duration = result["duration"]
-            swallowed = self.is_swallowed(tts_item["text"], duration, lang)
-            last = (result, duration, swallowed)
-            if not swallowed:
-                return last
-            logger.warning(
-                f"[ID: {tts_item['index']}] SWALLOWED take ({duration:.2f}s for '{tts_item['text'][:40]}'), "
-                f"synthesizing again with another voice reference ({retry + 1}/{SWALLOW_RETRIES})"
-            )
+
+            if self.is_swallowed(text, duration, lang):
+                score = -1.0
+                problem = f"SWALLOWED take ({duration:.2f}s for '{text[:40]}')"
+            else:
+                # Interjections ("Wow.", "O!") are spelled too freely by the ASR to compare
+                check = self._intelligibility(text, result["audio_path"], lang) if count_syllables(text, lang) >= 4 else None
+                if check is None or check[0] >= TAKE_MIN_SIMILARITY:
+                    return result, duration, False
+                score = check[0]
+                problem = f"UNINTELLIGIBLE take (similarity {check[0]:.2f}, heard '{check[1][:60]}')"
+
+            if retry < SWALLOW_RETRIES:
+                logger.warning(
+                    f"[ID: {idx}] {problem}, synthesizing again with another voice reference ({retry + 1}/{SWALLOW_RETRIES})"
+                )
+            else:
+                logger.warning(f"[ID: {idx}] {problem}, no voice reference left")
             # Skip what was used: the line clip as a whole, any other reference by its path
             skip.append("DYNAMIC" if result.get("voice_type") == "DYNAMIC" else result.get("ref") or "")
-            if retry < SWALLOW_RETRIES:
-                # The take file is rewritten by the next call; keep the swallowed one only as the last resort
-                kept = os.path.join(self.temp_dir, f"swallowed_{lang}_{tts_item['index']}.wav")
+            if best is None or score > best[0]:
+                # The take file is rewritten by the next call; keep the least broken one as the last resort
+                kept = os.path.join(self.temp_dir, f"broken_{lang}_{idx}_{retry}.wav")
                 shutil.copy(result["audio_path"], kept)
-                last = (dict(result, audio_path=kept), duration, swallowed)
-        return last
+                best = (score, (dict(result, audio_path=kept), duration, True))
+        return best[1]
 
     @staticmethod
     def _miss(estimate: float, speech: float, limit: float) -> float:
@@ -162,7 +191,7 @@ class SegmentSynchronizer:
             if not synthesized:
                 logger.warning(f"[ID: {idx}] Synthesis failed on attempt {attempt}.")
                 break
-            result, actual_dur, swallowed = synthesized
+            result, actual_dur, broken = synthesized
             raw_audio_path = result["audio_path"]
 
             delta = actual_dur - target_dur
@@ -179,20 +208,20 @@ class SegmentSynchronizer:
                     "text": current_text,
                     "duration": actual_dur,
                     "delta": delta,
-                    "swallowed": swallowed,
+                    "broken": broken,
                 }
             )
 
-            if not too_long and not too_short and not swallowed:
+            if not too_long and not too_short and not broken:
                 logger.info(f"[ID: {idx}] ACCEPTED (Duration: {actual_dur:.2f}s, Target: {speech_dur:.2f}s)")
                 self._cleanup(attempts, attempt_path)
                 return {"audio_path": attempt_path, "final_text": current_text, "duration": actual_dur, "status": "ACCEPTED"}
 
             if attempt >= attempt_limit:
                 break
-            if swallowed:
-                # Every voice reference came out silent; keep what we have rather than rewording blindly
-                logger.warning(f"[ID: {idx}] REJECTED (Swallowed on every voice reference: {actual_dur:.2f}s).")
+            if broken:
+                # Every voice reference came out broken; keep what we have rather than rewording blindly
+                logger.warning(f"[ID: {idx}] REJECTED (Broken on every voice reference: {actual_dur:.2f}s).")
                 break
             if too_long:
                 logger.info(f"[ID: {idx}] REJECTED (Too long: {actual_dur:.2f}s > {target_dur:.2f}s). Refining text...")
@@ -259,7 +288,7 @@ class SegmentSynchronizer:
             }
 
         # Final selection: sound takes first; among those that fit the limit, the one closest to the target
-        sound = [a for a in attempts if not a["swallowed"]] or attempts
+        sound = [a for a in attempts if not a["broken"]] or attempts
         fitting = [a for a in sound if a["duration"] <= target_dur * MAX_ACCEPT_SPEEDUP + 0.1]
         if fitting:
             best_attempt = min(fitting, key=lambda a: abs(a["duration"] - speech_dur))
