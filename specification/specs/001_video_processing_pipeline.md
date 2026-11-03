@@ -23,6 +23,11 @@ The system verifies model presence and downloads missing files. To maximize avai
 *   **Action:**
     1.  **Diarization:** Pyannote identifies speaker segments. Model is unloaded immediately after.
     2.  **Transcription:** Whisper converts speech to text. Model is loaded on-demand and unloaded immediately after.
+        The first pass uses VAD and word timestamps. VAD also drops speech under loud noise (commentary over a fight,
+        a referee's countdown), so a second pass (`ASR_GAP_PASS`, on) transcribes every gap of at least `ASR_GAP_MIN`
+        (2 s) without VAD and keeps only confident segments: `no_speech_prob < 0.5`, `avg_logprob >= -0.8`,
+        compression ratio <= 2.4, mean word probability >= 0.5, and not a known hallucination ("Thank you.",
+        "Instruction.").
 *   **Output:**
     *   `diarization.json` (Time ranges mapped to speakers).
     *   `transcription.json` (Text segments with timestamps).
