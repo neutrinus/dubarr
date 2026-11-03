@@ -19,11 +19,13 @@ The system verifies model presence and downloads missing files. To maximize avai
     *   `vocals.mp3` (Clean speech separated by Demucs)
 
 ### 2.2 Stage 2: Audio Analysis
-*   **Input:** `vocals.wav`.
+*   **Input:** `vocals.wav` (diarization, voice references) and the original mix (transcription).
 *   **Action:**
     1.  **Diarization:** Pyannote identifies speaker segments. Model is unloaded immediately after.
     2.  **Transcription:** Whisper converts speech to text. Model is loaded on-demand and unloaded immediately after.
-        The first pass uses VAD and word timestamps. VAD also drops speech under loud noise (commentary over a fight,
+        Whisper hears the original mix (`ASR_SOURCE=original`, default; `vocals` uses the Demucs stem): it is
+        trained on noisy audio, while separation can cut or distort speech under loud effects. Diarization and voice
+        references keep using the separated vocals. The first pass uses VAD and word timestamps. VAD also drops speech under loud noise (commentary over a fight,
         a referee's countdown), so a second pass (`ASR_GAP_PASS`, on) transcribes every gap of at least `ASR_GAP_MIN`
         (2 s) without VAD and keeps only confident segments: `no_speech_prob < 0.5`, `avg_logprob >= -0.8`,
         compression ratio <= 2.4, mean word probability >= 0.5, and not a known hallucination ("Thank you.",
