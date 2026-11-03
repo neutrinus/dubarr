@@ -6,8 +6,8 @@ import threading
 import gc
 import re
 from typing import List, Dict, Optional, Any
-from utils import parse_json, clean_output
-from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_REFINE_DURATION
+from utils import parse_json, clean_output, count_syllables
+from prompts import T_ANALYSIS, T_ED, T_TRANS_SYSTEM, T_REVIEW, T_REFINE_DURATION
 from config import (
     LANG_MAP,
     MOCK_MODE,
@@ -18,6 +18,8 @@ from config import (
     LLM_TIMEOUT,
     LLM_N_CTX,
     LLM_MAX_TOKENS,
+    DUB_SYLLABLES_PER_SECOND,
+    TRANSLATION_WINDOW,
 )
 from core.gpu_manager import GPUManager
 from infrastructure.llm_client import OpenAICompatibleClient
@@ -358,6 +360,40 @@ class LLMManager:
         # The corrections are returned too, so a resumed job can re-apply them from the step cache
         return {"context": global_context, "speakers": speaker_info, "script_fixes": script_fixes}
 
+    @staticmethod
+    def syllable_budget(line: Dict) -> Dict:
+        """Spoken-syllable budget of a line from its time budget (Spec 001, 2.5a)."""
+        speech = max(0.0, line["end"] - line["start"])
+        limit = max(speech, line.get("max_end", line["end"]) - line["start"])
+        target = max(1, round(speech * DUB_SYLLABLES_PER_SECOND))
+        return {
+            "min_syllables": max(1, round(target * 0.75)),
+            "target_syllables": target,
+            "max_syllables": max(target, round(limit * DUB_SYLLABLES_PER_SECOND)),
+        }
+
+    @staticmethod
+    def _is_sound_marker(text: str) -> bool:
+        return any(x in text.lower() for x in ["[", "(", "laughter", "screams"])
+
+    def _about(self, global_context: Dict) -> str:
+        return (
+            "\n".join(x for x in (global_context.get("media", ""), str(global_context.get("summary", "") or "")) if x)
+            or "(unknown)"
+        )
+
+    def _draft_entry(self, script, idx, text, speaker_info):
+        return {
+            "index": idx,
+            "text": text,
+            "speaker": script[idx]["speaker"],
+            "start": script[idx]["start"],
+            "end": script[idx]["end"],
+            "max_end": script[idx].get("max_end", script[idx]["end"]),
+            "text_en": script[idx]["text_en"],  # Keep original for reference
+            "speaker_label": speaker_label(speaker_info, script[idx]["speaker"]),
+        }
+
     def generate_drafts(
         self,
         script: List[Dict],
@@ -365,98 +401,129 @@ class LLMManager:
         speaker_info: Dict,
         global_context: Dict,
     ) -> List[Dict]:
-        """Generates initial draft translations for the entire script (batched)."""
-        drafts = []
+        """Translates the script in windows with surrounding context and per-line syllable budgets (Spec 001, 2.5a)."""
         glossary = global_context.get("glossary", {})
         lang_name = LANG_MAP.get(lang, lang)
-        about = (
-            "\n".join(x for x in (global_context.get("media", ""), str(global_context.get("summary", "") or "")) if x)
-            or "(unknown)"
+        system = T_TRANS_SYSTEM.format(
+            lang_name=lang_name, context=self._about(global_context), glossary=json.dumps(glossary, ensure_ascii=False)
         )
 
-        valid_indices = [
-            idx
-            for idx, s in enumerate(script)
-            if not any(x in s["text_en"].lower() for x in ["[", "(", "laughter", "screams"])
-        ]
+        valid_indices = [idx for idx, s in enumerate(script) if not self._is_sound_marker(s["text_en"])]
+        translated: Dict[int, str] = {}
 
-        # Batch processing
-        batch_size = 10
-        for b_start in range(0, len(valid_indices), batch_size):
+        for w_start in range(0, len(valid_indices), TRANSLATION_WINDOW):
             if self.abort_event.is_set():
                 break
+            window = valid_indices[w_start : w_start + TRANSLATION_WINDOW]
+            previous = valid_indices[max(0, w_start - 6) : w_start]
+            following = valid_indices[w_start + TRANSLATION_WINDOW : w_start + TRANSLATION_WINDOW + 4]
 
-            batch_indices = valid_indices[b_start : b_start + batch_size]
-            json_batch = []
-            for idx in batch_indices:
+            request = {
+                "previous": [
+                    {
+                        "speaker": speaker_name(speaker_info, script[i]["speaker"]),
+                        "text": script[i]["text_en"],
+                        "translation": translated.get(i, ""),
+                    }
+                    for i in previous
+                ],
+                "translate": [],
+                "next": [
+                    {"speaker": speaker_name(speaker_info, script[i]["speaker"]), "text": script[i]["text_en"]}
+                    for i in following
+                ],
+            }
+            for idx in window:
                 item = {
                     "id": idx,
                     "speaker": speaker_name(speaker_info, script[idx]["speaker"]),
                     "text": script[idx]["text_en"],
-                    "duration_sec": round(script[idx]["end"] - script[idx]["start"], 2),
                 }
                 gender = speaker_gender(speaker_info, script[idx]["speaker"])
                 if gender:
                     item["speaker_gender"] = gender
-                json_batch.append(item)
+                item.update(self.syllable_budget(script[idx]))
+                request["translate"].append(item)
 
-            trans_messages = [
-                {
-                    "role": "system",
-                    "content": T_TRANS_SYSTEM.format(
-                        lang_name=lang_name, context=about, glossary=json.dumps(glossary, ensure_ascii=False)
-                    ),
-                },
-                {"role": "user", "content": json.dumps(json_batch, indent=2, ensure_ascii=False)},
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(request, indent=2, ensure_ascii=False)},
             ]
-
             t0 = time.perf_counter()
             try:
                 # Draft generation is Priority 2
-                res = self._run_inference(trans_messages, priority=2, max_tokens=LLM_MAX_TOKENS, temperature=0.1)
+                res = self._run_inference(messages, priority=2, max_tokens=LLM_MAX_TOKENS, temperature=0.1)
                 self._update_stats(res, time.perf_counter() - t0)
-
-                parsed_trans = parse_json(res["choices"][0]["text"])
-                trans_map = {
-                    item["id"]: clean_output(item["text"], self.target_langs)
-                    for item in parsed_trans.get("translations", [])
-                    if "id" in item
-                }
-
-                missing = [idx for idx in batch_indices if idx not in trans_map]
+                parsed = parse_json(res["choices"][0]["text"])
+                for item in parsed.get("translations", []):
+                    if "id" in item and item.get("text") and int(item["id"]) in window:
+                        translated[int(item["id"])] = clean_output(item["text"], self.target_langs)
+                missing = [idx for idx in window if idx not in translated]
                 if missing:
                     logging.warning(f"LLM: No {lang_name} translation for lines {missing}, keeping the original text")
-                for idx in batch_indices:
-                    txt = trans_map.get(idx, script[idx]["text_en"])  # Fallback to original
-                    drafts.append(
-                        {
-                            "index": idx,
-                            "text": txt,
-                            "speaker": script[idx]["speaker"],
-                            "start": script[idx]["start"],
-                            "end": script[idx]["end"],
-                            "text_en": script[idx]["text_en"],  # Keep original for reference
-                            "speaker_label": speaker_label(speaker_info, script[idx]["speaker"]),
-                        }
-                    )
-
             except Exception as e:
-                logging.error(f"LLM: Draft generation failed for batch {b_start}: {e}")
-                # Fallback for failed batch
-                for idx in batch_indices:
-                    drafts.append(
-                        {
-                            "index": idx,
-                            "text": script[idx]["text_en"],  # Use original as fallback
-                            "speaker": script[idx]["speaker"],
-                            "start": script[idx]["start"],
-                            "end": script[idx]["end"],
-                            "text_en": script[idx]["text_en"],
-                            "speaker_label": speaker_label(speaker_info, script[idx]["speaker"]),
-                        }
-                    )
+                logging.error(f"LLM: Draft generation failed for window {w_start}: {e}")
 
-        return drafts
+        return [
+            self._draft_entry(script, idx, translated.get(idx, script[idx]["text_en"]), speaker_info) for idx in valid_indices
+        ]
+
+    def review_drafts(self, drafts: List[Dict], lang: str, speaker_info: Dict, global_context: Dict) -> List[Dict]:
+        """Completeness review: a second pass fixes lines with missing or wrong information (Spec 001, 2.5a)."""
+        lang_name = LANG_MAP.get(lang, lang)
+        system = T_REVIEW.format(
+            lang_name=lang_name,
+            context=self._about(global_context),
+            glossary=json.dumps(global_context.get("glossary", {}), ensure_ascii=False),
+        )
+        by_index = {d["index"]: d for d in drafts}
+        order = [d["index"] for d in drafts]
+
+        for w_start in range(0, len(order), TRANSLATION_WINDOW):
+            if self.abort_event.is_set():
+                break
+            window = order[w_start : w_start + TRANSLATION_WINDOW]
+            lines = [
+                {
+                    "id": i,
+                    "speaker": speaker_name(speaker_info, by_index[i]["speaker"]),
+                    "source": by_index[i].get("text_en", ""),
+                    "translation": by_index[i].get("text", ""),
+                    "max_syllables": self.syllable_budget(by_index[i])["max_syllables"],
+                }
+                for i in window
+            ]
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps({"lines": lines}, indent=2, ensure_ascii=False)},
+            ]
+            t0 = time.perf_counter()
+            try:
+                res = self._run_inference(messages, priority=2, max_tokens=LLM_MAX_TOKENS, temperature=0.1)
+                self._update_stats(res, time.perf_counter() - t0)
+                parsed = parse_json(res["choices"][0]["text"])
+                for problem in parsed.get("problems", []) or []:
+                    logging.info(f"Review ({lang}): {problem}")
+                for fix in parsed.get("fixes", []) or []:
+                    try:
+                        i = int(fix.get("id"))
+                    except (TypeError, ValueError):
+                        continue
+                    text = clean_output(fix.get("text") or "", self.target_langs)
+                    if i not in window or not text:
+                        continue
+                    budget = self.syllable_budget(by_index[i])["max_syllables"]
+                    # A fix far over budget would only be cut again in the sync loop
+                    if count_syllables(text, lang) > budget * 1.25 + 2:
+                        logging.info(f"Review ({lang}) L_{i}: fix over budget, kept the draft")
+                        continue
+                    if text != by_index[i].get("text"):
+                        logging.info(f"Review ({lang}) L_{i}: '{by_index[i].get('text')}' -> '{text}'")
+                        by_index[i]["text"] = text
+            except Exception as e:
+                logging.warning(f"LLM: Translation review failed for window {w_start}: {e}")
+
+        return [by_index[i] for i in order]
 
     def refine_translation_by_duration(
         self,
