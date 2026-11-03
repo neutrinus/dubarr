@@ -202,8 +202,8 @@ it) in the same PR. The ones you need most often while developing:
   per-task workspace keeps those paths from pointing at another task's files.
 - Prompts in `prompts.py` are system prompts sent as chat messages with `response_format=json_object`; the model's chat
   template (applied by llama-cpp-python or the server) adds the special tokens. Don't put ChatML tokens in them.
-- The mux maps only the video and audio streams (`-map 0:v`, `-map 0:a`) and encodes all audio to AC3, so embedded
-  subtitles are not carried over and the original audio is re-encoded. Known gap, not intended behaviour.
+- The mux encodes only the dubbed tracks (AC3) and copies every original stream (audio, subtitles, MKV attachments).
+  Dubbed tracks are tagged with ISO 639-2 codes (`config.ISO_639_2`, `pl` -> `pol`): MP4 drops two-letter codes.
 - `SERIES_CONTEXT` is read in `config.py` but nothing uses it; the series comes from the media metadata.
 - The OmniVoice server is restarted automatically on HTTP 500s and connection errors, then the request is retried once.
 - `omnivoice_server.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before importing torch. It usually

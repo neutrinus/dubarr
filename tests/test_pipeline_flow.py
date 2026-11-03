@@ -81,8 +81,8 @@ class TestProcessVideoMock(unittest.TestCase):
         # Dubbed tracks are AAC (plays in browsers and on phones), the original is copied
         self.assertEqual([s["codec_name"] for s in audio], ["aac", "aac", "aac"])
         self.assertEqual(sorted(pipeline.placed_segments), ["de", "pl"])
-        self.assertEqual(tracks.get("AI - Polish"), "pl")
-        self.assertEqual(tracks.get("AI - German"), "de")
+        self.assertEqual(tracks.get("AI - Polish"), "pol")
+        self.assertEqual(tracks.get("AI - German"), "ger")
         self.assertIn("eng", tracks.values())
         self.assertTrue(os.path.exists(self.clip + ".bak"))
         self.assertAlmostEqual(FFmpegWrapper.get_duration(self.clip), 6.0, delta=0.5)

@@ -1,10 +1,11 @@
+import os
 import subprocess
 import json
 import logging
 import re
 from typing import List, Dict, Optional, Tuple
 
-from config import AUDIO_BITRATE, AUDIO_CODEC
+from config import AUDIO_BITRATE, AUDIO_CODEC, ISO_639_2
 
 logger = logging.getLogger(__name__)
 
@@ -95,16 +96,23 @@ class FFmpegWrapper:
         for a_path, _, _ in audio_tracks:
             cmd.extend(["-i", a_path])
 
+        # Dubbed tracks first, then everything of the original: its audio, subtitles and attachments (MKV fonts)
         cmd.extend(["-map", "0:v"])
         for i in range(len(audio_tracks)):
             cmd.extend(["-map", f"{i + 1}:a"])
-        cmd.extend(["-map", "0:a"])
+        cmd.extend(["-map", "0:a", "-map", "0:s?", "-map", "0:t?"])
 
+        # MP4/MOV drop two-letter language codes and show the handler name instead of a title
+        is_mp4 = os.path.splitext(output_path)[1].lower() in (".mp4", ".m4v", ".mov")
         for i, (_, lang, lang_name) in enumerate(audio_tracks):
             title = f"AI - {lang_name}"
-            cmd.extend([f"-metadata:s:a:{i}", f"language={lang}", f"-metadata:s:a:{i}", f"title={title}"])
+            code = ISO_639_2.get(lang, lang)
+            cmd.extend([f"-metadata:s:a:{i}", f"language={code}", f"-metadata:s:a:{i}", f"title={title}"])
+            if is_mp4:
+                cmd.extend([f"-metadata:s:a:{i}", f"handler_name={title}"])
 
-        cmd.extend(["-c:v", "copy", "-c:a", "copy"])
+        # Only the dubbed tracks are encoded; the original streams are copied untouched
+        cmd.extend(["-c", "copy"])
         for i in range(len(audio_tracks)):
             cmd.extend(audio_codec_args(codec or AUDIO_CODEC, bitrate or AUDIO_BITRATE, f":{i}"))
         cmd.extend([output_path, "-y"])

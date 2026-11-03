@@ -219,6 +219,20 @@ LANG_MAP = {
     "ru": "Russian",
 }
 
+# ISO 639-2 codes: the language tags of the dubbed tracks (MP4 drops two-letter codes) and of existing tracks
+ISO_639_2 = {
+    "pl": "pol",
+    "en": "eng",
+    "de": "ger",
+    "es": "spa",
+    "fr": "fra",
+    "it": "ita",
+    "ru": "rus",
+    "ja": "jpn",
+    "zh": "chi",
+    "ko": "kor",
+}
+
 TARGET_LANGS = os.environ.get("TARGET_LANGS", "pl").split(",")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 

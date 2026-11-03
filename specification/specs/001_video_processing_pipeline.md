@@ -238,12 +238,13 @@ The goal is a complete translation that fits the timing. Run time is secondary.
 *   **Action:**
     1.  FFmpeg adds the dubbed tracks **in front of** the original audio, encoded once with `AUDIO_CODEC` (default
         AAC, which plays in browsers and on phones; `ac3`/`eac3` for AV receivers, or `opus`) and tagged with the
-        language code and the title `AI - <Language>`. The video and the original audio are copied unchanged.
+        ISO 639-2 language code (`pol`; MP4 drops two-letter codes) and the title `AI - <Language>` (in MP4 also the
+        track's handler name, which players show instead). Every original stream is copied untouched: video, audio,
+        subtitles and attachments (MKV fonts).
     2.  The result replaces the source file in place: the original is moved to `<file>.bak`, then the new file is moved
         to the original path (the backup is restored if that fails).
     3.  The series memory is updated (Spec 006, 2).
 *   **Output:** the source file with the new tracks; `<file>.bak`.
-*   **Known gap:** only video and audio streams are mapped, so embedded subtitles are not carried over.
 
 ### 2.8 Stage 8: Reporting & Cleanup
 *   **Action:**
