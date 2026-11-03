@@ -93,10 +93,12 @@ class TestTakeCheckDevice(unittest.TestCase):
     def test_take_check_model_stays_off_the_gpu_by_default(self):
         mgr = WhisperManager(inference_lock=None)
         with patch("core.whisper_engine.WhisperModel") as model, patch("core.whisper_engine.GPUManager.get_best_gpu") as gpu:
-            with patch("core.whisper_engine.TAKE_CHECK_DEVICE", "cpu"):
+            with patch("core.whisper_engine.TAKE_CHECK_DEVICE", "cpu"), patch("core.whisper_engine.TAKE_CHECK_THREADS", 12):
                 mgr._load_take_model()
         gpu.assert_not_called()
         self.assertEqual(model.call_args.kwargs["device"], "cpu")
+        # Every core, not faster-whisper's default of 4 threads
+        self.assertEqual(model.call_args.kwargs["cpu_threads"], 12)
 
     def test_auto_needs_room_for_the_tts_as_well(self):
         mgr = WhisperManager(inference_lock=None)

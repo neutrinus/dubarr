@@ -131,7 +131,10 @@ def _take_check_mode(value: str) -> str:
 TAKE_CHECK = _take_check_mode(os.environ.get("TAKE_CHECK", "on"))
 # cpu by default: a check model on the TTS card takes the VRAM OmniVoice needs for its peaks and makes it crash
 TAKE_CHECK_DEVICE = os.environ.get("TAKE_CHECK_DEVICE", "cpu").lower()
-TAKE_MIN_SIMILARITY = float(os.environ.get("TAKE_MIN_SIMILARITY", "0.5"))
+# Every accepted take under 0.7 in the 2026-11 BattleBots run was mangled ("fuego, bo ta", squeaks before the text)
+TAKE_MIN_SIMILARITY = float(os.environ.get("TAKE_MIN_SIMILARITY", "0.7"))
+# CPU threads of the take-check model; faster-whisper uses 4 unless told otherwise
+TAKE_CHECK_THREADS = max(1, int(os.environ.get("TAKE_CHECK_THREADS", str(os.cpu_count() or 4))))
 # A line whose every take is broken below this is left undubbed: the original beats gibberish
 TAKE_DROP_SIMILARITY = float(os.environ.get("TAKE_DROP_SIMILARITY", "0.3"))
 # Voice audition (Spec 002, 2.3): reference candidates kept per speaker, and the score a speaker needs to use line clips
