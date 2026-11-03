@@ -97,6 +97,10 @@ duplicates content, because the target language orders the sentence differently.
     4.  **Sync Loop:** Each segment uses `LLMService` and `TTSService` via RPC.
 *   **Resource Management:** GPU-heavy tasks are prioritized (Refinement > Drafting) across all languages simultaneously.
 *   **Output:** `final_{lang}_{index}.wav` segments, sorted and grouped by language.
+*   **Production report:** after the sync loop, one log line per language summarizes it (lines, slot fill, statuses,
+    take-check similarity). With `DEBUG=1`, `report_{lang}.tsv` in the debug folder lists every line: time, speaker,
+    slot and limit, take duration and fill, status, voice reference type, similarity, attempts, source text, dub text
+    and what the take check heard.
 
 #### 2.5a Draft translation
 The goal is a complete translation that fits the timing. Run time is secondary.
