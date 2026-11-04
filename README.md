@@ -170,6 +170,7 @@ Everything is configured with environment variables. The ones you are most likel
 | `HF_TOKEN` | none | Hugging Face token (required). |
 | `LLM_API_URL` / `LLM_API_MODEL` | none | Use an existing OpenAI-compatible server (e.g. `http://llama:8080/v1`) instead of loading Gemma 3 12B in-process. |
 | `TTS_DEVICE` | `auto` | `cpu` keeps the GPUs free for other services (much slower). |
+| `AUDIO_CODEC` | `aac` | Codec of the dubbed tracks: `aac` plays in browsers and on phones, `ac3`/`eac3` suit AV receivers. |
 | `METADATA_LOOKUP` / `TMDB_API_KEY` | `on` / none | Show/movie context: `.nfo`, then TVmaze (episodes) or TMDB (movies, needs a key); `local` or `off`. |
 | `SERIES_MEMORY` | `on` | Share name pronunciations and voices between the episodes of a series. |
 | `DEBUG` | `0` | Keep intermediate files and a per-line report in `videos/debug_<name>/`. |
