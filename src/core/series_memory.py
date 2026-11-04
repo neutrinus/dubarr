@@ -12,7 +12,7 @@ import re
 import shutil
 import tempfile
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from config import DATA_DIR, SERIES_MEMORY, VOICE_BANK_CLIPS, VOICE_MATCH_MIN
 from infrastructure.tts_client import ref_text_path
@@ -106,6 +106,46 @@ class SeriesMemory:
                 entry["episodes"] = int(entry.get("episodes", 0)) + 1
         _write_json(self.glossary_path, data)
         logger.info(f"Series memory '{self.key}': glossary has {len(entries)} names ({added} new)")
+
+    # --- Terms (Spec 006, 5) ---
+
+    @property
+    def terms_path(self) -> str:
+        return os.path.join(self.dir, "terms.json")
+
+    def terms(self, lang: str) -> Tuple[Dict[str, str], Dict[str, str]]:
+        """({term: translation}, {"A -> B": form of address}) known for this target language."""
+        data = _read_json(self.terms_path).get(lang) or {}
+        terms = {
+            t: e["translation"] for t, e in (data.get("terms") or {}).items() if isinstance(e, dict) and e.get("translation")
+        }
+        return terms, dict(data.get("address") or {})
+
+    def save_terms(self, lang: str, terms: Dict[str, str], address: Dict[str, str], used_terms=()):
+        """Adds the episode's terms (a new translation replaces the stored one) and counts the stored ones used again."""
+        data = _read_json(self.terms_path)
+        entry = data.setdefault(lang, {})
+        stored = entry.setdefault("terms", {})
+        added = 0
+        for term, translation in (terms or {}).items():
+            if not translation:
+                continue
+            old = stored.get(term)
+            if old is None:
+                stored[term] = {"translation": translation, "episodes": 1}
+                added += 1
+            else:
+                if old.get("translation") != translation:
+                    logger.info(
+                        f"Series memory '{self.key}': '{term}' is now '{translation}' (was '{old.get('translation')}')"
+                    )
+                old.update(translation=translation, episodes=int(old.get("episodes", 0)) + 1)
+        for term in used_terms or ():
+            if term in stored and term not in (terms or {}):
+                stored[term]["episodes"] = int(stored[term].get("episodes", 0)) + 1
+        entry.setdefault("address", {}).update({k: v for k, v in (address or {}).items() if v})
+        _write_json(self.terms_path, data)
+        logger.info(f"Series memory '{self.key}': {lang} terms has {len(stored)} entries ({added} new)")
 
     # --- Voice bank (Spec 006, 4) ---
 

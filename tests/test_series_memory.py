@@ -176,3 +176,18 @@ def test_a_spelling_that_failed_the_check_is_replaced(tmp_path):
     mem.save_glossary("pl", {"Warhead": "Worehed", "Razorback": "Rejzorbek"})
     mem.save_glossary("pl", {"Warhead": "Łorhed", "Razorback": "Rej-zor-bek"}, replace=["Warhead"])
     assert mem.glossary("pl") == {"Warhead": "Łorhed", "Razorback": "Rejzorbek"}
+
+
+class TestTerms(unittest.TestCase):
+    def test_terms_and_address_across_episodes(self):
+        mem = SeriesMemory("star-trek", root=tempfile.mkdtemp())
+        self.assertEqual(mem.terms("pl"), ({}, {}))
+        mem.save_terms("pl", {"Starfleet": "Gwiezdna Flota", "phaser": "fazer"}, {"Spock -> Kirk": "formal"})
+        mem.save_terms("pl", {"phaser": "fazer ręczny"}, {}, used_terms=["Starfleet"])
+        terms, address = mem.terms("pl")
+        self.assertEqual(terms, {"Starfleet": "Gwiezdna Flota", "phaser": "fazer ręczny"})  # the latest subtitles win
+        self.assertEqual(address, {"Spock -> Kirk": "formal"})
+        with open(mem.terms_path) as f:
+            stored = json.load(f)["pl"]["terms"]
+        self.assertEqual(stored["Starfleet"]["episodes"], 2)
+        self.assertEqual(mem.terms("de"), ({}, {}))
