@@ -132,6 +132,15 @@ def speaker_label(speaker_info: Dict, speaker_id: str) -> str:
     return speaker_name(speaker_info, speaker_id) + (f" ({gender})" if gender else "")
 
 
+def _untranslated(text: str, source: str) -> bool:
+    """A "translation" that repeats a source line of at least three words: the model answered in English."""
+
+    def words(x: str) -> List[str]:
+        return "".join(ch for ch in x.lower() if ch.isalnum() or ch == " ").split()
+
+    return len(words(source)) >= 3 and words(text) == words(source)
+
+
 class LLMManager:
     def __init__(
         self,
@@ -734,13 +743,12 @@ class LLMManager:
         translated: Dict[int, str] = {}
         variants: Dict[int, List[str]] = {}
 
-        for w_start in range(0, len(valid_indices), TRANSLATION_WINDOW):
-            if self.abort_event.is_set():
-                break
-            window = valid_indices[w_start : w_start + TRANSLATION_WINDOW]
-            previous = valid_indices[max(0, w_start - 6) : w_start]
-            following = valid_indices[w_start + TRANSLATION_WINDOW : w_start + TRANSLATION_WINDOW + 4]
+        position = {idx: n for n, idx in enumerate(valid_indices)}
 
+        def translate(window: List[int]) -> None:
+            first, last = position[window[0]], position[window[-1]]
+            previous = valid_indices[max(0, first - 6) : first]
+            following = valid_indices[last + 1 : last + 5]
             request = {
                 "previous": [
                     {
@@ -784,7 +792,10 @@ class LLMManager:
                 for item in parsed.get("translations", []):
                     if "id" in item and item.get("text") and int(item["id"]) in window:
                         i = int(item["id"])
-                        translated[i] = clean_output(item["text"], self.target_langs)
+                        text = clean_output(item["text"], self.target_langs)
+                        if _untranslated(text, script[i]["text_en"]):
+                            continue
+                        translated[i] = text
                         # Main translation first, then the length variants (Spec 001, 2.5a)
                         options = [translated[i]]
                         for key in ("short", "long"):
@@ -793,11 +804,25 @@ class LLMManager:
                                 if option and option not in options:
                                     options.append(option)
                         variants[i] = options
+            except Exception as e:
+                logging.error(f"LLM: Draft generation failed for lines {window[0]}-{window[-1]}: {e}")
+
+        for w_start in range(0, len(valid_indices), TRANSLATION_WINDOW):
+            if self.abort_event.is_set():
+                break
+            window = valid_indices[w_start : w_start + TRANSLATION_WINDOW]
+            translate(window)
+            # Lines the answer left out (or left in English) are asked again, in halves (Spec 001, 2.5a)
+            missing = [idx for idx in window if idx not in translated]
+            if missing and not self.abort_event.is_set():
+                logging.warning(f"LLM: No {lang_name} translation for lines {missing}, asking again")
+                half = (len(missing) + 1) // 2
+                for part in (missing[:half], missing[half:]):
+                    if part:
+                        translate(part)
                 missing = [idx for idx in window if idx not in translated]
                 if missing:
-                    logging.warning(f"LLM: No {lang_name} translation for lines {missing}, keeping the original text")
-            except Exception as e:
-                logging.error(f"LLM: Draft generation failed for window {w_start}: {e}")
+                    logging.warning(f"LLM: Still no {lang_name} translation for lines {missing}, keeping the original text")
 
         drafts = []
         for idx in valid_indices:

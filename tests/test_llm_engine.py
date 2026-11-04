@@ -62,6 +62,22 @@ class TestLLMManager(unittest.TestCase):
         self.assertEqual(drafts[0]["text"], "Cześć")
         self.assertEqual(drafts[0]["index"], 0)
 
+    def test_lines_left_in_english_are_asked_again_in_halves(self):
+        script = [{"speaker": "A", "text_en": f"This is line number {i}.", "start": i, "end": i + 1} for i in range(4)]
+        english = {"translations": [{"id": i, "text": f"This is line number {i}."} for i in range(4)]}
+        self.chat.side_effect = [
+            reply(json.dumps(english)),
+            reply(json.dumps({"translations": [{"id": 0, "text": "To linia zero."}, {"id": 1, "text": "To linia jeden."}]})),
+            reply(json.dumps({"translations": [{"id": 2, "text": "To linia dwa."}]})),
+        ]
+        drafts = self.manager.generate_drafts(script, "pl", {}, {})
+        self.assertEqual(self.chat.call_count, 3)
+        second = json.loads(self.chat.call_args_list[1].kwargs["messages"][1]["content"])
+        self.assertEqual([x["id"] for x in second["translate"]], [0, 1])
+        self.assertEqual(
+            [d["text"] for d in drafts], ["To linia zero.", "To linia jeden.", "To linia dwa.", "This is line number 3."]
+        )
+
     def test_generate_drafts_passes_show_context_and_speaker_gender(self):
         script = [{"index": 0, "speaker": "S0", "text_en": "I did it", "start": 0, "end": 2}]
         speakers = {"S0": {"name": "Una", "gender": "female", "desc": "Commander"}}
@@ -357,7 +373,7 @@ class TestSubtitleHints(unittest.TestCase):
             "address": {"pl": {"Spock -> Kirk": "formal: 'kapitanie'"}},
         }
         drafts = self.manager.generate_drafts(script, "pl", {}, context)
-        messages = self.chat.call_args.kwargs["messages"]
+        messages = self.chat.call_args_list[0].kwargs["messages"]
         request = json.loads(messages[1]["content"])
         self.assertEqual(request["translate"][0]["subtitle"], "Tu Gwiezdna Flota.")
         self.assertNotIn("subtitle", request["translate"][1])

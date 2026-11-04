@@ -205,7 +205,9 @@ The goal is a complete translation that fits the timing. Run time is secondary.
     better than seconds.
 2.  **Windows with context.** Lines are translated in windows of `TRANSLATION_WINDOW` lines (default 20). Each request
     also shows the previous 6 lines with their final translations and the next 4 source lines, read-only, so the
-    translation reads as one text and terms, forms of address and gender stay consistent.
+    translation reads as one text and terms, forms of address and gender stay consistent. Lines the answer leaves out,
+    or "translates" by repeating an English line of three or more words, are asked again once, in two halves; only
+    what is still missing keeps the source text (BattleBots S01E01: Gemma answered a whole window in English).
 3.  **Information is moved, not dropped.** The translator must keep every piece of information of the window: names,
     numbers, results, reasons, who does what. Fillers ("you know", "well", repetitions) go first. When a line cannot
     hold everything within its `max_syllables`, the information may move to a neighbouring line of the same speaker that
