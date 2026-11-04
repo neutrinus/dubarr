@@ -48,7 +48,9 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
         0.1% of samples at full scale); a silence over 1.2 s inside the take.
     3.  *voice match*: the take's voiceprint (Spec 006, 4.1; the audio goes to pyannote in memory, as in the
         diarization, because decoding a file needs torchcodec) against the print of the reference it cloned. Under
-        `JUDGE_MIN_VOICE` (0.5) the clone is not that voice: the model drifted into another voice or into noise.
+        `JUDGE_MIN_VOICE` (0.35) the clone is not that voice: the model drifted into another voice or into noise. A
+        clone speaking another language is never close to its English clip: in S01E03 the accepted clones of the right
+        person scored 0.41-0.59 (5th-75th percentile, median 0.56), so 0.5 rejected one clone in ten as a wrong voice.
     4.  *text match*: a CTC speech model of the target language (`JUDGE_ALIGN_MODEL`; default
         `jonatasgrosman/wav2vec2-large-xlsr-53-polish` for Polish, 300 M parameters, and `facebook/mms-1b-all` with
         the language's adapter for other languages; on the CPU) reads the take (greedy CTC decoding, no language
@@ -108,20 +110,28 @@ worse from an arbitrary line. Without the audition the Stage 4 order is kept and
 per speaker that has lines, from the attributes it understands: gender, age and pitch, taken from the speaker
 profile (Stage 3; e.g. "male, middle-aged, low pitch"; age words match whole words only). With nothing known OmniVoice
 picks a generic voice. The gender is measured, not guessed, when the speaker's reference clips tell: a median pitch
-(autocorrelation over the voiced frames of up to `REF_AUDITION_CANDIDATES` clips) of at most 160 Hz is male, of at
-least 180 Hz female, anything between leaves the profile's gender. The measurement overrules the analysis and the
-series memory (Spec 006), which once stored the play-by-play man under the sideline reporter's name and gender, so
-his designed voice was a woman's. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
+(autocorrelation over the voiced frames of up to `REF_AUDITION_CANDIDATES` clips) of at most 160 Hz is male, of
+200-265 Hz female; between 160 and 200 Hz, and above 265 Hz, the profile's gender stays. A man shouting over the arena
+speaks at 290-320 Hz (S01E03: the play-by-play man during the fights and the ring announcer, measured as women), so a
+high pitch tells excitement, not a woman. The measurement overrules the analysis and the series memory (Spec 006),
+which once stored the play-by-play man under the sideline reporter's name and gender, so his designed voice was a
+woman's. When it contradicts the analysis, the analysis took the speaker for someone else, so its name is dropped
+too: the translator saw "Jenny Taft (male)" and the review turned the man's lines into feminine forms. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
 it is the speaker's only line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
-other reference, so the voice stays the same across the video. The audition decides whether it beats the speaker's
-own clips (voice design was trained on Chinese and English only and may be unstable in other languages). It gives a
-voice to speakers without any clean clip.
+other reference, so the voice stays the same across the video. It is the fallback for speakers whose clips do not
+clone: it is used only when none of the speaker's clips scores at least `AUDITION_LINE_REF_MIN` in the audition and
+the designed voice scores better than the best of them. Its voice match compares OmniVoice with itself, so on scores
+alone it beats every clone speaking another language (S01E03: 0.8 against 0.56 at the median), and in S01E03 it took
+over seven speakers whose clips cloned well. Voice design was also trained on Chinese and English only and may be
+unstable in other languages. It gives a voice to speakers without any clean clip.
 
 A speaker only ever speaks with **its own voice** (its clips, line clips or designed voice): another speaker's voice in
-its mouth confuses the viewer more than a generic voice does. And with **one voice**: the kind of the audition's best
-candidate (the video's clips, or the designed voice) is used for every line; the other kind only after all references
-of that kind were tried for a line. In S01E02 the takes of one speaker alternated between a clone and the designed
-voice from line to line. A speaker whose best candidate is the designed voice does not use line clips.
+its mouth confuses the viewer more than a generic voice does. And with **one voice**: the speaker's kind (the video's
+clips, or the designed voice, as decided above) is used for every line, and the other kind never while the speaker has
+a reference of its own kind. When every reference of that kind was tried for a line, the best of them is synthesized
+again (a new take of the same voice). In S01E02 the takes of one speaker alternated between a clone and the designed
+voice from line to line; in S01E03 the second take of each line still came from a clip, so 15-20% of the lines of a
+speaker on the designed voice were clones. A speaker on the designed voice does not use line clips.
 
 References are tried in this order; a retry after a broken take skips the ones already tried for that line:
 1.  **Line clip:** a clean clip of the line itself when it is 3-10 s long (carries the scene's emotion). Clean means
@@ -149,7 +159,7 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` (9): faster than this means a swallowed take.
 -   `TAKE_CHECK` (judge | whisper | off), `TAKE_VERSIONS` (2): the judge of the voice audition and of every take, and
     how many takes each synthesis makes.
--   `JUDGE_HF_MAX_DB` (12), `JUDGE_MIN_VOICE` (0.5), `JUDGE_MIN_TEXT` (0.5), `JUDGE_ALIGN_MODEL`
+-   `JUDGE_HF_MAX_DB` (12), `JUDGE_MIN_VOICE` (0.35), `JUDGE_MIN_TEXT` (0.5), `JUDGE_ALIGN_MODEL`
     (per language, see 2.2 step 4), `JUDGE_DEVICE` (cpu): the judge's layers. Thresholds to be tuned on measured runs
     (`TAKE_CHECK=whisper`).
 -   `TAKE_MIN_SIMILARITY` (0.7), `TAKE_CHECK_DEVICE` (cpu), `TAKE_CHECK_THREADS` (all cores): the Whisper similarity

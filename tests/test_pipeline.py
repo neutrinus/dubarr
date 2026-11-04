@@ -478,6 +478,9 @@ class TestCheckGenders(unittest.TestCase):
             pipe._check_genders({"SPEAKER_12": ["a.wav"], "SPEAKER_03": ["b.wav"]})
         self.assertEqual(pipe.speaker_info["SPEAKER_12"]["gender"], "male")
         self.assertTrue(pipe.speaker_info["SPEAKER_12"]["gender_measured"])
+        self.assertEqual(pipe.speaker_info["SPEAKER_12"]["gender_hz"], 118)
+        # "Jenny Taft (male)" made the translator use feminine forms for him: the wrong name goes
+        self.assertEqual(pipe.speaker_info["SPEAKER_12"]["name"], "")
         self.assertEqual(pipe.speaker_info["SPEAKER_03"], {"gender": "male"})  # in between: the guess stays
 
 

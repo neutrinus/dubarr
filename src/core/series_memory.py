@@ -141,17 +141,19 @@ class SeriesMemory:
         lines = []
         for spk, pid in sorted(matches.items()):
             p = persons.get(pid) or {}
-            facts = ", ".join(x for x in (p.get("name"), p.get("gender"), p.get("desc")) if x)
+            # Only a measured gender: a guessed one may be the shouting man's "female" of an earlier episode
+            gender = p.get("gender") if p.get("gender_measured") else None
+            facts = ", ".join(x for x in (p.get("name"), gender, p.get("desc")) if x)
             lines.append(f"- {spk} is probably {facts or 'a known person'} (known from {p.get('episodes', 1)} episodes)")
         return "Known speakers of this series (from their voices):\n" + "\n".join(lines) if lines else ""
 
     def settled_genders(self, matches: Dict[str, str]) -> Dict[str, str]:
-        """Genders known from at least 2 episodes are not guessed again."""
+        """Genders measured from the voice and known from at least 2 episodes are not guessed again."""
         persons = self.persons()
         out = {}
         for spk, pid in matches.items():
             p = persons.get(pid) or {}
-            if p.get("gender") in ("male", "female") and int(p.get("episodes", 0)) >= 2:
+            if p.get("gender") in ("male", "female") and p.get("gender_measured") and int(p.get("episodes", 0)) >= 2:
                 out[spk] = p["gender"]
         return out
 
@@ -187,13 +189,20 @@ class SeriesMemory:
                 person["print"] = [round((o * n + e) / (n + 1), 6) for o, e in zip(old, emb)] if old else list(emb)
             person["episodes"] = n + 1
             profile = info.get("profile") or {}
+            measured = profile.get("gender") if profile.get("gender_measured") else None
+            if measured in ("male", "female"):
+                if person.get("gender") in ("male", "female") and person["gender"] != measured:
+                    person.pop("name", None)  # stored under someone else's name and gender
+                person["gender"] = measured
+                person["gender_measured"] = True
+                if profile.get("gender_hz"):
+                    person["gender_hz"] = profile["gender_hz"]
+            elif not person.get("gender_measured") and profile.get("gender") in ("male", "female"):
+                person["gender"] = profile["gender"]  # still a guess: the latest one
             for key in ("name", "gender", "desc"):
                 value = profile.get(key)
                 if value and value != "unknown" and not person.get(key):
                     person[key] = value
-            # A gender measured from the voice's pitch replaces one the LLM guessed in an earlier episode
-            if profile.get("gender_measured") and profile.get("gender") in ("male", "female"):
-                person["gender"] = profile["gender"]
             self._merge_clips(pid, person, info.get("clips") or [])
         _write_json(self.voices_path, data)
         logger.info(f"Series memory '{self.key}': voice bank has {len(persons)} persons")

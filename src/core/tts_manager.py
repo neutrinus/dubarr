@@ -9,7 +9,7 @@ import subprocess
 from typing import List, Dict, Optional, Any, Tuple
 from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
 from utils import measure_zcr, count_syllables, apply_phonemes
-from config import MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS, REF_MIN_CLARITY_DB, TAKE_MIN_SIMILARITY
+from config import AUDITION_LINE_REF_MIN, MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS, REF_MIN_CLARITY_DB, TAKE_MIN_SIMILARITY
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
 
@@ -103,6 +103,7 @@ class TTSManager:
         self.speaker_refs = {}  # speaker -> reference candidates, best first (Spec 002, 2.3)
         self.genders = {}
         self.audition = {}  # reference path -> audition score, when the voice audition ran
+        self.audition_min = AUDITION_LINE_REF_MIN  # a clip scoring this well keeps the speaker off its designed voice
         self.line_refs_off = set()  # speakers whose voice clones badly; they skip line clips
         self.designed = set()  # voice-design clips (from the speaker profile, not from the video)
         self.phonemes = {}  # name -> English CMU phonemes (GLOSSARY_MODE=phonemes)
@@ -347,6 +348,7 @@ class TTSManager:
 
     def apply_audition(self, scores: Dict[str, Dict[str, float]], line_ref_min: float):
         """Ranks each speaker's candidates by their audition score (speaker -> {path: score}); Spec 002, 2.3."""
+        self.audition_min = line_ref_min
         for spk, by_path in scores.items():
             refs = self.speaker_refs.get(spk) or []
             self.audition.update(by_path)
@@ -356,24 +358,34 @@ class TTSManager:
             if best is not None and best < line_ref_min:
                 self.line_refs_off.add(spk)
             # A speaker who speaks in the designed voice does not switch to a clone of the line now and then
-            if (
-                self.speaker_refs[spk]
-                and self.speaker_refs[spk][0] in self.designed
-                and by_path.get(self.speaker_refs[spk][0])
-            ):
+            if self.uses_designed(spk):
                 self.line_refs_off.add(spk)
 
     def _real(self, refs: List[str]) -> List[str]:
         return [p for p in refs if p not in self.designed]
+
+    def uses_designed(self, spk: str) -> bool:
+        """Whether the speaker speaks in its designed voice: only when none of its clips clones well (Spec 002, 2.3).
+
+        The designed voice's voice match compares OmniVoice with itself, so on scores alone it would beat every clone
+        speaking another language; it is the fallback for a speaker whose clips do not clone.
+        """
+        own = self.speaker_refs.get(spk) or []
+        designed = [self.audition[p] for p in own if p in self.designed and p in self.audition]
+        if not designed or not max(designed):
+            return False
+        clips = [self.audition[p] for p in own if p not in self.designed and p in self.audition]
+        best_clip = max(clips, default=0.0)
+        return best_clip < self.audition_min and max(designed) > best_clip
 
     def _ref_order(self, spk: str) -> List[Tuple[str, str]]:
         """Every reference this speaker may use after the line clip, as (path or LAST_GOOD, voice type), in order.
 
         Only the speaker's own voice: another speaker's voice in this mouth confuses the viewer, so a speaker without
         a clip that clones well falls back to its designed (generic) voice instead (Spec 002, 2.3). And one voice per
-        speaker: the kind of the audition's best candidate (clips of the video, or the designed voice) comes first,
-        the other kind only after every reference of that kind, so takes of one speaker do not alternate between a
-        clone and a designed voice (of another age, or even gender) from line to line.
+        speaker: only references of the speaker's kind (clips of the video, or the designed voice); the other kind only
+        for a speaker without any reference of its kind, so takes of one speaker do not alternate between a clone and
+        a designed voice (of another age, or even gender) from line to line.
         """
         own = self.speaker_refs.get(spk) or []
 
@@ -386,15 +398,13 @@ class TTSManager:
         def entry(p):
             return (p, "DESIGNED" if p in self.designed else "GOLDEN")
 
-        # Only auditioned candidates decide; ties keep the Stage 4 order, which puts the designed voice last
-        heard = [p for p in own if p in self.audition]
-        designed_voice = bool(heard) and max(heard, key=lambda p: self.audition[p]) in self.designed
-        primary = [p for p in own if (p in self.designed) == designed_voice]
-        secondary = [p for p in own if p not in primary]
+        designed_voice = self.uses_designed(spk)
+        primary = [p for p in own if (p in self.designed) == designed_voice and os.path.exists(p)]
+        if not primary:  # no reference of its kind (files gone): the other kind rather than silence
+            primary = [p for p in own if os.path.exists(p)]
         good = [p for p in primary if score(p) >= TAKE_MIN_SIMILARITY]
         order = [entry(p) for p in good] + [("LAST_GOOD", "LAST_GOOD")]
         order += [entry(p) for p in by_score([p for p in primary if p not in good])]
-        order += [entry(p) for p in by_score(secondary)]
         return order
 
     def _select_reference(self, item: Dict, vocals_path: str, lang: str = "", skip=()):
@@ -425,8 +435,13 @@ class TTSManager:
                 continue
             return path, voice_type
 
+        # Every reference of the speaker's voice was tried for this line: a new take of the best one, never the other
+        # kind of voice and never another speaker's voice
+        own = [(p, t) for p, t in self._ref_order(spk) if p != "LAST_GOOD"]
+        if own:
+            return own[0]
         if any(os.path.exists(p) for p in self.speaker_refs.get(spk) or []):
-            return None, "UNKNOWN"  # every own voice was tried: no other speaker's voice instead
+            return None, "UNKNOWN"
         # A speaker with no voice of its own at all (no clip, no designed voice) still gets dubbed
         all_last_goods = [p for p in self.last_good_samples.values() if os.path.exists(p) and p not in skip]
         if all_last_goods:
