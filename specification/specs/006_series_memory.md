@@ -65,8 +65,11 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
     all prints compare by cosine similarity.
 2.  **`voices.json`** holds one entry per person: id (`V001`...), the mean voiceprint over its episodes, name, gender,
     a short description, the number of episodes, and up to `VOICE_BANK_CLIPS` (5) clips in `clips/` (with their
-    transcripts) and their audition score. Clips are ranked by audition score; the worst is dropped when a better one
-    arrives. Only auditioned clips are stored (none with `TAKE_CHECK=off`), and never a designed voice.
+    transcripts), their audition score and their quality (0..1: half the length's fit to 6-10 s, half the clarity
+    in dB when the clip was cut, Spec 001, 2.4). Clips are ranked by audition score plus 0.1 times the quality, so
+    between clips that clone about equally well the longer and cleaner one stays; the worst is dropped when a better
+    one arrives. Every bank clip of a matched person is auditioned again in each episode, on that episode's test line
+    next to the episode's own clips, so stored scores stay comparable with new ones and the bank only gets better. Only auditioned clips are stored (none with `TAKE_CHECK=off`), and never a designed voice.
 3.  **Matching.** After Stage 2 every diarization speaker is compared with the bank. A speaker is that person when the
     similarity is at least `VOICE_MATCH_MIN` (0.6) and beats the second best person by at least 0.05 (two similar
     commentators must not merge). Two speakers that match the same person are merged into one speaker before the script

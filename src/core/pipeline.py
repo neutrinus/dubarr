@@ -33,11 +33,14 @@ from core.synchronizer import SegmentSynchronizer
 from core.voice_audition import audition_voices, design_voices, pitch_gender
 from core.gpu_services import LLMService, TTSService
 from core.media_context import lookup_media_info, format_media_context, format_short_context, episode_names
-from core.series_memory import SeriesMemory, merge_matched_speakers
+from core.series_memory import CLIP_BEST_SECONDS, SeriesMemory, clip_quality, merge_matched_speakers
 from core.take_judge import TakeJudge
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
+
+# A short reference clip grows with the same speaker's lines across pauses up to this long (Spec 001, 2.4)
+CLIP_JOIN_GAP = 0.6
 
 ISO_639_2 = {
     "pl": "pol",
@@ -376,9 +379,43 @@ class DubbingPipeline:
                 return [least_noisy[1:]]
         return picked
 
+    @staticmethod
+    def _extend_short_clip(seg, script, vocals_path):
+        """A candidate under 6 s grows with the same speaker's adjacent lines, up to 10 s (Spec 001, 2.4).
+
+        OmniVoice clones best from 6-10 s. Only lines right next to it (a pause of at most CLIP_JOIN_GAP) of the same
+        speaker that are clean enough as references join, so the clip stays one calm stretch of one voice.
+        """
+        lo, hi = CLIP_BEST_SECONDS
+        if seg["end"] - seg["start"] >= lo or seg not in script:
+            return seg
+        i = j = script.index(seg)
+
+        def usable(other, start, end):
+            if other["speaker"] != seg["speaker"] or end - start > hi:
+                return False
+            clarity = clarity_db(vocals_path, other["start"], other["end"])
+            return clarity is None or clarity >= REF_MIN_CLARITY_DB
+
+        start, end = seg["start"], seg["end"]
+        while end - start < lo:
+            nxt = script[j + 1] if j + 1 < len(script) else None
+            prv = script[i - 1] if i > 0 else None
+            if nxt and nxt["start"] - end <= CLIP_JOIN_GAP and usable(nxt, start, nxt["end"]):
+                j, end = j + 1, nxt["end"]
+            elif prv and start - prv["end"] <= CLIP_JOIN_GAP and usable(prv, prv["start"], end):
+                i, start = i - 1, prv["start"]
+            else:
+                break
+        if (i, j) == (script.index(seg),) * 2:
+            return seg
+        text = " ".join(script[k]["text_en"].strip() for k in range(i, j + 1))
+        return dict(seg, start=start, end=end, text_en=text)
+
     def _extract_refs(self, script, vocals_path, ddir):
         logger.info("Extracting Smart Weighted Normalized voice references (v2 - Scored 0-100)")
         self.speaker_refs = {}
+        self.ref_quality = {}
         ref_debug = os.path.join(ddir, "refs") if self.debug_mode else None
         if ref_debug:
             os.makedirs(ref_debug, exist_ok=True)
@@ -452,6 +489,7 @@ class DubbingPipeline:
             if scored_candidates:
                 scored_candidates = self._apply_calm_scores(scored_candidates, vocals_path, spk)
                 top = sorted(scored_candidates, key=lambda x: x[1], reverse=True)[:REF_CANDIDATES]
+                top = [(self._extend_short_clip(seg, script, vocals_path), score) for seg, score in top]
                 clips = self._pick_clean_clips(spk, top, vocals_path, REF_AUDITION_CANDIDATES)
 
                 if clips:
@@ -461,6 +499,8 @@ class DubbingPipeline:
                         shutil.move(wav_path, out)
                         write_ref_text(out, seg["text_en"])
                         paths.append(out)
+                        clarity = clarity_db(vocals_path, seg["start"], seg["end"])
+                        self.ref_quality[out] = clip_quality(seg["end"] - seg["start"], clarity)
                         if ref_debug:
                             shutil.copy(out, os.path.join(ref_debug, os.path.basename(out)[4:]))
                     best_seg, best_score, _ = clips[0]
@@ -762,7 +802,11 @@ class DubbingPipeline:
                     "desc": info.get("desc"),
                     "gender_measured": bool(info.get("gender_measured")),
                 },
-                "clips": [(p, audition.get(p)) for p in refs if p not in designed and audition.get(p) is not None],
+                "clips": [
+                    (p, audition.get(p), (getattr(self, "ref_quality", None) or {}).get(p))
+                    for p in refs
+                    if p not in designed and audition.get(p) is not None
+                ],
             }
         return update
 

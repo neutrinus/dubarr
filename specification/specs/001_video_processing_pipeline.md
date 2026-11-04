@@ -95,7 +95,10 @@ duplicates content, because the target language orders the sentence differently.
         over the whole episode (calm talk can come before or after the shouting). A line 4 dB or more above that median
         is shouted and loses 5 points per dB above 3 dB, up to 40; a line within 2 dB of it gains 5. A speaker is only
         compared with itself, so a loud voice is not penalised for being loud.
-    2.  Tests the best candidates (up to 8) for Zero Crossing Rate (ZCR <= 0.15, after denoising) and keeps the first
+    2.  **Short clips grow:** a candidate under 6 s is joined with the same speaker's lines right before or after it
+        (pauses of at most 0.6 s), as long as each joined line is clean enough (clarity at least `REF_MIN_CLARITY_DB`)
+        and the clip stays within 10 s; OmniVoice clones best from 6-10 s. The transcripts are joined too.
+    3.  Tests the best candidates (up to 8) for Zero Crossing Rate (ZCR <= 0.15, after denoising) and keeps the first
         `REF_AUDITION_CANDIDATES` (3) that pass, best score first. When none passes, the tested candidate with the
         lowest ZCR is used: the speaker's own voice beats another speaker's reference. Which of the kept clips the TTS
         clones best is decided by the voice audition in Stage 5 (Spec 002, 2.3).
