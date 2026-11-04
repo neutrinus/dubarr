@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# A newer push to the same PR cancels the run still going; main and tags always finish
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -28,9 +33,6 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
           uv sync --group dev --python 3.10
-      - name: Syntax check
-        run: |
-          uv run python -m py_compile $(git ls-files '*.py')
       - name: Lint with ruff
         run: |
           uv run ruff check .
@@ -47,32 +49,35 @@ jobs:
           export PYTHONPATH=$PYTHONPATH:.:src
           uv run pytest tests/ --cov=src --cov-report=term --cov-fail-under=60
 
-  build:
-    name: Build and Publish Docker Image
+  # One image build per run: smoke-tested in MOCK_MODE, then pushed (main and tags only). The layer cache lives in the
+  # registry (no 10 GB limit like the Actions cache), so a build only reinstalls the venv when the Dockerfile changes.
+  docker:
+    name: Docker build, smoke test and publish
     needs: [qa]
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
-    if: github.event_name != 'pull_request'
-
+    env:
+      CACHE_REF: ghcr.io/${{ github.repository }}:buildcache
     steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
+      # The CUDA image does not fit on a stock runner disk. Deleting the biggest preinstalled toolchains in parallel
+      # takes seconds; the apt purge of jlumbroso/free-disk-space took 2.5-6.5 minutes.
+      - name: Free disk space
+        run: |
+          df -h /
+          for d in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
+                   /usr/local/share/boost /usr/share/swift /usr/local/share/powershell /usr/local/share/chromium \
+                   /usr/lib/jvm /opt/microsoft /opt/google /opt/az /usr/local/julia* /usr/share/miniconda; do
+            sudo rm -rf $d &
+          done
+          sudo swapoff -a && sudo rm -f /mnt/swapfile /swapfile &
+          docker system prune -af >/dev/null &
+          wait
+          df -h /
 
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@v7
 
       - name: Log into registry ${{ env.REGISTRY }}
         uses: docker/login-action@v4
@@ -91,38 +96,18 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,format=long
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  smoke-test:
-    name: Smoke Test (MOCK Mode)
-    needs: [qa] # Changed from build to qa to allow testing on PRs
-    runs-on: ubuntu-latest
-    steps:
-      # The image (CUDA base + three venvs) no longer fits on a stock runner disk
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: true
-
-      - uses: actions/checkout@v7
-      - name: Build local image for testing
+      # Every run writes the cache (a fork PR cannot, ignore-error keeps that from failing the build), so main reuses
+      # the layers a PR that changed the Dockerfile already built.
+      # The default docker driver builds straight into the runner's (containerd) image store: no second copy of the
+      # image in a buildx container, and the smoke test runs the exact image that gets pushed.
+      - name: Build image
         run: |
-          docker build -t dubarr:test .
-      - name: Run Docker Container in MOCK mode
+          docker buildx build . -t dubarr:test \
+            --cache-from type=registry,ref=$CACHE_REF \
+            --cache-to type=registry,ref=$CACHE_REF,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+          df -h /
+
+      - name: Start container in MOCK mode
         run: |
           docker run -d --name dubarr-test \
             -e MOCK_MODE=1 \
@@ -131,35 +116,31 @@ jobs:
             -e PGID=$(id -g) \
             -v /tmp:/tmp \
             -p 8000:8000 \
-            --health-cmd "curl -f http://localhost:8000/health || exit 1" \
-            --health-interval 5s \
-            --health-timeout 2s \
-            --health-retries 20 \
             dubarr:test
-      - name: Wait for Container and Debug Info
-        run: |
-          # Wait for healthy status
-          for i in {1..20}; do
-            STATUS=$(docker inspect --format='{{.State.Health.Status}}' dubarr-test)
-            echo "Container status: $STATUS"
-            if [ "$STATUS" == "healthy" ]; then
-              break
-            fi
-            sleep 5
-          done
-          docker ps -a
-          docker logs dubarr-test
-      - name: Install dependencies
+
+      - name: Install smoke test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
-          python3 -m pip install requests
-      - name: Run Smoke Test Script
-        run: |
-          python3 scripts/smoke_test.py
-      - name: Check Container Logs on Failure
-        if: failure()
-        run: docker logs dubarr-test
+          sudo apt-get install -y --no-install-recommends ffmpeg python3-requests
+
+      # The script waits for /health itself
+      - name: Run smoke test
+        run: /usr/bin/python3 scripts/smoke_test.py
+
+      - name: Container logs
+        if: always()
+        run: docker logs dubarr-test || true
+
       - name: Cleanup
         if: always()
-        run: docker rm -f dubarr-test
+        run: docker rm -f dubarr-test || true
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          for tag in $TAGS; do
+            docker tag dubarr:test "$tag"
+            docker push "$tag"
+          done

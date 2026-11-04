@@ -128,8 +128,9 @@ uv run flake8 .
 ```
 
 CI (`.github/workflows/pipeline.yml`) runs the same lint + tests on Python 3.10, then builds the Docker image and runs
-`scripts/smoke_test.py` against a container started with `MOCK_MODE=1`. Images are pushed to `ghcr.io` only from `main`
-and tags.
+`scripts/smoke_test.py` against a container started with `MOCK_MODE=1`; the same image is then pushed to `ghcr.io`
+(only from `main` and tags). Its layer cache is the `ghcr.io/neutrinus/dubarr:buildcache` tag, so the venv layer is only
+rebuilt when the Dockerfile changes.
 
 `.github/workflows/e2e-cpu.yml` runs `scripts/e2e_test.py`: it cuts a 60 s public-domain clip (NASA), dubs it with the
 real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 3B GGUF, OmniVoice on CPU), and checks the
