@@ -2,7 +2,7 @@ import logging
 import threading
 import gc
 from typing import List, Dict, Optional, Tuple
-from config import WHISPER_MODEL, MOCK_MODE, TAKE_CHECK_DEVICE, TAKE_CHECK_THREADS, ASR_GAP_PASS, ASR_GAP_MIN
+from config import WHISPER_MODEL, TAKE_CHECK_MODEL, MOCK_MODE, TAKE_CHECK_DEVICE, TAKE_CHECK_THREADS, ASR_GAP_PASS, ASR_GAP_MIN
 from core.gpu_manager import GPUManager
 
 try:
@@ -293,11 +293,11 @@ class WhisperManager:
         compute_type = "float16" if device_type == "cuda" else "int8"
         threads = TAKE_CHECK_THREADS if device_type == "cpu" else 0
         logging.info(
-            f"Whisper: Loading take-check model '{WHISPER_MODEL}' on {device}"
+            f"Whisper: Loading take-check model '{TAKE_CHECK_MODEL}' on {device}"
             + (f" ({threads} threads)..." if threads else "...")
         )
         self.take_model = WhisperModel(
-            WHISPER_MODEL, device=device_type, device_index=device_index, compute_type=compute_type, cpu_threads=threads
+            TAKE_CHECK_MODEL, device=device_type, device_index=device_index, compute_type=compute_type, cpu_threads=threads
         )
         self.take_device = device
 

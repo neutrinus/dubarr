@@ -45,7 +45,8 @@ Configuration is only through environment variables (read in `src/config.py`, th
 ### 2.2 Models and devices
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `WHISPER_MODEL` | `large-v3-turbo` | faster-whisper model name. |
+| `WHISPER_MODEL` | `large-v3` | faster-whisper model name. Full large-v3 hears more than `large-v3-turbo` (BattleBots S01E01: 14% more segments, correct names, no hallucinated "We'll be right back.") for ~3 minutes more per episode. |
+| `TAKE_CHECK_MODEL` | `large-v3-turbo` | Model of the `TAKE_CHECK=whisper` take check (on the CPU by default, where turbo is much faster). |
 | `DEMUCS_TIMEOUT` | `1800` | Seconds allowed for the Demucs separation of one file (a 45-minute 720p episode takes ~8 min on a 3060). |
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | `bartowski/google_gemma-3-12b-it-GGUF` / `google_gemma-3-12b-it-Q4_K_M.gguf` | GGUF downloaded to `DATA_DIR/models` on first use (in-process LLM only). |
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |

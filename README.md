@@ -68,7 +68,7 @@ Measured on a 3060 12GB + 3070 8GB pair, dubbing one 10-minute episode (720p, on
 | Stage | VRAM peak | Time |
 | :--- | :--- | :--- |
 | Audio separation (Demucs) | ~2 GB | 1:30 |
-| Diarization + Whisper `large-v3-turbo` | ~4 GB (unloaded after use) | 0:45 |
+| Diarization + Whisper `large-v3` | ~5 GB (unloaded after use) | 3:40 |
 | Global analysis + drafts (Gemma 3 12B, 8k context) | ~10 GB | 3:30 |
 | Speech synthesis (OmniVoice) | **up to 6 GB** for very long lines | 3:50 |
 | Mix + mux | – | 0:15 |
@@ -183,7 +183,7 @@ The full list, with every tuning knob, is in [Spec 005](specification/specs/005_
 ## 🏗️ The Pipeline (Step-by-Step)
 
 1.  **Audio Separation**: Demucs `htdemucs_ft` isolates the voices from music and effects.
-2.  **Audio Analysis**: pyannote finds who speaks when; faster-whisper (`large-v3-turbo`) transcribes the original
+2.  **Audio Analysis**: pyannote finds who speaks when; faster-whisper (`large-v3`) transcribes the original
     mix, with a second pass for speech under loud noise. Unsure lines are heard again and checked against subtitles;
     each line's speaker is checked by its voiceprint. Lines are joined into whole sentences, each with a time budget.
     The show/episode or movie is identified and its synopsis and cast are fetched.
