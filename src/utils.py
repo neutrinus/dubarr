@@ -360,3 +360,11 @@ def check_polish_spelling(spelling: str, arpabet: str):
     ok = not hard and len(lost) <= len(english) // 6
     lost_text = ", ".join(f"{e} read as {r}" if r != "-" else f"{e} missing" for e, r in lost)
     return ok, fixed, lost_text
+
+
+def translation_glossary(global_context: dict, lang: str) -> dict:
+    """The phonetic glossary without the names this language translates (Spec 001, 2.5a, 8): "Starfleet" is
+    "Gwiezdna Flota", not a respelling of the English sound."""
+    terms = (global_context.get("terms") or {}).get(lang) or {}
+    translated = {t.lower() for t, tr in terms.items() if tr and tr.strip().lower() != t.strip().lower()}
+    return {t: v for t, v in (global_context.get("glossary") or {}).items() if t.lower() not in translated}

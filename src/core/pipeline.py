@@ -5,7 +5,6 @@ import logging
 import time
 import humanfriendly
 import shutil
-import glob
 import subprocess
 from typing import Dict, List, Optional
 
@@ -28,6 +27,18 @@ from infrastructure.monitor import ResourceMonitor
 from core.audio import prep_audio, analyze_audio, mix_audio, clarity_db, voice_level, calm_bonus
 from core.report import report_rows, summary as report_summary, write_report
 from utils import clean_srt, measure_zcr, run_cmd
+from core.subtitles import (
+    align,
+    find_sidecar,
+    grammar_gender,
+    label_hints,
+    lang_codes,
+    missing_speech,
+    parse_srt,
+    read_text,
+    speaker_labels,
+    timing_matches,
+)
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
 from core.voice_audition import audition_voices, design_voices, pitch_gender
@@ -261,53 +272,113 @@ class DubbingPipeline:
 
         Subtitles in a target language and forced (partial) subtitles are skipped; English and full ones are preferred.
         """
-        base_path = os.path.splitext(vpath)[0]
-        targets = {lang.lower() for lang in self.target_langs} | {
-            ISO_639_2.get(lang.lower(), "") for lang in self.target_langs
-        }
-        candidates = []
-        for path in glob.glob(glob.escape(base_path) + "*.srt"):
-            tags = [t.lower() for t in path[len(base_path) : -len(".srt")].split(".") if t]
-            if path[len(base_path) : len(base_path) + 1] not in ("", ".") or "forced" in tags:
-                continue
-            if any(t in targets for t in tags):
-                continue
-            rank = (
-                0 if not tags else 1 if tags[0] in ("en", "eng") else 2,
-                1 if any(t in ("hi", "sdh", "cc") for t in tags) else 0,
-            )
-            candidates.append((rank, path))
-        return min(candidates)[1] if candidates else None
+        return find_sidecar(vpath, exclude=self.target_langs)
 
-    def _extract_subtitles(self, vpath):
+    def _embedded_subtitles(self, vpath, langs=None, exclude=()) -> str:
+        """The first embedded subtitle stream tagged with one of ``langs`` (None: any not tagged ``exclude``), as SRT."""
+        try:
+            meta = FFmpegWrapper.get_metadata(vpath)
+        except Exception as e:
+            logger.warning(f"Failed to read the subtitle streams: {e}")
+            return ""
+        wanted = set().union(*(lang_codes(x) for x in langs)) if langs else None
+        excluded = set().union(*(lang_codes(x) for x in exclude)) if exclude else set()
+        subs = [st for st in meta.get("streams", []) if st.get("codec_type") == "subtitle"]
+        for n, stream in enumerate(subs):
+            tag = str((stream.get("tags") or {}).get("language", "")).lower()
+            if (wanted is not None and tag not in wanted) or (wanted is None and tag in excluded):
+                continue
+            if (stream.get("disposition") or {}).get("forced"):
+                continue
+            out = os.path.join(self.temp_dir, f"extracted_{tag or 'und'}_{n}.srt")
+            try:
+                run_cmd(["ffmpeg", "-i", vpath, "-map", f"0:s:{n}", out, "-y"], "extract subtitles")
+                if os.path.exists(out):
+                    return read_text(out)
+            except Exception as e:
+                logger.warning(f"Failed to extract embedded subtitles: {e}")
+        return ""
+
+    def _source_subtitles(self, vpath) -> str:
+        """The reference subtitles (Spec 001, 2.3) as SRT text: a sidecar in a source language, else embedded."""
         srt_path = self._find_external_subtitles(vpath)
         content = ""
         if srt_path:
             logger.info(f"Found external subtitles: {srt_path}")
             try:
-                with open(srt_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = read_text(srt_path)
             except Exception as e:
                 logger.warning(f"Failed to read external SRT: {e}")
         if not content:
-            try:
-                meta = FFmpegWrapper.get_metadata(vpath)
-                has_subs = any(s.get("codec_type") == "subtitle" for s in meta.get("streams", []))
-                if has_subs:
-                    logger.info("Found embedded subtitles. Extracting...")
-                    temp_srt = os.path.join(self.temp_dir, "extracted.srt")
-                    run_cmd(["ffmpeg", "-i", vpath, "-map", "0:s:0", temp_srt, "-y"], "extract subtitles")
-                    if os.path.exists(temp_srt):
-                        with open(temp_srt, "r", encoding="utf-8") as f:
-                            content = f.read()
-            except Exception as e:
-                logger.warning(f"Failed to extract embedded subtitles: {e}")
+            content = self._embedded_subtitles(vpath, exclude=self.target_langs)
+            if content:
+                logger.info("Found embedded subtitles.")
+        return content
+
+    def _extract_subtitles(self, vpath, content: Optional[str] = None):
+        """The reference subtitles as plain text for the analysis and the transcript corrector."""
+        content = self._source_subtitles(vpath) if content is None else content
         if content:
             cleaned = clean_srt(content)
             logger.info(f"Loaded reference subtitles ({len(cleaned)} chars)")
             return cleaned
         logger.info("No reference subtitles found.")
         return ""
+
+    def _target_subtitles(self, vpath, lang) -> List:
+        """Cues of the subtitles in a target language (Spec 001, 2.3): `<video>.pl.srt`, else an embedded stream."""
+        path = find_sidecar(vpath, langs=[lang])
+        content = ""
+        if path:
+            try:
+                content = read_text(path)
+                logger.info(f"Found {lang} subtitles: {path}")
+            except Exception as e:
+                logger.warning(f"Failed to read {path}: {e}")
+        if not content:
+            content = self._embedded_subtitles(vpath, langs=[lang])
+            if content:
+                logger.info(f"Found embedded {lang} subtitles.")
+        return parse_srt(content)
+
+    def _add_missing_speech(self, trans, content: str):
+        """Speech of the reference subtitles that Whisper did not hear joins the transcription (Spec 001, 2.3)."""
+        cues = parse_srt(content)
+        if not cues or not trans:
+            return trans
+        if not timing_matches(trans, cues):
+            logger.info("Reference subtitles are not timed to this audio: not used to find missing speech")
+            return trans
+        missing = missing_speech(trans, cues)
+        for seg in missing:
+            logger.info(f"Subtitles: speech Whisper missed at {seg['start']:.1f}-{seg['end']:.1f}s: '{seg['text'][:60]}'")
+        return sorted(list(trans) + missing, key=lambda t: t["start"]) if missing else trans
+
+    def _speaker_label_hints(self, vpath, script) -> str:
+        """SDH speaker labels ("KIRK:") of the speakers, for the analysis (Spec 001, 2.3)."""
+        path = find_sidecar(vpath, exclude=self.target_langs, sdh=True)
+        if not path:
+            return ""
+        try:
+            hints = label_hints(speaker_labels(script, parse_srt(read_text(path))))
+        except Exception as e:
+            logger.warning(f"SDH speaker labels failed: {e}")
+            return ""
+        if hints:
+            logger.info(hints)
+        return hints
+
+    def _attach_target_subtitles(self, vpath, script):
+        """Each script line gets the target-language cues spoken during it: script[i]["subtitles"][lang]."""
+        for lang in self.target_langs:
+            cues = self._target_subtitles(vpath, lang)
+            if not cues:
+                continue
+            aligned = align(script, cues)
+            for s in script:
+                if s["index"] in aligned:
+                    s.setdefault("subtitles", {})[lang] = aligned[s["index"]]
+            logger.info(f"Subtitles ({lang}): {len(cues)} cues on {len(aligned)} of {len(script)} lines")
 
     @staticmethod
     def _lookup_media_info(vpath):
@@ -649,15 +720,21 @@ class DubbingPipeline:
         if GLOSSARY_MODE == "phonemes":
             fixed_glossary = {t: t for t in fixed_phonemes}
 
+        source_subs = self._source_subtitles(vpath)
+        trans = self._add_missing_speech(trans, source_subs)
         script = self._create_script(diar, trans)
+        self._attach_target_subtitles(vpath, script)
         if self.debug_mode:
             with open(os.path.join(ddir, "script_initial.json"), "w") as f_dbg:
-                json.dump(script, f_dbg, indent=2)
+                json.dump(script, f_dbg, indent=2, ensure_ascii=False)
         if self.abort_event.is_set():
             return
-        ref_subs = self._extract_subtitles(vpath)
+        ref_subs = self._extract_subtitles(vpath, source_subs)
         media_text = format_media_context(media_info)
         hints = self.series.hints(self.voice_matches) if self.series else ""
+        sdh_hints = self._speaker_label_hints(vpath, script)
+        if sdh_hints:
+            hints = f"{hints}\n{sdh_hints}".strip()
         if hints:
             media_text = f"{media_text}\n{hints}".strip()
         analysis_results = self._run_step(
@@ -691,7 +768,7 @@ class DubbingPipeline:
             if bank:
                 self.speaker_refs.setdefault(spk, []).extend(bank)
                 logger.info(f"Series memory: {spk} gets {len(bank)} reference clips of {pid} from earlier episodes")
-        self._check_genders(refs or {})
+        self._check_genders(refs or {}, script)
         genders = {spk: (info or {}).get("gender", "") for spk, info in (self.speaker_info or {}).items()}
         self.tts_manager.set_speaker_refs(self.speaker_refs, genders)
         self.tts_manager.phonemes = self.global_context.get("phonemes") or {}
@@ -756,6 +833,34 @@ class DubbingPipeline:
         )
         self._print_report(vpath, time.perf_counter() - start_all, avg_tps)
 
+    def _prepare_terms(self, script, lang, task_id=None):
+        """The series' terms and forms of address for this language, with those of the episode's own subtitles on
+        top (Spec 006, 5), into global_context["terms"][lang] and ["address"][lang]."""
+        stored_terms, stored_address = self.series.terms(lang) if getattr(self, "series", None) else ({}, {})
+        episode = {"terms": {}, "address": {}}
+        if any((s.get("subtitles") or {}).get(lang) for s in script):
+            try:
+                episode = (
+                    self._run_step(
+                        f"Stage 5a: Subtitle Terms ({lang})",
+                        self.llm_manager.extract_terms,
+                        task_id,
+                        script,
+                        lang,
+                        self.speaker_info,
+                    )
+                    or episode
+                )
+            except Exception as e:
+                logger.warning(f"Subtitle terms ({lang}) failed: {e}")
+        if not hasattr(self, "episode_terms"):
+            self.episode_terms = {}
+        self.episode_terms[lang] = episode
+        self.global_context.setdefault("terms", {})[lang] = {**stored_terms, **(episode.get("terms") or {})}
+        self.global_context.setdefault("address", {})[lang] = {**stored_address, **(episode.get("address") or {})}
+        if self.global_context["terms"][lang]:
+            logger.info(f"Terms ({lang}): {len(self.global_context['terms'][lang])} ({len(stored_terms)} from the series)")
+
     def _remember_series(self, script):
         """Stores what this episode settled for the next episodes of the series (Spec 006). Never fails the task."""
         if not getattr(self, "series", None):
@@ -770,6 +875,14 @@ class DubbingPipeline:
                 self.series.save_glossary("cmu", ctx["name_phonemes"], used)
         except Exception as e:
             logger.warning(f"Series memory: could not save the glossary ({e})")
+        try:
+            text = " ".join(s.get("text_en", "") for s in script).lower()
+            for lang, episode in (getattr(self, "episode_terms", None) or {}).items():
+                known = (self.global_context or {}).get("terms", {}).get(lang) or {}
+                used = [t for t in known if t.lower() in text]
+                self.series.save_terms(lang, episode.get("terms") or {}, episode.get("address") or {}, used)
+        except Exception as e:
+            logger.warning(f"Series memory: could not save the terms ({e})")
         try:
             self.series.save_voices(self._bank_update(script))
         except Exception as e:
@@ -832,6 +945,7 @@ class DubbingPipeline:
         all_drafts_by_lang = {}
         for lang in self.target_langs:
             logger.info(f"--- PREPARING DRAFTS FOR LANGUAGE: {lang} ---")
+            self._prepare_terms(script, lang, task_id)
             t_start_draft = time.perf_counter()
             draft_segments = self.llm_manager.generate_drafts(script, lang, self.speaker_info, self.global_context)
             if TRANSLATION_REVIEW:
@@ -913,15 +1027,53 @@ class DubbingPipeline:
 
         return all_audio_tracks
 
-    def _check_genders(self, refs: Dict[str, List[str]]):
-        """The speaker's measured pitch overrules the gender the LLM guessed from names (Spec 002, 2.3).
+    def _grammar_genders(self, script) -> Dict[str, str]:
+        """Speaker -> gender told by the first-person forms of its target-language subtitles (Spec 001, 2.3)."""
+        out: Dict[str, str] = {}
+        if not script:
+            return out
+        for lang in self.target_langs:
+            texts: Dict[str, List[str]] = {}
+            for s in script or []:
+                sub = (s.get("subtitles") or {}).get(lang)
+                if sub:
+                    texts.setdefault(s["speaker"], []).append(sub)
+            for spk, lines in texts.items():
+                gender = grammar_gender(lines, lang)
+                if gender and spk not in out:
+                    out[spk] = gender
+        return out
+
+    def _set_measured_gender(self, spk: str, gender: str, why: str, pitch: Optional[float] = None):
+        info = self.speaker_info.setdefault(spk, {})
+        guessed = info.get("gender")
+        if guessed != gender:
+            logger.info(f"Speaker {spk}: {why}, so {gender} (the analysis said '{guessed}')")
+            # The analysis took this speaker for someone else: "Jenny Taft (male)" makes the translator use
+            # feminine forms for a man
+            if guessed in ("male", "female") and info.get("name"):
+                logger.info(f"Speaker {spk}: dropping the name '{info['name']}', which belongs to a {guessed} person")
+                info["name"] = ""
+        info["gender"] = gender
+        info["gender_measured"] = True
+        if pitch:
+            info["gender_hz"] = round(pitch)
+
+    def _check_genders(self, refs: Dict[str, List[str]], script=None):
+        """The gender told by the subtitles' grammar, else by the measured pitch, overrules the LLM's guess from names
+        (Spec 001, 2.3; Spec 002, 2.3).
 
         The LLM names speakers from the cast list and can give the play-by-play man the name and gender of the
         sideline reporter; the designed voice and the series memory would then carry a woman's voice for him.
         """
+        grammar = self._grammar_genders(script)
+        for spk, gender in grammar.items():
+            self._set_measured_gender(spk, gender, "the subtitles' grammar says so")
         if MOCK_MODE:
             return
         for spk, paths in refs.items():
+            if spk in grammar:
+                continue
             gender, pitch = pitch_gender(list(paths or [])[:REF_AUDITION_CANDIDATES])
             info = self.speaker_info.setdefault(spk, {})
             if not gender:
@@ -930,17 +1082,7 @@ class DubbingPipeline:
                         f"Speaker {spk}: pitch {pitch:.0f} Hz does not tell the gender, keeping '{info.get('gender')}'"
                     )
                 continue
-            guessed = info.get("gender")
-            if guessed != gender:
-                logger.info(f"Speaker {spk}: pitch {pitch:.0f} Hz, so {gender} (the analysis said '{guessed}')")
-                # The analysis took this speaker for someone else: "Jenny Taft (male)" makes the translator use
-                # feminine forms for a man
-                if guessed in ("male", "female") and info.get("name"):
-                    logger.info(f"Speaker {spk}: dropping the name '{info['name']}', which belongs to a {guessed} person")
-                    info["name"] = ""
-            info["gender"] = gender
-            info["gender_measured"] = True
-            info["gender_hz"] = round(pitch)
+            self._set_measured_gender(spk, gender, f"pitch {pitch:.0f} Hz", pitch)
 
     def _audition_voices(self, all_drafts_by_lang):
         """Ranks each speaker's reference candidates by how intelligibly they clone (Spec 002, 2.3)."""

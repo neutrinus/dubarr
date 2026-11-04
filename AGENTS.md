@@ -53,7 +53,8 @@ src/
     worker.py              JobWorker: polls SQLite for QUEUED tasks and runs a fresh pipeline per task.
     voice_audition.py      Before Stage 5: ranks each speaker's reference clips by the take judge's score of their clones.
     take_judge.py          Judges takes without Whisper: signal artifacts, voiceprint match, CTC text match (Spec 002).
-    series_memory.py       Between episodes of a series: settled name spellings and the voice bank (Spec 006).
+    series_memory.py       Between episodes of a series: settled name spellings, terms and the voice bank (Spec 006).
+    subtitles.py           Sidecar/embedded subtitles: cues, alignment to lines, missing speech, SDH names, gender from grammar.
     report.py              Per-line production report: summary in the log, report_<lang>.tsv in the debug folder.
   infrastructure/
     database.py            SQLite: `tasks` queue + `job_steps` (cached JSON results per stage).

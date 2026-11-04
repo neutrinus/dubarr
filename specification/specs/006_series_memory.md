@@ -11,7 +11,7 @@ Implemented in `src/core/series_memory.py`; used by Stage 3 (glossary), Stage 4 
 -   `SERIES_MEMORY` (`on` by default; `off` disables reading and writing).
 -   Folder `DATA_DIR/series/<key>/`, where `<key>` is the series title from the media metadata (Spec 001, 2.2b),
     lower-cased, with everything but letters and digits replaced by `-` (`battlebots`). Movies have no series memory.
--   `glossary.json`, `voices.json` and `clips/`. Files are written atomically (temp file + rename) at the end of a
+-   `glossary.json`, `terms.json`, `voices.json` and `clips/`. Files are written atomically (temp file + rename) at the end of a
     successful task; a failed task leaves the memory as it was.
 -   Two tasks of the same series never run at the same time (the worker runs one task at a time).
 
@@ -87,7 +87,26 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
     new one): the voiceprint is averaged (weighted by episodes), the profile is filled where it was empty, and the
     episode's audited clips compete for the bank's slots.
 
-## 5. Configuration
+## 5. Terms
+Names and terms that the target language translates rather than pronounces (`Starfleet` -> `Gwiezdna Flota`,
+`phaser` -> `fazer`, ranks, titles, ship and place names). A human translation knows them; the LLM guesses them anew in
+every episode.
+
+1.  **From the episode's subtitles.** When the episode has target-language subtitles (Spec 001, 2.3), the LLM reads the
+    script lines next to their aligned subtitles, in chunks of 60 lines, and lists the pairs that the subtitles
+    translate: proper names, titles, ranks, ship, place and organisation names, technical and invented terms. Not
+    common words, and not names the subtitles leave as they are (those belong to the glossary, 3). A pair is kept only
+    when the target term occurs in the subtitles and the source term in the script.
+2.  **`terms.json`** maps `{lang: {term: {"translation": str, "episodes": int}}}`, per target language. After a
+    successful task the episode's terms are added; a term the subtitles of this episode translate differently replaces
+    the stored one (the latest human translation wins), and every term seen again is counted.
+3.  **Forms of address.** The same request lists how one named speaker addresses another in the subtitles
+    (`Spock -> Kirk: formal, "kapitanie", "pan"`). They are stored next to the terms (`address`), the latest episode
+    winning, and given to the translator with the terms.
+4.  **Use.** Every episode gets the stored terms, with the terms of its own subtitles on top, for the translation
+    (Spec 001, 2.5a), so an episode without subtitles uses the names of the episodes that had them.
+
+## 6. Configuration
 -   `SERIES_MEMORY` (on): series glossary and voice bank.
 -   `GLOSSARY_MODE` (respell): `respell` (phonetic spelling with the reading test) or `phonemes` (CMU phonemes).
 -   `VOICE_MATCH_MIN` (0.6): voiceprint similarity from which a speaker is a known person. To be tuned on measured runs.

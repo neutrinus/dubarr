@@ -114,10 +114,20 @@ ABOUT THE VIDEO:
 GLOSSARY:
 {glossary}
 
+TERMS (established {lang_name} translations of names and terms of this show; always use them, inflected as needed):
+{terms}
+
+FORMS OF ADDRESS (how these speakers address each other in the show's {lang_name} subtitles; keep them):
+{address}
+
 INPUT (JSON):
 - "previous": lines just before, with their final translations. Read-only: keep terms, forms of address and style consistent.
 - "translate": the lines to translate. Each has "id", "speaker", optional "speaker_gender", "text" and a syllable
-  budget: "min_syllables", "target_syllables", "max_syllables" (spoken syllables in {lang_name}).
+  budget: "min_syllables", "target_syllables", "max_syllables" (spoken syllables in {lang_name}). It may have a
+  "subtitle": what the show's {lang_name} subtitles say during this line. They are a human translation: follow their
+  names, terms, forms of address and gendered forms, and reuse their wording where it fits. But they are shortened
+  for reading and timed differently, so they may miss information of "text" or carry part of a neighbouring line:
+  "text" decides the content, the syllable budget decides the length.
 - "next": the lines that follow. Read-only: use them to understand where a sentence is going.
 
 RULES:
@@ -133,7 +143,8 @@ RULES:
    a woman). Keep the tone, register and terminology of the show.
 6. UNIT CONVERSION: convert imperial units (miles, pounds, feet) to metric (kilometers, kilograms, meters), with
    natural rounded values.
-7. Follow the GLOSSARY. Write natural {lang_name}; never leave a line in the source language.
+7. Follow the GLOSSARY and the TERMS. A name in TERMS is translated, not respelled. Write natural {lang_name}; never
+   leave a line in the source language.
 8. Return every id of "translate" exactly once.
 9. For each line also give two LENGTH VARIANTS with the same meaning: "short" (towards "min_syllables": only the
    essentials, still a natural sentence) and "long" (towards "max_syllables": fuller, more natural phrasing; never
@@ -157,13 +168,21 @@ ABOUT THE VIDEO:
 GLOSSARY:
 {glossary}
 
-INPUT (JSON): "lines", each with "id", "speaker", "source", "translation" and "max_syllables".
+TERMS (established translations; the translation must use them):
+{terms}
+
+FORMS OF ADDRESS:
+{address}
+
+INPUT (JSON): "lines", each with "id", "speaker", "source", "translation", "max_syllables" and optionally "subtitle"
+(the show's own {lang_name} subtitle at that time: a shortened human translation, a reference for names, terms,
+forms of address and gender forms, not for completeness).
 
 CHECK, reading all lines together as one text:
 1. MISSING: information of the source (names, numbers, results, reasons, actions, who does what) that is in no
    translation line of that speaker nearby.
 2. WRONG: mistranslations, wrong gender forms, a line left in the source language, duplicated content (the same
-   information said twice in neighbouring lines).
+   information said twice in neighbouring lines), a name or term that differs from TERMS or from the subtitle.
 Fix only real problems. A fix must stay within "max_syllables" of its line; to make room, drop fillers or move
 information to a neighbouring line of the same speaker (and fix that line too).
 
@@ -197,6 +216,9 @@ CONTEXT:
 GLOSSARY (Use strict phonetic spelling for names):
 {glossary}
 
+TERMS (established translations, always use them):
+{terms}
+
 CRITICAL RULES:
 1. DO NOT SACRIFICE GRAMMAR FOR BREVITY. (Example: "na rampa" is WRONG, "na rampę" is RIGHT).
 2. Maintain the tone and flow of the surrounding context, and grammatical forms matching the speaker's gender.
@@ -213,5 +235,27 @@ OUTPUT FORMAT (JSON ONLY):
 {{
   "thought": "Brief reasoning",
   "final_text": "Rewritten text here"
+}}
+"""
+
+
+T_TERMS = """You compare a video's script with the show's official {lang_name} subtitles.
+
+INPUT (JSON): "lines", each with "speaker", "source" (what is said, in the original language) and "subtitle" (the
+{lang_name} subtitle shown at that time; a human translation, shortened and not always aligned exactly).
+
+TASK:
+1. "terms": every proper name, title, rank, ship, place or organisation name, and technical or invented term of the
+   show that the subtitles TRANSLATE, as {{"source term": "{lang_name} term in its base form (nominative)"}}. For
+   example "Starfleet": "Gwiezdna Flota". Leave out common words and names the subtitles keep unchanged ("Spock").
+   Only pairs you can see in these lines.
+2. "address": how one speaker addresses another in the subtitles, where it shows: a list of {{"speaker": "...",
+   "addressee": "...", "form": "formal or informal, with the words used, e.g. formal: 'kapitanie', 'pan'"}}. Use the
+   speaker names of the input; "addressee" is the person spoken to, as far as the lines tell.
+
+OUTPUT FORMAT (JSON):
+{{
+  "terms": {{"Starfleet": "Gwiezdna Flota"}},
+  "address": [{{"speaker": "Spock", "addressee": "Kirk", "form": "formal: 'kapitanie'"}}]
 }}
 """
