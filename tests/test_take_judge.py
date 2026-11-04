@@ -74,15 +74,18 @@ class TestJudge(unittest.TestCase):
     def test_sound_take(self):
         with (
             patch.object(self.judge, "voice_match", return_value=0.82),
-            patch.object(self.judge, "text_match", return_value=0.9),
+            patch.object(self.judge, "text_reading", return_value=(0.9, "ajs łejw próbuje zachować dystans")),
         ):
             res = self.judge.judge(self.text, self.path, "pl", "ref.wav")
-        self.assertEqual(res, {"score": 0.9, "problem": None, "voice": 0.82, "text_match": 0.9})
+        self.assertEqual(res["score"], 0.9)
+        self.assertEqual(res["text_match"], 0.9)
+        self.assertEqual(res["ctc_heard"], "ajs łejw próbuje zachować dystans")
+        self.assertIsNone(res["problem"])
 
     def test_wrong_voice_halves_the_score(self):
         with (
             patch.object(self.judge, "voice_match", return_value=0.2),
-            patch.object(self.judge, "text_match", return_value=0.9),
+            patch.object(self.judge, "text_reading", return_value=(0.9, "ajs łejw próbuje zachować dystans")),
         ):
             res = self.judge.judge(self.text, self.path, "pl", "ref.wav")
         self.assertIn("WRONG VOICE", res["problem"])
@@ -91,7 +94,7 @@ class TestJudge(unittest.TestCase):
     def test_unintelligible(self):
         with (
             patch.object(self.judge, "voice_match", return_value=0.8),
-            patch.object(self.judge, "text_match", return_value=0.1),
+            patch.object(self.judge, "text_reading", return_value=(0.1, "ciety pary")),
         ):
             res = self.judge.judge(self.text, self.path, "pl", "ref.wav")
         self.assertIn("UNINTELLIGIBLE", res["problem"])
@@ -102,9 +105,9 @@ class TestJudge(unittest.TestCase):
         self.assertEqual(res, {"score": 1.0, "problem": None, "voice": None, "text_match": None})
 
     def test_interjections_skip_the_text_match(self):
-        with patch.object(self.judge, "text_match") as text_match:
+        with patch.object(self.judge, "text_reading") as text_reading:
             self.judge.judge("Wow!", self.path, "pl")
-        text_match.assert_not_called()
+        text_reading.assert_not_called()
 
     def test_signal_only(self):
         judge = TakeJudge(signal_only=True)

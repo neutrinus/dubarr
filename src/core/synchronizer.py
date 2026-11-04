@@ -69,7 +69,13 @@ class SegmentSynchronizer:
             except Exception as e:
                 logger.warning(f"Take judge failed: {e}")
                 verdict = {"score": 1.0, "problem": None, "voice": None, "text_match": None}
-            result = dict(result, score=verdict["score"], voice_match=verdict["voice"], text_match=verdict["text_match"])
+            result = dict(
+                result,
+                score=verdict["score"],
+                voice_match=verdict["voice"],
+                text_match=verdict["text_match"],
+                ctc_heard=verdict.get("ctc_heard"),
+            )
             if verdict["problem"]:
                 problem = (verdict["score"], verdict["problem"])
         # What Whisper hears (interjections are spelled too freely to compare): a measurement next to the judge, and
@@ -257,6 +263,7 @@ class SegmentSynchronizer:
                     "score": result.get("score"),
                     "voice_match": result.get("voice_match"),
                     "text_match": result.get("text_match"),
+                    "ctc_heard": result.get("ctc_heard"),
                 }
             )
 
@@ -400,6 +407,7 @@ class SegmentSynchronizer:
             "score": attempt.get("score"),
             "voice_match": attempt.get("voice_match"),
             "text_match": attempt.get("text_match"),
+            "ctc_heard": attempt.get("ctc_heard"),
             "attempts": count,
         }
 

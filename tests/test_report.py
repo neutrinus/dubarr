@@ -17,6 +17,7 @@ RESULTS = [
         "voice_type": "GOLDEN",
         "similarity": 0.91,
         "heard": "I niebieski kwadrat",
+        "ctc_heard": "i niebieski kwadra",
         "attempts": 2,
     },
     {"index": 0, "duration": 1.8, "status": "ACCEPTED", "final_text": "Cześć.", "voice_type": "DYNAMIC", "attempts": 1},
@@ -32,6 +33,8 @@ class TestReport(unittest.TestCase):
         self.assertEqual(rows[1]["start"], "01:05.50")
         self.assertEqual(rows[1]["similarity"], "0.91")
         self.assertEqual(rows[0]["similarity"], "")
+        self.assertEqual(rows[1]["ctc_heard"], "i niebieski kwadra")
+        self.assertEqual(rows[0]["ctc_heard"], "")
 
     def test_summary(self):
         text = summary(report_rows(SCRIPT, RESULTS))
