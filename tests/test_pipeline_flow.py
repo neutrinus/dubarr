@@ -72,11 +72,15 @@ class TestProcessVideoMock(unittest.TestCase):
         shutil.rmtree(self.workdir, ignore_errors=True)
 
     def test_adds_one_track_per_language_and_keeps_original(self):
-        build_pipeline(["pl", "de"], self.workdir).process_video(self.clip)
+        pipeline = build_pipeline(["pl", "de"], self.workdir)
+        pipeline.process_video(self.clip)
 
         audio = audio_streams(self.clip)
         tracks = {s["tags"].get("title"): s["tags"].get("language") for s in audio}
         self.assertEqual(len(audio), 3)
+        # Dubbed tracks are AAC (plays in browsers and on phones), the original is copied
+        self.assertEqual([s["codec_name"] for s in audio], ["aac", "aac", "aac"])
+        self.assertEqual(sorted(pipeline.placed_segments), ["de", "pl"])
         self.assertEqual(tracks.get("AI - Polish"), "pl")
         self.assertEqual(tracks.get("AI - German"), "de")
         self.assertIn("eng", tracks.values())
@@ -231,7 +235,7 @@ class TestFinalizeLanguages(unittest.TestCase):
         ]
         tracks, _, clips = self._finalize(items)
 
-        self.assertEqual(tracks, [(os.path.join(self.pipeline.temp_dir, "final_pl.ac3"), "pl", "Polish")])
+        self.assertEqual(tracks, [(os.path.join(self.pipeline.temp_dir, "final_pl.wav"), "pl", "Polish")])
         first_end = clips[0][1] + clips[0][2]
         self.assertAlmostEqual(clips[1][1], first_end)
 

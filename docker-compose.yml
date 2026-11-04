@@ -31,6 +31,7 @@ services:
       - LLM_API_URL=${LLM_API_URL:-}
       # Show/movie context for the translator: "on" (.nfo + TVmaze/TMDB), "local" (.nfo only) or "off"
       - METADATA_LOOKUP=${METADATA_LOOKUP:-on}
+      - AUDIO_CODEC=${AUDIO_CODEC:-aac}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - DEBUG=${DEBUG:-0}
       - VERBOSE=${VERBOSE:-0}

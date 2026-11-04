@@ -74,6 +74,7 @@ class AIDubber:
             debug_mode=self.debug_mode,
         )
         pipeline.process_video(f, task_id=task_id)
+        return pipeline
 
     def run(self):
         """Main loop for scanning the video folder."""

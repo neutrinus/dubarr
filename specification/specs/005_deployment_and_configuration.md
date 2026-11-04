@@ -61,6 +61,7 @@ Configuration is managed strictly through **Environment Variables**. This follow
 | `LLM_API_URL` | Base URL of an OpenAI-compatible server (e.g. llama.cpp `llama-server`, `http://host:8080/v1`). When set, no LLM is loaded in-process and its VRAM stays free. | - |
 | `LLM_API_MODEL` / `LLM_API_KEY` | Model name and key sent to that server (llama-server ignores both). | - |
 | `LLM_TIMEOUT` | Seconds per request to the LLM server. | `600` |
+| `AUDIO_CODEC` / `AUDIO_BITRATE` | Codec of the dubbed tracks: `aac` (plays in browsers, on Android and TVs), `ac3`, `eac3` or `opus`, and its bitrate. Original tracks are copied. | `aac` / `192k` |
 | `METADATA_LOOKUP` | Show/movie context for the LLM: `on` (`.nfo` files next to the video, then TVmaze for episodes and TMDB for movies), `local` (`.nfo` only), `off`. | `on` |
 | `TMDB_API_KEY` | Optional TMDB API key (v3 key or v4 read token) for movie metadata. Episodes use TVmaze, which needs no account. | - |
 | `METADATA_TIMEOUT` | Seconds per metadata request. | `10` |

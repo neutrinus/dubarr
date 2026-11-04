@@ -70,6 +70,11 @@ if os.environ.get("TTS_BACKEND", "omnivoice").lower() != "omnivoice":
     print("WARNING: TTS_BACKEND is no longer used, XTTS was removed; OmniVoice is the only TTS backend.", flush=True)
 OMNIVOICE_PYTHON = os.environ.get("OMNIVOICE_PYTHON", sys.executable)
 
+# Codec and bitrate of the dubbed tracks: aac (default, plays in browsers and on phones), ac3, eac3 or opus.
+# The original audio tracks are copied unchanged.
+AUDIO_CODEC = os.environ.get("AUDIO_CODEC", "aac").lower()
+AUDIO_BITRATE = os.environ.get("AUDIO_BITRATE", "192k")
+
 # Media metadata (show/episode or movie, synopsis, cast) as context for the translator.
 # "on": .nfo files next to the video, then TVmaze (episodes, no account) / TMDB (movies, needs TMDB_API_KEY);
 # "local": .nfo files only; "off": no lookup. Online lookups are skipped in MOCK_MODE.
