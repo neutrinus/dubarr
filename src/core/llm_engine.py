@@ -14,6 +14,7 @@ from utils import (
     respelling_heard_as,
     clean_arpabet,
     check_polish_spelling,
+    strip_title,
 )
 from prompts import (
     T_ANALYSIS,
@@ -402,6 +403,9 @@ class LLMManager:
         speaker_info = analysis.get("speakers", {})
         glossary = global_context.get("glossary")
         glossary = glossary if isinstance(glossary, dict) else {}
+        # Ranks are translated, not respelled: "Captain James Tiberius Kirk" became "Kapten Dzejms Tajberius Kark"
+        glossary = dict(strip_title(str(t), str(sp)) for t, sp in glossary.items() if isinstance(sp, (str, int, float)))
+        global_context["glossary"] = glossary
         if GLOSSARY_MODE == "phonemes":
             # The translation keeps the original names; the TTS gets their English phonemes
             names_only = {str(t): str(t) for t in list(glossary) + list(fixed_phonemes or {})}

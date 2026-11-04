@@ -20,6 +20,8 @@ Analyze the movie script provided by the user. Return A SINGLE JSON object conta
    - In Polish the English "w" is written "ł" and the English "v" is written "w": 'Warhead' -> 'Łorhed',
      'Ice Wave' -> 'Ajs Łejw', 'Beaver' -> 'Biwer'. A Polish "w" is read as "v".
    - Keep EVERY consonant sound of the original: a spelling that drops one names something else.
+   - Keep the stressed vowels too: 'Kirk' -> 'Kirk' or 'Kerk', never 'Kark'.
+   - Names only, without ranks or titles ('Captain', 'Lt.', 'Dr.', 'Mr.'): those are translated, not respelled.
    - This is crucial for the TTS engine to pronounce them correctly. Words that are translated do not belong here.
    - Include the entries of the FIXED GLOSSARY that occur in the script, unchanged.
 3. 'speakers': A dictionary where keys are speaker IDs (e.g. SPEAKER_00) and values are objects with:

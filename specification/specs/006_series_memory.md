@@ -45,11 +45,16 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
     standing for an English W becomes `ł` in place, and an `ł` for an English V becomes `w` ("Ajs Wejv" ->
     "Ajs Łejv", "Worehed" -> "Łorehed"): the model wrote `w` for W in nearly every name of the first measured run,
     and its own reading test passed them. Then one lost or changed consonant per six may remain, W read as V
-    never. A failed spelling is respelled as in 4, the respelling prompt carrying the Polish rules (English w is
+    never. Every stressed vowel (stress 1) must also be read as a vowel that can carry it, looked up between the
+    spelling's letters of the consonants around it: ER as `e`/`y`/`i`/`o`/`u`, never `a` ("Kirk" was respelled
+    "Kark" on Star Trek S01E01 and passed the consonant check). A failed spelling is respelled as in 4, the respelling prompt carrying the Polish rules (English w is
     `ł`, v is `w`, sh `sz`, ch `cz`, j `dż`, y `j`, th `t` or `f`) and what was lost. Stored spellings go through
     this check too; one that changes or fails is replaced in the memory. Names without phonemes, and other target
     languages, keep the LLM reading test of 4.
-6.  Acronyms of up to 6 capitals (`S.T.C.W.R.`) skip the test. Only checked entries are stored. A stored entry counts
+6.  **Names, not ranks.** A leading rank or title (`Captain`, `Lt.`, `Dr.`, `Mr.`, ...) is cut from a term and the
+    same number of words from its spelling ("Captain James Tiberius Kirk" -> "James Tiberius Kirk"): the translator
+    translates ranks ("kapitanie", "porucznik"), and respelling them gave "Kapten" and "Letnant".
+    Acronyms of up to 6 capitals (`S.T.C.W.R.`) skip the test. Only checked entries are stored. A stored entry counts
     the episodes that used it.
 
 7.  **Phonemes instead** (`GLOSSARY_MODE=phonemes`, an experiment): the translation keeps the original names, the
