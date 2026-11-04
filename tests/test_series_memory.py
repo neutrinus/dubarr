@@ -95,12 +95,20 @@ class TestVoiceBank(unittest.TestCase):
 
     def test_a_measured_gender_replaces_a_guessed_one(self):
         self.first_episode()
+        # A guess replaces a guess: the shouting man stored as a woman is not kept forever
         profile = {"name": "Jenny Taft", "gender": "female", "gender_measured": False}
         self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": profile, "clips": []}})
-        self.assertEqual(self.mem.persons()["V001"]["gender"], "male")  # a guess does not overwrite
-        profile = {"gender": "female", "gender_measured": True}
-        self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": profile, "clips": []}})
         self.assertEqual(self.mem.persons()["V001"]["gender"], "female")
+        profile = {"gender": "male", "gender_measured": True, "gender_hz": 141}
+        self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": profile, "clips": []}})
+        person = self.mem.persons()["V001"]
+        self.assertEqual((person["gender"], person["gender_hz"]), ("male", 141))
+        self.assertNotIn("name", person)  # "Host" was stored under a woman's gender: someone else's name
+        # A measured gender is not replaced by a guess
+        profile = {"name": "Chris Rose", "gender": "female", "gender_measured": False}
+        self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": profile, "clips": []}})
+        person = self.mem.persons()["V001"]
+        self.assertEqual((person["gender"], person["name"]), ("male", "Chris Rose"))
 
     def test_a_cleaner_clip_wins_between_equal_scores(self):
         self.first_episode()
@@ -129,12 +137,16 @@ class TestVoiceBank(unittest.TestCase):
 
     def test_hints_and_settled_gender(self):
         self.first_episode()
-        self.assertIn("SPEAKER_03 is probably Host, male, commentator", self.mem.hints({"SPEAKER_03": "V001"}))
-        self.assertEqual(self.mem.settled_genders({"SPEAKER_03": "V001"}), {})  # one episode is not enough
+        # A guessed gender is neither repeated to the analysis nor settled
+        self.assertIn("SPEAKER_03 is probably Host, commentator", self.mem.hints({"SPEAKER_03": "V001"}))
         self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": [0.9, 0.1, 0.0], "profile": {}, "clips": []}})
-        self.assertEqual(self.mem.settled_genders({"SPEAKER_03": "V001"}), {"SPEAKER_03": "male"})
+        self.assertEqual(self.mem.settled_genders({"SPEAKER_03": "V001"}), {})
         self.assertEqual(self.mem.persons()["V001"]["episodes"], 2)
         self.assertAlmostEqual(self.mem.persons()["V001"]["print"][0], 0.95)
+        measured = {"gender": "male", "gender_measured": True, "gender_hz": 130}
+        self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": measured, "clips": []}})
+        self.assertIn("SPEAKER_03 is probably Host, male, commentator", self.mem.hints({"SPEAKER_03": "V001"}))
+        self.assertEqual(self.mem.settled_genders({"SPEAKER_03": "V001"}), {"SPEAKER_03": "male"})
 
     def test_only_the_best_clips_are_kept(self):
         self.first_episode()

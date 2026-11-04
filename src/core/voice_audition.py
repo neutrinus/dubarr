@@ -91,9 +91,11 @@ def design_text(drafts: List[Dict], speaker: str, lang: str, avoid: Optional[str
     return " ".join(picked) if total >= MIN_AUDITION_SYLLABLES else None
 
 
-# Speaking pitch (median F0 of calm speech): men mostly 85-155 Hz, women 165-255 Hz; between the two, no verdict
+# Speaking pitch (median F0 of calm speech): men mostly 85-155 Hz, women 165-255 Hz; between the two, no verdict.
+# A man shouting over the arena reaches 290-320 Hz (S01E03), so above the calm female range there is no verdict either.
 PITCH_MALE_MAX = 160.0
-PITCH_FEMALE_MIN = 180.0
+PITCH_FEMALE_MIN = 200.0
+PITCH_FEMALE_MAX = 265.0
 PITCH_MIN_FRAMES = 20  # voiced 10 ms frames needed for a verdict
 
 
@@ -136,7 +138,7 @@ def median_pitch(samples, rate: int, fmin: float = 60.0, fmax: float = 400.0) ->
 
 
 def pitch_gender(paths: List[str]) -> Tuple[Optional[str], Optional[float]]:
-    """("male" | "female" | None, median pitch) of a speaker's reference clips; None when the pitch is in between."""
+    """("male" | "female" | None, median pitch) of a speaker's reference clips; None when the pitch does not tell."""
     from core.take_judge import read_wav_mono
 
     pitches = []
@@ -150,7 +152,7 @@ def pitch_gender(paths: List[str]) -> Tuple[Optional[str], Optional[float]]:
     pitch = float(np.median(pitches))
     if pitch <= PITCH_MALE_MAX:
         return "male", pitch
-    if pitch >= PITCH_FEMALE_MIN:
+    if PITCH_FEMALE_MIN <= pitch <= PITCH_FEMALE_MAX:
         return "female", pitch
     return None, pitch
 

@@ -801,6 +801,7 @@ class DubbingPipeline:
                     "gender": info.get("gender"),
                     "desc": info.get("desc"),
                     "gender_measured": bool(info.get("gender_measured")),
+                    "gender_hz": info.get("gender_hz"),
                 },
                 "clips": [
                     (p, audition.get(p), (getattr(self, "ref_quality", None) or {}).get(p))
@@ -924,11 +925,22 @@ class DubbingPipeline:
             gender, pitch = pitch_gender(list(paths or [])[:REF_AUDITION_CANDIDATES])
             info = self.speaker_info.setdefault(spk, {})
             if not gender:
+                if pitch:
+                    logger.info(
+                        f"Speaker {spk}: pitch {pitch:.0f} Hz does not tell the gender, keeping '{info.get('gender')}'"
+                    )
                 continue
-            if info.get("gender") != gender:
-                logger.info(f"Speaker {spk}: pitch {pitch:.0f} Hz, so {gender} (the analysis said '{info.get('gender')}')")
+            guessed = info.get("gender")
+            if guessed != gender:
+                logger.info(f"Speaker {spk}: pitch {pitch:.0f} Hz, so {gender} (the analysis said '{guessed}')")
+                # The analysis took this speaker for someone else: "Jenny Taft (male)" makes the translator use
+                # feminine forms for a man
+                if guessed in ("male", "female") and info.get("name"):
+                    logger.info(f"Speaker {spk}: dropping the name '{info['name']}', which belongs to a {guessed} person")
+                    info["name"] = ""
             info["gender"] = gender
             info["gender_measured"] = True
+            info["gender_hz"] = round(pitch)
 
     def _audition_voices(self, all_drafts_by_lang):
         """Ranks each speaker's reference candidates by how intelligibly they clone (Spec 002, 2.3)."""

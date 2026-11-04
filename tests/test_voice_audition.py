@@ -182,4 +182,6 @@ class TestPitchGender(unittest.TestCase):
         self.assertEqual(pitch_gender([self.wav(voiced(115.0)), self.wav(voiced(125.0))])[0], "male")
         self.assertEqual(pitch_gender([self.wav(voiced(210.0))])[0], "female")
         self.assertEqual(pitch_gender([self.wav(voiced(170.0))])[0], None)  # in between: the profile stays
+        # E03: the play-by-play man shouting over the arena, 319 Hz; excitement, not a woman
+        self.assertEqual(pitch_gender([self.wav(voiced(310.0))])[0], None)
         self.assertEqual(pitch_gender(["missing.wav"]), (None, None))
