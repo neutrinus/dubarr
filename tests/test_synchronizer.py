@@ -383,8 +383,17 @@ class TestTakeCheck(unittest.TestCase):
         self.assertEqual(drop({"score": 0.1, "text_match": 0.6}), 0.6)
         self.assertEqual(drop({"score": 0.0}), 0.0)  # swallowed or artifacts: nothing was heard
 
-    def test_a_barely_intelligible_take_is_kept_rather_than_dropped(self):
+    def test_a_gibberish_take_is_dropped(self):
+        # Star Trek S01E01: every fallback at 0.31-0.44 was Polish-sounding gibberish; the original beats it
         self.judge.verdicts = [verdict(0.1, "U"), verdict(0.4, "U"), verdict(0.1, "U")]
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([3.8, 3.8, 3.8])
+
+        self.assertEqual(res["status"], "DROPPED")
+
+    def test_a_barely_intelligible_take_is_kept_rather_than_dropped(self):
+        self.judge.verdicts = [verdict(0.1, "U"), verdict(0.55, "U"), verdict(0.1, "U")]
         self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
 
         res = self.run_segment([3.8, 3.8, 3.8])

@@ -160,7 +160,7 @@ TAKE_MIN_SIMILARITY = float(os.environ.get("TAKE_MIN_SIMILARITY", "0.7"))
 # CPU threads of the take-check model; faster-whisper uses 4 unless told otherwise
 TAKE_CHECK_THREADS = max(1, int(os.environ.get("TAKE_CHECK_THREADS", str(os.cpu_count() or 4))))
 # A line whose every take is broken below this is left undubbed: the original beats gibberish
-TAKE_DROP_SIMILARITY = float(os.environ.get("TAKE_DROP_SIMILARITY", "0.3"))
+TAKE_DROP_SIMILARITY = float(os.environ.get("TAKE_DROP_SIMILARITY", "0.5"))
 # Voice audition (Spec 002, 2.3): reference candidates kept per speaker, and the score a speaker needs to use line clips
 REF_AUDITION_CANDIDATES = max(1, int(os.environ.get("REF_AUDITION_CANDIDATES", "3")))
 AUDITION_LINE_REF_MIN = float(os.environ.get("AUDITION_LINE_REF_MIN", "0.8"))

@@ -173,7 +173,7 @@ why the image used to need separate venvs.
 | `EMOTION_REFS` | `on` | Every line gets an energy class (calm / lively / shout, relative to its speaker's level, pitch and pace); reference clips are picked per class and a line starts from a clip of its own class. |
 | `SHOUT_MERGE_MIN` | `0.3` | A shouting cluster joins the same person's calm one when the LLM names them alike, it is ≥3 dB louder and ≥3 semitones higher, no measured gender differs and the voiceprints are at least this alike. |
 | `VOICE_BANK_CLASS_CLIPS` | `2` | Series voice bank clips kept per energy class (with `EMOTION_REFS`). |
-| `TAKE_DROP_SIMILARITY` | `0.3` | A line whose every take is broken and unintelligible below this (the better of the CTC text match and the Whisper similarity; a wrong voice alone never drops a line) is left undubbed (the original stays audible). |
+| `TAKE_DROP_SIMILARITY` | `0.5` | A line whose every take is broken and unintelligible below this (the better of the CTC text match and the Whisper similarity; a wrong voice alone never drops a line) is left undubbed (the original stays audible). |
 | `REF_AUDITION_CANDIDATES` / `AUDITION_LINE_REF_MIN` | `3` / `0.8` | Reference clips kept per speaker for the voice audition; a speaker scoring below this does not clone from line clips. |
 | `TAKE_CHECK_DEVICE` | `cpu` | Where the Whisper of `TAKE_CHECK=whisper` runs. `auto` uses a GPU only with 8.5 GB free; on the TTS card it starves OmniVoice. |
 | `TAKE_CHECK_THREADS` | all cores | CPU threads of that Whisper (faster-whisper would use 4). |
