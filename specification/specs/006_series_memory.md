@@ -72,7 +72,8 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
     commentators must not merge). Two speakers that match the same person are merged into one speaker before the script
     is built, so a person split by the diarization speaks with one voice. A speaker without a match is new.
 4.  **Profiles.** The analysis gets the matched persons as hints ("SPEAKER_03 is probably <name>, male, commentator,
-    known from 4 episodes"). A gender known from at least 2 episodes is not guessed again.
+    known from 4 episodes"). A gender known from at least 2 episodes is not guessed again; a gender measured from the voice's pitch (Spec 002,
+    2.3) overrules it and replaces the stored one.
 5.  **References.** A matched speaker's bank clips join its reference candidates (Spec 001, 2.4) before the voice
     audition, which ranks all of them as usual: the bank cannot make a speaker worse, since a better clip of this
     episode wins. A speaker who only shouts in this episode gets a calm clip from an earlier one.

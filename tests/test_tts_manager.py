@@ -224,6 +224,21 @@ class TestReferenceOrder(unittest.TestCase):
         self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.75, "designed_ann.wav": 0.95}}, 0.8)
         self.assertEqual(self.pick(), ("designed_ann.wav", "DESIGNED"))
 
+    def test_a_cloned_voice_does_not_alternate_with_the_designed_one(self):
+        # E02: Chris Rose's lines alternated between his clone and a designed woman's voice
+        self.manager.add_designed_ref("ANNOUNCER", "designed_ann.wav")
+        self.manager.apply_audition(
+            {"ANNOUNCER": {"ann1.wav": 0.9, "ann2.wav": 0.5, "ann3.wav": 0.75, "designed_ann.wav": 0.8}}, 0.8
+        )
+        order = [p for p, _ in self.manager._ref_order("ANNOUNCER")]
+        self.assertEqual(order, ["ann1.wav", "ann3.wav", "LAST_GOOD", "ann2.wav", "designed_ann.wav"])
+
+    def test_a_speaker_in_the_designed_voice_keeps_it(self):
+        self.manager.add_designed_ref("ANNOUNCER", "designed_ann.wav")
+        self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.75, "designed_ann.wav": 0.95}}, 0.7)
+        self.assertEqual(self.pick(), ("designed_ann.wav", "DESIGNED"))
+        self.assertIn("ANNOUNCER", self.manager.line_refs_off)  # no clone of the line now and then
+
     def test_weak_speaker_skips_line_clips(self):
         self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.7}}, 0.8)
         with patch.object(self.manager, "_extract_line_ref") as line_ref:

@@ -355,6 +355,13 @@ class TTSManager:
             best = max(by_path.values(), default=None)
             if best is not None and best < line_ref_min:
                 self.line_refs_off.add(spk)
+            # A speaker who speaks in the designed voice does not switch to a clone of the line now and then
+            if (
+                self.speaker_refs[spk]
+                and self.speaker_refs[spk][0] in self.designed
+                and by_path.get(self.speaker_refs[spk][0])
+            ):
+                self.line_refs_off.add(spk)
 
     def _real(self, refs: List[str]) -> List[str]:
         return [p for p in refs if p not in self.designed]
@@ -363,21 +370,31 @@ class TTSManager:
         """Every reference this speaker may use after the line clip, as (path or LAST_GOOD, voice type), in order.
 
         Only the speaker's own voice: another speaker's voice in this mouth confuses the viewer, so a speaker without
-        a clip that clones well falls back to its designed (generic) voice instead (Spec 002, 2.3).
+        a clip that clones well falls back to its designed (generic) voice instead (Spec 002, 2.3). And one voice per
+        speaker: the kind of the audition's best candidate (clips of the video, or the designed voice) comes first,
+        the other kind only after every reference of that kind, so takes of one speaker do not alternate between a
+        clone and a designed voice (of another age, or even gender) from line to line.
         """
         own = self.speaker_refs.get(spk) or []
 
+        def score(p):
+            return self.audition.get(p, 0.5 if p in self.designed else 1.0)
+
         def by_score(paths):
-            return sorted(paths, key=lambda p: -self.audition.get(p, 0.5))
+            return sorted(paths, key=lambda p: -score(p))
 
         def entry(p):
             return (p, "DESIGNED" if p in self.designed else "GOLDEN")
 
-        good = [p for p in own if self.audition.get(p, 1.0) >= TAKE_MIN_SIMILARITY]
-        weak = [p for p in own if p not in good]
+        # Only auditioned candidates decide; ties keep the Stage 4 order, which puts the designed voice last
+        heard = [p for p in own if p in self.audition]
+        designed_voice = bool(heard) and max(heard, key=lambda p: self.audition[p]) in self.designed
+        primary = [p for p in own if (p in self.designed) == designed_voice]
+        secondary = [p for p in own if p not in primary]
+        good = [p for p in primary if score(p) >= TAKE_MIN_SIMILARITY]
         order = [entry(p) for p in good] + [("LAST_GOOD", "LAST_GOOD")]
-        order += [entry(p) for p in by_score([p for p in weak if p in self.designed])]
-        order += [entry(p) for p in by_score([p for p in weak if p not in self.designed])]
+        order += [entry(p) for p in by_score([p for p in primary if p not in good])]
+        order += [entry(p) for p in by_score(secondary)]
         return order
 
     def _select_reference(self, item: Dict, vocals_path: str, lang: str = "", skip=()):

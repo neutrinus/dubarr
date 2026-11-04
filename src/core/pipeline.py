@@ -30,7 +30,7 @@ from core.report import report_rows, summary as report_summary, write_report
 from utils import clean_srt, measure_zcr, run_cmd
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
-from core.voice_audition import audition_voices, design_voices
+from core.voice_audition import audition_voices, design_voices, pitch_gender
 from core.gpu_services import LLMService, TTSService
 from core.media_context import lookup_media_info, format_media_context, format_short_context, episode_names
 from core.series_memory import SeriesMemory, merge_matched_speakers
@@ -651,6 +651,7 @@ class DubbingPipeline:
             if bank:
                 self.speaker_refs.setdefault(spk, []).extend(bank)
                 logger.info(f"Series memory: {spk} gets {len(bank)} reference clips of {pid} from earlier episodes")
+        self._check_genders(refs or {})
         genders = {spk: (info or {}).get("gender", "") for spk, info in (self.speaker_info or {}).items()}
         self.tts_manager.set_speaker_refs(self.speaker_refs, genders)
         self.tts_manager.phonemes = self.global_context.get("phonemes") or {}
@@ -755,7 +756,12 @@ class DubbingPipeline:
             update[spk] = {
                 "person": self.voice_matches.get(spk),
                 "print": self.voiceprints.get(spk),
-                "profile": {"name": info.get("name"), "gender": info.get("gender"), "desc": info.get("desc")},
+                "profile": {
+                    "name": info.get("name"),
+                    "gender": info.get("gender"),
+                    "desc": info.get("desc"),
+                    "gender_measured": bool(info.get("gender_measured")),
+                },
                 "clips": [(p, audition.get(p)) for p in refs if p not in designed and audition.get(p) is not None],
             }
         return update
@@ -861,6 +867,24 @@ class DubbingPipeline:
                 pass
 
         return all_audio_tracks
+
+    def _check_genders(self, refs: Dict[str, List[str]]):
+        """The speaker's measured pitch overrules the gender the LLM guessed from names (Spec 002, 2.3).
+
+        The LLM names speakers from the cast list and can give the play-by-play man the name and gender of the
+        sideline reporter; the designed voice and the series memory would then carry a woman's voice for him.
+        """
+        if MOCK_MODE:
+            return
+        for spk, paths in refs.items():
+            gender, pitch = pitch_gender(list(paths or [])[:REF_AUDITION_CANDIDATES])
+            info = self.speaker_info.setdefault(spk, {})
+            if not gender:
+                continue
+            if info.get("gender") != gender:
+                logger.info(f"Speaker {spk}: pitch {pitch:.0f} Hz, so {gender} (the analysis said '{info.get('gender')}')")
+            info["gender"] = gender
+            info["gender_measured"] = True
 
     def _audition_voices(self, all_drafts_by_lang):
         """Ranks each speaker's reference candidates by how intelligibly they clone (Spec 002, 2.3)."""

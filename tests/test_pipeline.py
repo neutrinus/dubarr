@@ -442,6 +442,21 @@ class TestBankUpdate(unittest.TestCase):
         self.assertEqual((update["A"]["person"], update["A"]["profile"]["name"]), ("V001", "Host"))
 
 
+class TestCheckGenders(unittest.TestCase):
+    def test_measured_pitch_overrules_the_analysis(self):
+        pipe = DubbingPipeline.__new__(DubbingPipeline)
+        pipe.speaker_info = {"SPEAKER_12": {"name": "Jenny Taft", "gender": "female"}, "SPEAKER_03": {"gender": "male"}}
+        verdicts = {"a.wav": ("male", 118.0), "b.wav": (None, 170.0)}
+        with (
+            patch("core.pipeline.MOCK_MODE", False),
+            patch("core.pipeline.pitch_gender", side_effect=lambda paths: verdicts[paths[0]]),
+        ):
+            pipe._check_genders({"SPEAKER_12": ["a.wav"], "SPEAKER_03": ["b.wav"]})
+        self.assertEqual(pipe.speaker_info["SPEAKER_12"]["gender"], "male")
+        self.assertTrue(pipe.speaker_info["SPEAKER_12"]["gender_measured"])
+        self.assertEqual(pipe.speaker_info["SPEAKER_03"], {"gender": "male"})  # in between: the guess stays
+
+
 class TestAuditionScore(unittest.TestCase):
     def test_whisper_stands_in_for_a_missing_text_check(self):
         pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])

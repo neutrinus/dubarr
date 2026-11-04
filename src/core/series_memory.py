@@ -186,10 +186,14 @@ class SeriesMemory:
                 old = person.get("print")
                 person["print"] = [round((o * n + e) / (n + 1), 6) for o, e in zip(old, emb)] if old else list(emb)
             person["episodes"] = n + 1
+            profile = info.get("profile") or {}
             for key in ("name", "gender", "desc"):
-                value = (info.get("profile") or {}).get(key)
+                value = profile.get(key)
                 if value and value != "unknown" and not person.get(key):
                     person[key] = value
+            # A gender measured from the voice's pitch replaces one the LLM guessed in an earlier episode
+            if profile.get("gender_measured") and profile.get("gender") in ("male", "female"):
+                person["gender"] = profile["gender"]
             self._merge_clips(pid, person, info.get("clips") or [])
         _write_json(self.voices_path, data)
         logger.info(f"Series memory '{self.key}': voice bank has {len(persons)} persons")
