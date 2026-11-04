@@ -154,19 +154,17 @@ class TestModels(unittest.TestCase):
         np.testing.assert_allclose(emb, [0.6, 0.8])
 
 
-class TestCtcScore(unittest.TestCase):
-    def test_fitting_text_scores_high_and_other_text_low(self):
-        torch = __import__("pytest").importorskip("torch")
-        from core.take_judge import ctc_score
+class TestCtcGreedy(unittest.TestCase):
+    def test_the_models_own_reading(self):
+        np = __import__("pytest").importorskip("numpy")
+        from core.take_judge import ctc_greedy
 
-        # 3 symbols + blank (0); frames that clearly say 1, 2, 3
-        frames = torch.full((6, 4), -10.0)
-        for i, sym in enumerate([1, 0, 2, 0, 3, 0]):
+        # blank = 0; frames say 1 1 _ 2 _ 2 3 3: repeats merge, a blank separates a doubled letter
+        frames = np.full((8, 4), -10.0)
+        for i, sym in enumerate([1, 1, 0, 2, 0, 2, 3, 3]):
             frames[i, sym] = 0.0
-        log_probs = frames.log_softmax(-1)
-        self.assertGreater(ctc_score(log_probs, [1, 2, 3], 0), 0.9)
-        self.assertLess(ctc_score(log_probs, [3, 2, 1], 0), 0.1)
-        self.assertEqual(ctc_score(log_probs[:2], [1, 2, 3], 0), 0.0)
+        self.assertEqual(ctc_greedy(frames, 0), [1, 2, 2, 3])
+        self.assertEqual(ctc_greedy(np.zeros((0, 4)), 0), [])
 
 
 if __name__ == "__main__":

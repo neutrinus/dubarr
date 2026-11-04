@@ -315,6 +315,23 @@ class TestTakeCheck(unittest.TestCase):
         self.assertIsNone(res["audio_path"])
         self.llm.refine_translation_by_duration.assert_not_called()
 
+    def test_a_wrong_voice_with_clear_words_is_not_dropped(self):
+        # E02: 109 of 139 dropped lines were heard right; the voice match halved their score below the drop line
+        wrong = {"score": 0.25, "problem": "WRONG VOICE (voice match 0.45)", "voice": 0.45, "text_match": 0.5}
+        self.judge.verdicts = [wrong] * 3
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([3.8, 3.8, 3.8])
+
+        self.assertNotEqual(res["status"], "DROPPED")
+        self.assertTrue(res["audio_path"])
+
+    def test_drop_score_is_the_better_text_measurement(self):
+        drop = SegmentSynchronizer._drop_score
+        self.assertEqual(drop({"score": 0.1, "text_match": 0.2, "similarity": 0.9}), 0.9)
+        self.assertEqual(drop({"score": 0.1, "text_match": 0.6}), 0.6)
+        self.assertEqual(drop({"score": 0.0}), 0.0)  # swallowed or artifacts: nothing was heard
+
     def test_a_barely_intelligible_take_is_kept_rather_than_dropped(self):
         self.judge.verdicts = [verdict(0.1, "U"), verdict(0.4, "U"), verdict(0.1, "U")]
         self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}

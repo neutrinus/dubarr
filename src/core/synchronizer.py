@@ -380,11 +380,15 @@ class SegmentSynchronizer:
 
     @staticmethod
     def _drop_score(attempt: Dict) -> float:
-        """How usable a broken take is: the judge score, else the Whisper similarity (0 when neither is known)."""
-        value = attempt.get("score")
-        if value is None:
-            value = attempt.get("similarity")
-        return value or 0.0
+        """How intelligible a broken take is: the better of the text match and the Whisper similarity.
+
+        Only the words decide: a take in a slightly wrong voice still beats the English original showing through.
+        Without either measurement (artifacts, swallowed, missing) the judge score; 0 when nothing is known.
+        """
+        heard = [v for v in (attempt.get("text_match"), attempt.get("similarity")) if v is not None]
+        if heard:
+            return max(heard)
+        return attempt.get("score") or 0.0
 
     @staticmethod
     def _report_fields(attempt: Dict, count: int) -> Dict:
