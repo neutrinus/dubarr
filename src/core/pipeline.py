@@ -45,7 +45,7 @@ from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
 from core.voice_audition import audition_voices, design_voices, pitch_gender
 from core.gpu_services import LLMService, TTSService
-from core.media_context import lookup_media_info, format_media_context, format_short_context, episode_names
+from core.media_context import cast_gender, lookup_media_info, format_media_context, format_short_context, episode_names
 from core.series_memory import CLIP_BEST_SECONDS, SeriesMemory, clip_quality, merge_matched_speakers
 from core.take_judge import TakeJudge
 from core import script_check
@@ -237,17 +237,52 @@ class DubbingPipeline:
         return out
 
     @staticmethod
-    def _clamp_stretched(segment):
+    def _clamp_stretched(segment, diar=None):
         """Shortens a segment whose length is far beyond what its words can take.
 
         Whisper sometimes stretches a short line over music ("Ready for battle" over 25 s); the dub would then be
-        timed against a slot nobody speaks in.
+        timed against a slot nobody speaks in. The window is put where the diarization hears speech in the segment,
+        not at its start: "That's the heart of a galaxy" was stretched over 16 s of music before it (Spec 001, 2.2a).
         """
         words = count_syllables(segment.get("text", ""), "en")
         cap = max(2.0, 1.0 + words / 3.0)
-        if segment["end"] - segment["start"] > cap:
-            segment = dict(segment, end=segment["start"] + cap)
-        return segment
+        start, end = segment["start"], segment["end"]
+        if end - start <= cap:
+            return segment
+        turns = [(max(start, d["start"]), min(end, d["end"])) for d in diar or [] if d["end"] > start and d["start"] < end]
+
+        def speech(s):
+            return sum(max(0.0, min(s + cap, b) - max(s, a)) for a, b in turns)
+
+        best = start
+        for a, b in turns:
+            for s in (a, b - cap):
+                s = min(max(start, s), end - cap)
+                if speech(s) > speech(best) + 0.05:
+                    best = s
+        if best != start:
+            logger.info(
+                f"Stretched segment: [{start:.1f}-{end:.1f}] -> [{best:.1f}-{best + cap:.1f}] '{segment.get('text', '')[:40]}'"
+            )
+        return dict(segment, start=best, end=best + cap)
+
+    @staticmethod
+    def _drop_unheard_gap_segments(trans, diar, cues):
+        """A gap-pass segment nobody is heard speaking in (no diarized speech, no subtitle cue) is a Whisper
+        hallucination over music: "We'll be right back." (Spec 001, 2.2)."""
+        kept = []
+        for t in trans:
+            if t.get("gap"):
+                dur = max(0.01, t["end"] - t["start"])
+                spoken = sum(max(0.0, min(t["end"], d["end"]) - max(t["start"], d["start"])) for d in diar or [])
+                cued = any(min(t["end"], c_end) - max(t["start"], c_start) > 0 for c_start, c_end, _ in cues or [])
+                if spoken < 0.3 * dur and not cued:
+                    logger.info(
+                        f"Whisper gap pass: dropped [{t['start']:.1f}-{t['end']:.1f}] '{t['text']}', nobody speaks there"
+                    )
+                    continue
+            kept.append(t)
+        return kept
 
     @staticmethod
     def _ends_sentence(text: str) -> bool:
@@ -298,7 +333,7 @@ class DubbingPipeline:
     def _create_script(self, diar, trans):
         raw_script = []
         for t in trans:
-            t = self._clamp_stretched(t)
+            t = self._clamp_stretched(t, diar)
             # The script check (Spec 001, 2.2c) may have moved the segment to the speaker its voice is
             spk = t.get("speaker") or self._dominant_speaker(diar, t["start"], t["end"])
             raw_script.append({**t, "speaker": spk, "parts": self._parts(t)})
@@ -879,6 +914,7 @@ class DubbingPipeline:
 
         # What is this video? (show/episode or movie, synopsis, cast) - context for the analysis and the translator
         media_info = self._run_step("Stage 2b: Media Metadata", self._lookup_media_info, task_id, vpath)
+        self.media_info = media_info or {}
         if self.debug_mode and media_info:
             with open(os.path.join(ddir, "media_info.json"), "w") as f_dbg:
                 json.dump(media_info, f_dbg, indent=2, ensure_ascii=False)
@@ -897,6 +933,7 @@ class DubbingPipeline:
             fixed_glossary = {t: t for t in fixed_phonemes}
 
         source_subs = self._source_subtitles(vpath)
+        trans = self._drop_unheard_gap_segments(trans, diar, parse_srt(source_subs) if source_subs else [])
         trans = self._add_missing_speech(trans, source_subs)
         if ASR_VERIFY:
             names = episode_names(media_info) + list(fixed_glossary or {}) + list(fixed_phonemes or {})
@@ -1284,6 +1321,14 @@ class DubbingPipeline:
                     logger.info(
                         f"Speaker {spk}: pitch {pitch:.0f} Hz does not tell the gender, keeping '{info.get('gender')}'"
                     )
+                continue
+            cast = cast_gender(getattr(self, "media_info", None) or {}, info.get("name", ""))
+            if gender == "female" and cast == "male":
+                # Shouting men and voices of animated or processed characters reach the female band; a low pitch
+                # does not happen to women, so only the male verdict overrules the cast (Star Trek: Kirk at 244 Hz)
+                logger.info(
+                    f"Speaker {spk}: pitch {pitch:.0f} Hz, but the cast says '{info.get('name')}' is male: keeping male"
+                )
                 continue
             self._set_measured_gender(spk, gender, f"pitch {pitch:.0f} Hz", pitch)
 

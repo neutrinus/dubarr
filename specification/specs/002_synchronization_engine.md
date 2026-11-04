@@ -95,7 +95,8 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
     -   **Success:** the accepted take.
     -   **Fallback (attempts exhausted):** among sound takes, the one that fits the limit and is closest to the target;
         if none fits, the shortest sound one. Broken takes are used only if nothing else exists.
-    -   **Dropped:** when every take is broken and none is intelligible to `TAKE_DROP_SIMILARITY` (default 0.3), the
+    -   **Dropped:** when every take is broken and none is intelligible to `TAKE_DROP_SIMILARITY` (default 0.5, the judge's
+        `JUDGE_MIN_TEXT`), the
         line is not dubbed (status `DROPPED`): the original stays audible, which beats gibberish or screams in the dub.
         Only the words count here: the better of the take's text match and Whisper similarity, the judge score only
         when neither was measured (a swallowed or missing take counts as 0, a take with artifacts as its score). A
@@ -122,7 +123,10 @@ speaks at 290-320 Hz (S01E03: the play-by-play man during the fights and the rin
 high pitch tells excitement, not a woman. The measurement overrules the analysis and the series memory (Spec 006),
 which once stored the play-by-play man under the sideline reporter's name and gender, so his designed voice was a
 woman's. When it contradicts the analysis, the analysis took the speaker for someone else, so its name is dropped
-too: the translator saw "Jenny Taft (male)" and the review turned the man's lines into feminine forms. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
+too: the translator saw "Jenny Taft (male)" and the review turned the man's lines into feminine forms. Only a
+male verdict overrules the cast list, though: when the speaker's name is a character (or actor) the metadata
+(Spec 001, 2.2b) lists as male, a female pitch is not believed (Star Trek S01E01: Kirk at 244 Hz and two aliens with
+processed voices at 243-248 Hz were measured as women). A low pitch does not happen to women. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
 it is the speaker's only line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
 other reference, so the voice stays the same across the video. It is the fallback for speakers whose clips do not
 clone: it is used only when none of the speaker's clips scores at least `AUDITION_LINE_REF_MIN` in the audition and
@@ -186,7 +190,8 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
     (`TAKE_CHECK=whisper`).
 -   `TAKE_MIN_SIMILARITY` (0.7), `TAKE_CHECK_DEVICE` (cpu), `TAKE_CHECK_THREADS` (all cores): the Whisper similarity
     reported in `whisper` mode.
--   `TAKE_DROP_SIMILARITY` (0.3): a line whose every take is broken below this is not dubbed.
+-   `TAKE_DROP_SIMILARITY` (0.5): a line whose every take is broken below this is not dubbed. On Star Trek S01E01
+    every fallback between 0.31 and 0.44 was Polish-sounding gibberish (an alien's processed voice), every one from 0.7 sound.
 -   `VOICE_DESIGN` (on): one voice-design clip per speaker as an extra reference candidate.
 -   `REF_AUDITION_CANDIDATES` (3), `AUDITION_LINE_REF_MIN` (0.8): reference candidates per speaker, and the audition
     score a speaker needs to use line clips.

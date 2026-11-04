@@ -31,7 +31,9 @@ The system verifies model presence and downloads missing files. To maximize avai
         a referee's countdown), so a second pass (`ASR_GAP_PASS`, on) transcribes every gap of at least `ASR_GAP_MIN`
         (2 s) without VAD and keeps only confident segments: `no_speech_prob < 0.5`, `avg_logprob >= -0.8`,
         compression ratio <= 2.4, mean word probability >= 0.5, and not a known hallucination ("Thank you.",
-        "Instruction.").
+        "Instruction.", "We'll be right back."). A gap-pass segment where nobody is heard speaking (diarized speech
+        under 30% of it) and no reference subtitle cue lies is dropped as a hallucination over music: Star Trek
+        S01E01 got "We'll be right back." 11 times, all without a speaker.
 *   **Output:**
     *   `diarization.json` (Time ranges mapped to speakers, plus each speaker's centroid embedding for the voice
         bank, Spec 006, 4).
@@ -42,7 +44,9 @@ Whisper splits speech into segments that often end mid-sentence. Translating suc
 duplicates content, because the target language orders the sentence differently. The script is therefore built from
 **dialogue units**:
 1.  Each Whisper segment gets the speaker with the largest overlap. A segment whose length is far beyond what its words
-    can take (e.g. one word stretched over 25 s of music) is clamped to `max(2 s, 1 s + syllables / 3)`.
+    can take (e.g. one word stretched over 25 s of music) is clamped to `max(2 s, 1 s + syllables / 3)`, the window
+    placed where the diarization hears the most speech in the segment, not at its start ("That's the heart of a
+    galaxy" ran from 20:24 to 20:40 with the words at 20:39; dubbed from 20:24, the English line stayed audible).
 2.  Consecutive segments of the same speaker are joined when the pause between them is under `MERGE_MAX_GAP` (0.3 s) and
     the unit stays under `MERGE_MAX_DURATION` (10 s), **or** when the earlier one does not end a sentence (no `.`, `!`,
     `?`, `…`), the pause is under `SENTENCE_MAX_GAP` (1.5 s) and the unit stays under `SENTENCE_MAX_DURATION` (20 s).

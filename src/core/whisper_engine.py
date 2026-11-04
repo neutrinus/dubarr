@@ -30,6 +30,8 @@ HALLUCINATIONS = {
     "music",
     "applause",
     "bye",
+    "wellberightback",  # 11 times over the music of a Star Trek episode
+    "wewillberightback",
 }
 
 logger = logging.getLogger(__name__)
@@ -206,6 +208,7 @@ class WhisperManager:
                     "avg_logprob": x.avg_logprob,
                     "no_speech_prob": x.no_speech_prob,
                     "min_word_prob": _min_word_prob(x),
+                    "gap": True,
                 }
                 logger.info(f"Whisper gap pass: +[{segment['start']:.2f}-{segment['end']:.2f}] {segment['text']}")
                 added.append(segment)
