@@ -41,7 +41,11 @@ print(f"DEBUG: config.VIDEO_FOLDER={VIDEO_FOLDER}", flush=True)
 print(f"DEBUG: config.OUTPUT_FOLDER={OUTPUT_FOLDER}", flush=True)
 print(f"DEBUG: config.MODEL_PATH={MODEL_PATH}", flush=True)
 
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
+# Full large-v3: on BattleBots S01E01 it heard 14% more segments than turbo, spelled the names right ("Ice Wave",
+# not "Icewing") and wrote no "We'll be right back." over music; it costs ~3 minutes per episode (Spec 001, 2.2).
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3")
+# The take check of TAKE_CHECK=whisper runs on the CPU, where turbo is several times faster
+TAKE_CHECK_MODEL = os.environ.get("TAKE_CHECK_MODEL", "large-v3-turbo")
 
 # Demucs gets a whole episode in one call; a 45-minute 720p episode takes ~8 minutes on a 3060, so the limit
 # must leave room for slower cards and larger files.

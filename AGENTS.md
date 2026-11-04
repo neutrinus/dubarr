@@ -55,7 +55,7 @@ src/
     synchronizer.py        Per-segment loop: pick length variant by estimate -> TTS -> measure -> other variant / LLM -> retry.
     llm_engine.py          LLMManager (llama-cpp-python Gemma 3 12B GGUF, or an external server): analysis, ASR fix, drafts, refinement.
     tts_manager.py         TTSManager: reference order per line (line clip, speaker refs, last good, designed voice) + TTS calls.
-    whisper_engine.py      WhisperManager (faster-whisper, large-v3-turbo).
+    whisper_engine.py      WhisperManager (faster-whisper, large-v3; the take check uses large-v3-turbo).
     diarization_engine.py  DiarizationManager (pyannote speaker-diarization-community-1, needs HF_TOKEN).
     audio.py               Demucs separation, analysis orchestration, ffmpeg mixing (ducking, ambient ghost).
     gpu_services.py        LLMService / TTSService: priority-queue worker threads that serialize GPU access.
@@ -139,7 +139,7 @@ touch `src/`, dependencies, the workflow or the script. Without the `HF_TOKEN` s
 plumbing, not translation quality: it runs with `TAKE_CHECK=off`, one take per line and no voice design, because a take
 costs ~4 min on the CPU runner and the full judge ran past the 150-minute job timeout.
 
-Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the in-process LLM, about 4 GB for Whisper, up to
+Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the in-process LLM, about 5 GB for Whisper, up to
 6 GB for OmniVoice on long lines), `HF_TOKEN` with access to the pyannote models, and the Docker image. The image has a
 single Python 3.12 venv (`/app/.venv`) with everything, OmniVoice included; the TTS server is started as a subprocess
 on that same interpreter. Use `docker compose up --build`. OmniVoice is the only TTS: XTTS was removed, don't bring

@@ -126,7 +126,9 @@ woman's. When it contradicts the analysis, the analysis took the speaker for som
 too: the translator saw "Jenny Taft (male)" and the review turned the man's lines into feminine forms. Only a
 male verdict overrules the cast list, though: when the speaker's name is a character (or actor) the metadata
 (Spec 001, 2.2b) lists as male, a female pitch is not believed (Star Trek S01E01: Kirk at 244 Hz and two aliens with
-processed voices at 243-248 Hz were measured as women). A low pitch does not happen to women. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
+processed voices at 243-248 Hz were measured as women). A low pitch does not happen to women. This holds only
+while the corrector raises no doubt about that speaker's name (Spec 001, 2.2c step 4): in BattleBots S01E01 the host
+Molly McGrath (255 Hz) was named Chris Rose, and the corrector noticed "Chris Rose" introducing Chris Rose. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
 it is the speaker's only line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
 other reference, so the voice stays the same across the video. It is the fallback for speakers whose clips do not
 clone: it is used only when none of the speaker's clips scores at least `AUDITION_LINE_REF_MIN` in the audition and

@@ -30,7 +30,11 @@ The system verifies model presence and downloads missing files. To maximize avai
         trained on noisy audio, while separation can cut or distort speech under loud effects. Diarization and voice
         references keep using the separated vocals. The first pass uses VAD and word timestamps. VAD also drops speech under loud noise (commentary over a fight,
         a referee's countdown), so a second pass (`ASR_GAP_PASS`, on) transcribes every gap of at least `ASR_GAP_MIN`
-        (2 s) without VAD and keeps only confident segments: `no_speech_prob < 0.5`, `avg_logprob >= -0.8`,
+        (2 s) without VAD. A pause of at least `ASR_GAP_MIN` between the words of one first-pass segment is a gap
+        too: the segment is split there, and a word longer than 1.5 s counts only its last 1.5 s (the alignment
+        stretches the first word after a noisy stretch over all of it). Over a fight in BattleBots S01E01 Whisper
+        wrote one 144 s segment of eleven words, and the 2.5 minutes of commentary inside it were never heard. The
+        gap pass keeps only confident segments: `no_speech_prob < 0.5`, `avg_logprob >= -0.8`,
         compression ratio <= 2.4, mean word probability >= 0.5, and not a known hallucination ("Thank you.",
         "Instruction.", "We'll be right back."). A gap-pass segment where nobody is heard speaking (diarized speech
         under 30% of it) and no reference subtitle cue lies is dropped as a hallucination over music: Star Trek
@@ -99,7 +103,12 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
     over music or noise, nothing like the rest of the scene): such a line is not dubbed and the original stays
     audible. It never moves a line to another speaker; the voiceprint check (3) decides that. It does report doubts
     about a speaker ("SPEAKER_03 is described as Jenny Taft, but line 57 addresses him as Chris"): only a signal,
-    logged with a count per speaker and shown in the report's `speaker_doubt` column; nothing changes because of it.
+    logged with a count per speaker and shown in the report's `speaker_doubt` column. The only thing it changes: the
+    cast list no longer overrules that speaker's measured pitch (Spec 002, 2.3).
+    The second hearing leaves out known hallucinations ("We'll be right back.") like the gap pass does. When a line
+    the corrector changed ends with words that the same speaker's next line (within `SENTENCE_MAX_GAP`) starts with,
+    they are dropped from the next line: the second hearing of "...learning their answers to the game" heard into
+    the next line, and "ABCs. ABCs." was dubbed. A next line that is nothing but the repetition stays.
 
 ### 2.3 Stage 3: Global Context Analysis
 *   **Input:** Transcription script, reference subtitles, media metadata.
@@ -201,7 +210,9 @@ The goal is a complete translation that fits the timing. Run time is secondary.
     better than seconds.
 2.  **Windows with context.** Lines are translated in windows of `TRANSLATION_WINDOW` lines (default 20). Each request
     also shows the previous 6 lines with their final translations and the next 4 source lines, read-only, so the
-    translation reads as one text and terms, forms of address and gender stay consistent.
+    translation reads as one text and terms, forms of address and gender stay consistent. Lines the answer leaves out,
+    or "translates" by repeating an English line of three or more words, are asked again once, in two halves; only
+    what is still missing keeps the source text (BattleBots S01E01: Gemma answered a whole window in English).
 3.  **Information is moved, not dropped.** The translator must keep every piece of information of the window: names,
     numbers, results, reasons, who does what. Fillers ("you know", "well", repetitions) go first. When a line cannot
     hold everything within its `max_syllables`, the information may move to a neighbouring line of the same speaker that
