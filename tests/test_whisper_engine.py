@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-from core.whisper_engine import WhisperManager, _gaps, _plausible, _word_bounds
+from core.whisper_engine import WhisperManager, _gaps, _plausible, _split_at_pauses, _word_bounds
 
 
 def _seg(start, end, text="x", words=None, avg_logprob=-0.2, no_speech_prob=0.01, compression_ratio=1.2):
@@ -16,8 +16,8 @@ def _seg(start, end, text="x", words=None, avg_logprob=-0.2, no_speech_prob=0.01
     )
 
 
-def _word(start, end):
-    return SimpleNamespace(start=start, end=end, word="w", probability=0.9)
+def _word(start, end, word="w", probability=0.9):
+    return SimpleNamespace(start=start, end=end, word=word, probability=probability)
 
 
 class TestWordBounds(unittest.TestCase):
@@ -71,7 +71,14 @@ class TestGapPass(unittest.TestCase):
     def test_gap_is_transcribed_without_vad_and_offset(self):
         mgr = WhisperManager(inference_lock=None)
         mgr.model = MagicMock()
-        first = [_seg(0.0, 10.0, " Ready for battle.", words=[_word(0.5, 9.0)])]
+        first = [
+            _seg(
+                0.0,
+                10.0,
+                " Ready for battle.",
+                words=[_word(0.5 + 1.5 * i, 1.9 + 1.5 * i) for i in range(5)] + [_word(8.0, 9.0)],
+            )
+        ]
         gap = [_seg(1.0, 3.0, " Let the bot battle begin!", words=[_word(1.2, 2.8)]), _seg(5.0, 8.0, " Thank you.")]
         mgr.model.transcribe.side_effect = [
             (iter(first), SimpleNamespace(duration=20.0, language="en")),
@@ -87,6 +94,63 @@ class TestGapPass(unittest.TestCase):
         self.assertEqual(kwargs["language"], "en")
         self.assertEqual([r["text"] for r in res], ["Ready for battle.", "Let the bot battle begin!"])
         self.assertAlmostEqual(res[1]["start"], 9.0 + 1.2)
+
+
+class TestSplitAtPauses(unittest.TestCase):
+    def test_a_segment_without_long_pauses_stays_whole(self):
+        seg = _seg(0.0, 3.0, " Ready for battle.", words=[_word(0.2, 0.6), _word(0.7, 1.0), _word(1.1, 1.6)])
+        self.assertEqual(_split_at_pauses(seg, 2.0), [(0.2, 1.6, None, seg.words)])
+
+    def test_long_pauses_split_the_words(self):
+        words = [
+            _word(2198.0, 2262.0, " Warrior"),
+            _word(2262.1, 2262.5, " Clan"),
+            _word(2262.6, 2263.0, " is"),
+            _word(2339.0, 2339.4, " that"),
+            _word(2339.5, 2342.0, " ends"),
+        ]
+        parts = _split_at_pauses(_seg(2198.0, 2342.4, " Warrior Clan is that ends", words=words), 2.0)
+        self.assertEqual([p[2] for p in parts], ["Warrior Clan is", "that ends"])
+        # the first word was stretched over the silence before it: only its last 1.5 s count
+        self.assertEqual((parts[0][0], parts[0][1]), (2260.5, 2263.0))
+        self.assertEqual((parts[1][0], parts[1][1]), (2339.0, 2342.0))
+
+    def test_a_stretched_word_alone_is_trimmed(self):
+        parts = _split_at_pauses(_seg(540.0, 565.0, " Ready for battle.", words=[_word(542.4, 564.7)]), 2.0)
+        self.assertEqual([(p[0], p[1], p[2]) for p in parts], [(563.2, 564.7, None)])
+
+    def test_the_gap_pass_hears_the_pause_inside_a_segment(self):
+        mgr = WhisperManager(inference_lock=None)
+        mgr.model = MagicMock()
+        first = [
+            _seg(
+                0.0,
+                30.0,
+                " Warrior Clan knocked out",
+                words=[_word(0.0, 1.0, " Warrior Clan"), _word(28.0, 29.0, " knocked out")],
+            )
+        ]
+        gap = [_seg(2.0, 6.0, " Nightmare is in trouble!", words=[_word(2.0, 3.0), _word(3.1, 6.0)])]
+        mgr.model.transcribe.side_effect = [
+            (iter(first), SimpleNamespace(duration=30.0, language="en")),
+            (iter(gap), SimpleNamespace(duration=27.0, language="en")),
+        ]
+
+        with patch("core.whisper_engine.MOCK_MODE", False), patch("core.whisper_engine.ASR_GAP_PASS", True):
+            with patch("core.whisper_engine.decode_audio", return_value=[0.0] * (16000 * 30)):
+                res = mgr.transcribe("a.wav")
+
+        self.assertEqual([r["text"] for r in res], ["Warrior Clan", "Nightmare is in trouble!", "knocked out"])
+        self.assertAlmostEqual(res[1]["start"], 1.0 + 2.0)
+
+    def test_without_the_gap_pass_nothing_is_split(self):
+        mgr = WhisperManager(inference_lock=None)
+        mgr.model = MagicMock()
+        first = [_seg(0.0, 30.0, " Warrior Clan knocked out", words=[_word(0.0, 1.0), _word(28.0, 29.0)])]
+        mgr.model.transcribe.return_value = (iter(first), SimpleNamespace(duration=30.0, language="en"))
+        with patch("core.whisper_engine.MOCK_MODE", False), patch("core.whisper_engine.ASR_GAP_PASS", False):
+            res = mgr.transcribe("a.wav")
+        self.assertEqual([(r["start"], r["end"], r["text"]) for r in res], [(0.0, 29.0, "Warrior Clan knocked out")])
 
 
 class TestTakeCheckDevice(unittest.TestCase):

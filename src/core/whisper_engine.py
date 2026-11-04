@@ -48,6 +48,43 @@ def _word_bounds(segment) -> Tuple[float, float]:
     return start, end
 
 
+# Longest a single word may last; Whisper's word alignment stretches the first word after a silence or a noisy
+# stretch over all of it (Spec 001, 2.2b)
+MAX_WORD_SECONDS = 1.5
+
+
+def _split_at_pauses(segment, min_gap: float) -> List[Tuple[float, float, Optional[str], list]]:
+    """Splits a first-pass segment where its words pause for at least ``min_gap`` seconds.
+
+    Returns (start, end, text, words) parts; text is None while the segment stays whole (its own text is kept).
+    A word longer than MAX_WORD_SECONDS keeps only its last MAX_WORD_SECONDS: the rest is the silence or the noise it
+    was stretched over. Over a loud fight Whisper wrote one 144 s segment, "Warrior Clan is a new one that ends up
+    getting knocked out", with 2.5 minutes of commentary inside it that the gap pass never saw.
+    """
+    words = [w for w in (getattr(segment, "words", None) or []) if w.end > w.start]
+    if not words:
+        start, end = _word_bounds(segment)
+        return [(start, end, None, [])]
+    spans = [(max(w.start, w.end - MAX_WORD_SECONDS), w.end) for w in words]
+    parts, current = [], [0]
+    for i in range(1, len(words)):
+        if spans[i][0] - spans[i - 1][1] >= min_gap:
+            parts.append(current)
+            current = []
+        current.append(i)
+    parts.append(current)
+    trimmed = spans[0][0] > words[0].start
+    if len(parts) == 1 and not trimmed:
+        start, end = _word_bounds(segment)
+        return [(start, end, None, words)]
+    result = []
+    for idx in parts:
+        part_words = [words[i] for i in idx]
+        text = "".join(w.word for w in part_words).strip() if len(parts) > 1 else None
+        result.append((spans[idx[0]][0], spans[idx[-1]][1], text, part_words))
+    return result
+
+
 def _gaps(segments: List[Dict], total: float, min_gap: float) -> List[Tuple[float, float]]:
     """Spans of at least ``min_gap`` seconds that no segment covers."""
     gaps, cursor = [], 0.0
@@ -60,9 +97,9 @@ def _gaps(segments: List[Dict], total: float, min_gap: float) -> List[Tuple[floa
     return gaps
 
 
-def _min_word_prob(segment) -> Optional[float]:
+def _min_word_prob(segment, words=None) -> Optional[float]:
     """Probability of the segment's least certain word (Spec 001, 2.2c); None without word timestamps."""
-    words = getattr(segment, "words", None) or []
+    words = words if words is not None else (getattr(segment, "words", None) or [])
     probs = [w.probability for w in words if getattr(w, "probability", None) is not None]
     return round(min(probs), 3) if probs else None
 
@@ -160,16 +197,25 @@ class WhisperManager:
         res = []
         for x in ts:
             if x.avg_logprob >= -1.0:
-                start, end = _word_bounds(x)
-                segment = {
-                    "start": start,
-                    "end": end,
-                    "text": x.text.strip(),
-                    "avg_logprob": x.avg_logprob,
-                    "no_speech_prob": x.no_speech_prob,
-                    "min_word_prob": _min_word_prob(x),
-                }
-                res.append(segment)
+                # Long pauses inside a segment become gaps for the gap pass (Spec 001, 2.2b)
+                parts = _split_at_pauses(x, ASR_GAP_MIN) if ASR_GAP_PASS else [(*_word_bounds(x), None, None)]
+                if len(parts) > 1:
+                    logger.info(
+                        f"Whisper: [{x.start:.2f}-{x.end:.2f}] split at its pauses into "
+                        + ", ".join(f"[{p[0]:.2f}-{p[1]:.2f}]" for p in parts)
+                    )
+                for start, end, text, words in parts:
+                    if not text and len(parts) > 1:
+                        continue
+                    segment = {
+                        "start": start,
+                        "end": end,
+                        "text": text or x.text.strip(),
+                        "avg_logprob": x.avg_logprob,
+                        "no_speech_prob": x.no_speech_prob,
+                        "min_word_prob": _min_word_prob(x, words or None),
+                    }
+                    res.append(segment)
                 # Log progress every few segments or every 30 seconds of audio
                 if len(res) % 20 == 0:
                     logger.info(f"Whisper Progress: {x.end:.2f}s / {info.duration:.2f}s transcribed...")

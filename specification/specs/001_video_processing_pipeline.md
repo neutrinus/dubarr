@@ -30,7 +30,11 @@ The system verifies model presence and downloads missing files. To maximize avai
         trained on noisy audio, while separation can cut or distort speech under loud effects. Diarization and voice
         references keep using the separated vocals. The first pass uses VAD and word timestamps. VAD also drops speech under loud noise (commentary over a fight,
         a referee's countdown), so a second pass (`ASR_GAP_PASS`, on) transcribes every gap of at least `ASR_GAP_MIN`
-        (2 s) without VAD and keeps only confident segments: `no_speech_prob < 0.5`, `avg_logprob >= -0.8`,
+        (2 s) without VAD. A pause of at least `ASR_GAP_MIN` between the words of one first-pass segment is a gap
+        too: the segment is split there, and a word longer than 1.5 s counts only its last 1.5 s (the alignment
+        stretches the first word after a noisy stretch over all of it). Over a fight in BattleBots S01E01 Whisper
+        wrote one 144 s segment of eleven words, and the 2.5 minutes of commentary inside it were never heard. The
+        gap pass keeps only confident segments: `no_speech_prob < 0.5`, `avg_logprob >= -0.8`,
         compression ratio <= 2.4, mean word probability >= 0.5, and not a known hallucination ("Thank you.",
         "Instruction.", "We'll be right back."). A gap-pass segment where nobody is heard speaking (diarized speech
         under 30% of it) and no reference subtitle cue lies is dropped as a hallucination over music: Star Trek
