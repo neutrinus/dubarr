@@ -66,10 +66,15 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
 2.  **`voices.json`** holds one entry per person: id (`V001`...), the mean voiceprint over its episodes, name, gender,
     a short description, the number of episodes, and up to `VOICE_BANK_CLIPS` (5) clips in `clips/` (with their
     transcripts), their audition score and their quality (0..1: half the length's fit to 6-10 s, half the clarity
-    in dB when the clip was cut, Spec 001, 2.4). Clips are ranked by audition score plus 0.1 times the quality, so
+    in dB when the clip was cut, Spec 001, 2.4) and its energy class (`calm`, `lively`, `shout`; Spec 001, 2.4).
+    With `EMOTION_REFS` the slots are per class: up to `VOICE_BANK_CLASS_CLIPS` (2) clips of each class, so a
+    person who only shouts in one episode keeps calm clips from another, and the reverse. Clips are ranked by audition score plus 0.1 times the quality, so
     between clips that clone about equally well the longer and cleaner one stays; the worst is dropped when a better
     one arrives. Every bank clip of a matched person is auditioned again in each episode, on that episode's test line
     next to the episode's own clips, so stored scores stay comparable with new ones and the bank only gets better. Only auditioned clips are stored (none with `TAKE_CHECK=off`), and never a designed voice.
+    A person merged from a shouting and a calm cluster (Spec 002, 2.3) also keeps the shouting cluster's voiceprint
+    (`shout_print`); matching takes the better of the two, so next episode the shouting cluster finds the person
+    instead of a new or duplicate entry.
 3.  **Matching.** After Stage 2 every diarization speaker is compared with the bank. A speaker is that person when the
     similarity is at least `VOICE_MATCH_MIN` (0.6) and beats the second best person by at least 0.05 (two similar
     commentators must not merge). Two speakers that match the same person are merged into one speaker before the script
@@ -110,4 +115,4 @@ every episode.
 -   `SERIES_MEMORY` (on): series glossary and voice bank.
 -   `GLOSSARY_MODE` (respell): `respell` (phonetic spelling with the reading test) or `phonemes` (CMU phonemes).
 -   `VOICE_MATCH_MIN` (0.6): voiceprint similarity from which a speaker is a known person. To be tuned on measured runs.
--   `VOICE_BANK_CLIPS` (5): clips kept per person.
+-   `VOICE_BANK_CLIPS` (5): clips kept per person; `VOICE_BANK_CLASS_CLIPS` (2): per energy class with `EMOTION_REFS`.

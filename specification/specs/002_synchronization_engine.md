@@ -131,6 +131,15 @@ alone it beats every clone speaking another language (S01E03: 0.8 against 0.56 a
 over seven speakers whose clips cloned well. Voice design was also trained on Chinese and English only and may be
 unstable in other languages. It gives a voice to speakers without any clean clip.
 
+**One person, two clusters.** Diarization can split one person's shouting from their calm talk (S01E03: the play-by-
+play man shouting at 319 Hz as SPEAKER_04, whose clips cloned at 0.42 at best, so he got a designed voice, and
+calm as SPEAKER_13, cloning at 0.92-0.97). After the analysis (Stage 3), two speakers are merged into one (the calm one's
+label) when all of these hold: the analysis gave them the same name (not empty or "unknown"); the louder one's median
+voice level is at least 3 dB and its median pitch at least 3 semitones above the other's; no gender measured on both
+(pitch bands, Polish grammar) disagrees; and their centroid voiceprints are at least `SHOUT_MERGE_MIN` (0.3) alike.
+The name alone is not enough: in S01E03 the analysis named the play-by-play man "Jenny Taft". The merged speaker's
+energy classes (Spec 001, 2.4) are measured again over all its lines, so its shouting lines become its `shout` class.
+
 A speaker only ever speaks with **its own voice** (its clips, line clips or designed voice): another speaker's voice in
 its mouth confuses the viewer more than a generic voice does. And with **one voice**: the speaker's kind (the video's
 clips, or the designed voice, as decided above) is used for every line, and the other kind never while the speaker has
@@ -144,8 +153,12 @@ References are tried in this order; a retry after a broken take skips the ones a
     ZCR < 0.25 and a clarity (vocals over the rest, see Spec 001, 2.4) of at least `REF_MIN_CLARITY_DB`; a line shouted
     over a cheering crowd uses the speaker's references instead.
 2.  **Speaker's references** of the speaker's voice kind that scored at least `TAKE_MIN_SIMILARITY` in the audition
-    (all of them without an audition), in rank order.
-3.  **Last Good Sample:** the last clean line clip of this speaker (not for a speaker in the designed voice).
+    (all of them without an audition). With `EMOTION_REFS` (on) the clips of the line's energy class (Spec 001,
+    2.4) come first, then those of the neighbouring class (shout, lively, calm in that order of distance), each
+    group in rank order; a clip of unknown class counts as one step away. A commentator shouting over a fight is
+    cloned from his shouted clip, a calm line from a calm one. The designed voice has one class and stays as it is.
+3.  **Last Good Sample:** the last clean line clip of this speaker (not for a speaker in the designed voice); with
+    `EMOTION_REFS` it comes after the clips of the line's own class.
 4.  **Speaker's weak references** of that kind: those that scored under `TAKE_MIN_SIMILARITY`.
 5.  **The other kind** (the designed voice for a cloned speaker, the clips for a designed one), by score.
 When all of these were tried, the least broken take is kept (2.2 step 4). Only a speaker with no voice of its own at all
@@ -163,6 +176,8 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `MIN_FILL_RATIO` (0.7): below this share of the target a take is refined as too short.
 -   `MAX_ACCEPT_SPEEDUP` (1.08): allowed overrun of the limit, sped up in the mix.
 -   `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` (9): faster than this means a swallowed take.
+-   `EMOTION_REFS` (on), `SHOUT_MERGE_MIN` (0.3): clips by energy class and the merging of a shouting cluster
+    with the same person's calm one (2.3).
 -   `TAKE_CHECK` (judge | whisper | off), `TAKE_VERSIONS` (4), `TAKE_VERSIONS_SHORT` (6), `SHORT_LINE_SYLLABLES`
     (10), `TAKE_GOOD_SCORE` (0.95): the judge of the voice audition and of every take, how many takes each synthesis
     makes (short lines more), and the score that ends the search early.
