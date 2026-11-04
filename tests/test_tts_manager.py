@@ -216,7 +216,8 @@ class TestReferenceOrder(unittest.TestCase):
         )
         # Never the expert's or the host's voice in the announcer's mouth
         self.assertEqual(self.pick(), ("designed_ann.wav", "DESIGNED"))
-        self.assertEqual(self.pick(skip={"designed_ann.wav"}), ("ann2.wav", "GOLDEN"))
+        # Tried already: a new take of the designed voice, not a clone of the clips
+        self.assertEqual(self.pick(skip={"designed_ann.wav"}), ("designed_ann.wav", "DESIGNED"))
         self.assertIn("ANNOUNCER", self.manager.line_refs_off)
 
     def test_good_designed_voice_ranks_with_the_clips(self):
@@ -231,13 +232,24 @@ class TestReferenceOrder(unittest.TestCase):
             {"ANNOUNCER": {"ann1.wav": 0.9, "ann2.wav": 0.5, "ann3.wav": 0.75, "designed_ann.wav": 0.8}}, 0.8
         )
         order = [p for p, _ in self.manager._ref_order("ANNOUNCER")]
-        self.assertEqual(order, ["ann1.wav", "ann3.wav", "LAST_GOOD", "ann2.wav", "designed_ann.wav"])
+        self.assertEqual(order, ["ann1.wav", "ann3.wav", "LAST_GOOD", "ann2.wav"])
 
     def test_a_speaker_in_the_designed_voice_keeps_it(self):
         self.manager.add_designed_ref("ANNOUNCER", "designed_ann.wav")
-        self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.75, "designed_ann.wav": 0.95}}, 0.7)
+        self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.75, "designed_ann.wav": 0.95}}, 0.8)
         self.assertEqual(self.pick(), ("designed_ann.wav", "DESIGNED"))
         self.assertIn("ANNOUNCER", self.manager.line_refs_off)  # no clone of the line now and then
+        # E03: the second take of a line came from a clip; every take stays in the designed voice
+        order = [p for p, _ in self.manager._ref_order("ANNOUNCER")]
+        self.assertEqual(order, ["designed_ann.wav", "LAST_GOOD"])
+
+    def test_a_clip_that_clones_well_beats_the_designed_voice(self):
+        # E03: the designed voice scored ~1.0 against itself and took over speakers whose clips cloned well
+        self.manager.add_designed_ref("ANNOUNCER", "designed_ann.wav")
+        self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.84, "ann2.wav": 0.4, "designed_ann.wav": 0.97}}, 0.8)
+        self.assertFalse(self.manager.uses_designed("ANNOUNCER"))
+        self.assertEqual(self.pick(), ("ann1.wav", "GOLDEN"))
+        self.assertNotIn("designed_ann.wav", [p for p, _ in self.manager._ref_order("ANNOUNCER")])
 
     def test_weak_speaker_skips_line_clips(self):
         self.manager.apply_audition({"ANNOUNCER": {"ann1.wav": 0.7}}, 0.8)
@@ -247,7 +259,7 @@ class TestReferenceOrder(unittest.TestCase):
 
     def test_no_other_speakers_voice_after_the_own_references(self):
         tried = {"ann1.wav", "ann2.wav", "ann3.wav"}
-        self.assertEqual(self.pick(skip=tried), (None, "UNKNOWN"))
+        self.assertEqual(self.pick(skip=tried), ("ann1.wav", "GOLDEN"))  # a new take of its own voice
 
     def test_speaker_without_any_voice_still_gets_one(self):
         self.assertEqual(self.pick(speaker="CROWD"), ("ann1.wav", "FALLBACK_GOLDEN"))
