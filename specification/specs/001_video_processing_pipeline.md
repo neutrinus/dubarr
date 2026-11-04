@@ -79,7 +79,30 @@ duplicates content, because the target language orders the sentence differently.
     3.  The translator gets the show/episode, the synopsis and each line's speaker gender, so gendered forms
         (e.g. Polish past tense) match the speaker; the per-line duration refinement gets the speaker and title too.
 *   **Reference subtitles:** `<video>.srt`, else `<video>.<lang>[.hi|.sdh].srt` in a non-target language (English and full
-    subtitles preferred, forced subtitles skipped), else the first embedded subtitle stream.
+    subtitles preferred, forced subtitles skipped), else the first embedded subtitle stream not tagged with a target
+    language. Files are read as UTF-8, else as Windows-1250 (common for Polish subtitles).
+*   **Target-language subtitles:** `<video>.<lang>.srt` (ISO 639-1 or 639-2 code, e.g. `.pl.srt` / `.pol.srt`; full
+    subtitles preferred over `.hi`/`.sdh`, forced subtitles skipped), else an embedded subtitle stream tagged with
+    that language. They are a human translation, so they know the show's established names, terms, forms of address
+    and the speakers' gendered forms better than an LLM. They are not read aloud: they are shortened for reading and
+    timed differently from the dub. Each cue goes to the script line it overlaps most in time (at least a third of the
+    cue's duration), so a line gets the cues spoken during it. Used by the draft translation (2.5a) and the series
+    terms (Spec 006, 5).
+*   **What else the subtitles tell:**
+    1.  *Missing speech.* A spoken cue of the reference subtitles (sound descriptions such as `[door opens]` and
+        `♪` removed) of at least 1 s that the transcription does not cover (less than a third of the cue) is speech
+        Whisper did not hear: it becomes a line of the script with the cue's text and times, and the speaker the
+        diarization finds there. Only when the subtitles are timed to this audio: at least 70% of the spoken cues
+        overlap the transcription (subtitles of another release are often shifted by seconds).
+    2.  *Speaker names.* Hearing-impaired subtitles (`.en.hi.srt`, `.en.sdh.srt`) label speakers (`KIRK:`,
+        `[SPOCK]`). The label most of a speaker's labelled cues carry (at least 2 cues, 60%) is given to the
+        analysis as a hint for naming that speaker.
+    3.  *Gender.* In Polish target subtitles, the first-person past tense and conditional ("zrobiłem"/"zrobiłam",
+        "zrobiłbym"/"zrobiłabym"; nouns in "-łem" such as "admirałem" not counted; cues with two speakers skipped)
+        tell the speaker's gender: at least 3 forms, 80% of one gender. This overrules the analysis and the pitch
+        (Spec 002, 2.3), which cannot tell a shouting man; it counts as a measured gender in the series memory.
+    4.  *Forms of address.* The terms step (Spec 006, 5) also reads how speakers address each other in the subtitles
+        (formal "pan kapitan", or "ty"); the translator keeps those forms.
 *   **Output:**
     *   `context.json` (Global context for translation).
     *   `speakers.json` (Speaker profiles: age, gender, role).
@@ -143,6 +166,14 @@ The goal is a complete translation that fits the timing. Run time is secondary.
     invented facts). All carry the same information as far as their length allows. The sync loop picks between them
     before synthesis (Spec 002, 2.2). A line fixed by the review keeps only the fixed text.
 6.  Lines that are pure sound markers (`[music]`, `(laughter)`) are not dubbed.
+7.  **Subtitles as a hint.** With target-language subtitles (2.3), each line to translate carries its `subtitle`
+    (the cues aligned to it, empty when none). The translator follows the subtitle's names, terms, forms of address
+    and gender forms and may reuse its wording, but keeps all information of the source (subtitles drop some) and the
+    syllable budget (subtitles are written for reading, not for this timing). The review sees the subtitle too.
+8.  **Terms.** Established translations of names, titles, ranks, ship and place names and technical terms
+    (`Starfleet` -> `Gwiezdna Flota`) come from the series memory and, with target-language subtitles, from the
+    episode itself (Spec 006, 5). The translator, the review and the duration refinement must use them. A term that is
+    translated is no longer pronounced in English, so it leaves the phonetic glossary of that episode.
 
 ### 2.6 Stage 6: Final Mix
 *   **Input:** `final_{lang}_{index}.wav` segments, `orig.wav`.
