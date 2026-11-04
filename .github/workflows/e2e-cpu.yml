@@ -51,6 +51,12 @@ jobs:
       LLM_MODEL_REPO: Qwen/Qwen2.5-3B-Instruct-GGUF
       LLM_MODEL_FILE: qwen2.5-3b-instruct-q4_k_m.gguf
       TTS_TIMEOUT: "600"
+      # A take costs ~4 min on the CPU runner. The judge, the voice audition, voice design and extra takes multiply
+      # that past the job timeout, and this job tests plumbing, not dub quality: one plain take per line.
+      TAKE_CHECK: "off"
+      TAKE_VERSIONS: "1"
+      TAKE_VERSIONS_SHORT: "1"
+      VOICE_DESIGN: "off"
       TARGET_LANGS: ${{ inputs.langs || 'pl' }}
       E2E_VIDEO_URL: ${{ inputs.video_url }}
       E2E_START: ${{ inputs.start || '60' }}

@@ -136,7 +136,8 @@ real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 3B GG
 muxed tracks (count, tags, duration, not silent). It also builds `demo.mp4` (one line in English, then dubbed;
 `scripts/demo_video.py`), and on `main` publishes it to the `demo` release that the README links to. It runs nightly, on push to `main`, on manual dispatch, and on PRs that
 touch `src/`, dependencies, the workflow or the script. Without the `HF_TOKEN` secret, diarization is replaced by a single speaker. It tests
-plumbing, not translation quality.
+plumbing, not translation quality: it runs with `TAKE_CHECK=off`, one take per line and no voice design, because a take
+costs ~4 min on the CPU runner and the full judge ran past the 150-minute job timeout.
 
 Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the in-process LLM, about 4 GB for Whisper, up to
 6 GB for OmniVoice on long lines), `HF_TOKEN` with access to the pyannote models, and the Docker image. The image has a
