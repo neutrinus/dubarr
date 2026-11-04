@@ -282,6 +282,57 @@ class TestTakeCheck(unittest.TestCase):
         self.assertEqual(self.tts.synthesize_sync.call_args_list[1].args[0]["skip_refs"], ["gold.wav"])
         self.assertEqual((res["status"], res["score"], res["duration"]), ("ACCEPTED", 0.95, 3.7))
 
+    def test_later_versions_resample_the_best_sound_reference(self):
+        self.sync.versions = 4
+        self.judge.verdicts = [verdict(0.7), verdict(0.8), verdict(0.9), verdict(0.6)]
+        self.tts.synthesize_sync.side_effect = [
+            {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "gold.wav"},
+            {"audio_path": "b.wav", "duration": 3.7, "voice_type": "GOLDEN", "ref": "gold_2.wav"},
+            {"audio_path": "c.wav", "duration": 3.6, "voice_type": "GOLDEN", "ref": "gold_2.wav"},
+            {"audio_path": "d.wav", "duration": 3.5, "voice_type": "GOLDEN", "ref": "gold_2.wav"},
+        ]
+
+        res = self.run_segment([3.8, 3.7, 3.6, 3.5])
+
+        calls = [c.args[0] for c in self.tts.synthesize_sync.call_args_list]
+        self.assertEqual(len(calls), 4)
+        self.assertNotIn("force_ref", calls[1])
+        self.assertEqual(calls[2]["force_ref"], ("gold_2.wav", "GOLDEN"))
+        self.assertEqual(calls[3]["force_ref"], ("gold_2.wav", "GOLDEN"))
+        self.assertEqual((res["score"], res["duration"]), (0.9, 3.6))
+
+    def test_a_good_take_ends_the_search_early(self):
+        self.sync.versions = 4
+        self.sync.good_score = 0.95
+        self.judge.verdicts = [verdict(0.97)]
+        self.tts.synthesize_sync.return_value = {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g"}
+
+        res = self.run_segment([3.8])
+
+        self.assertEqual(self.tts.synthesize_sync.call_count, 1)
+        self.assertEqual(res["score"], 0.97)
+
+    def test_equal_text_scores_prefer_the_closer_voice(self):
+        self.sync.versions = 2
+        self.judge.verdicts = [
+            {"score": 0.9, "problem": None, "voice": 0.4, "text_match": 0.9},
+            {"score": 0.9, "problem": None, "voice": 0.6, "text_match": 0.9},
+        ]
+        self.tts.synthesize_sync.side_effect = [
+            {"audio_path": "a.wav", "duration": 3.8, "voice_type": "GOLDEN", "ref": "g1"},
+            {"audio_path": "b.wav", "duration": 3.7, "voice_type": "GOLDEN", "ref": "g2"},
+        ]
+
+        res = self.run_segment([3.8, 3.7])
+
+        self.assertEqual(res["duration"], 3.7)
+
+    def test_short_lines_get_more_versions(self):
+        sync = SegmentSynchronizer(self.llm, self.tts, "/tmp", judge=self.judge, versions=4, short_versions=6)
+        self.assertEqual(sync.versions_for("Czysta dominacja!", "pl"), 6)
+        self.assertEqual(sync.versions_for("O!", "pl"), 4)  # too short for the judge to read: more takes cannot help
+        self.assertEqual(sync.versions_for(self.segment["text"] + " " + self.segment["text"], "pl"), 4)
+
     def test_a_third_take_only_when_both_versions_are_broken(self):
         self.sync.versions = 2
         self.judge.verdicts = [verdict(0.0, "SQUEAK"), verdict(0.3, "UNINTELLIGIBLE take"), verdict(0.9)]

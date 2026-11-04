@@ -37,8 +37,13 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
     -   longer than the limit: speed up to the limit, but not above `TTS_MAX_SPEEDUP` (default 1.2).
     Long lines are synthesized in sentence chunks; each chunk gets its share of the target and of the limit.
 
-4.  **Takes and the judge.** Each synthesis makes `TAKE_VERSIONS` (2) takes of the text at once, cloning the
-    speaker's first two references in the order of 2.3. The **judge** scores each take in layers, cheapest first; a
+4.  **Takes and the judge.** Each synthesis makes `TAKE_VERSIONS` (4) takes of the text, `TAKE_VERSIONS_SHORT` (6)
+    for a line of 4 to `SHORT_LINE_SYLLABLES` (10) syllables: short shouts and names are where OmniVoice slurs or
+    drops words most often (in S01E03, 41 of 396 lines were heard with less than 0.7 similarity, mostly such lines).
+    The first two takes clone the speaker's first two references in the order of 2.3; every later take is a new
+    take (OmniVoice samples, so each one differs) of the reference of the best sound take so far, because the
+    references further down the list clone worse. A sound take scoring at least `TAKE_GOOD_SCORE` (0.95) ends the
+    search early; lines that skip the text match (under 4 syllables) score 1.0, so they keep their first sound take. The **judge** scores each take in layers, cheapest first; a
     take that fails a layer is broken and the later layers skip it:
     1.  *missing or swallowed*: no usable audio, or far shorter than its text can be spoken (more than
         `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND`, default 9 syllables per second): mostly silence, trimmed by OmniVoice.
@@ -66,7 +71,8 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
         the decision (same threshold): the first measured run had no text match, and 44 of 261 lines that Whisper
         heard as gibberish were accepted.
     A take's **judge score** is its text match (1.0 for lines that skip layer 4), halved when it failed the voice match
-    and 0 when it was swallowed. The sound take with the best judge score goes on; when both versions are broken,
+    and 0 when it was swallowed. The sound take with the best judge score goes on (on a tie, the one whose voice is
+    closer to its reference); when every version is broken,
     one more synthesis is made with the next reference, up to 2 extra. A broken take is never accepted while a sound
     one exists; when every take is broken the least broken is kept (the best score; swallowed counts as worst).
     `TAKE_CHECK` modes: `judge` (default) as above, also for the voice audition; `whisper` runs the judge and, for
@@ -157,8 +163,9 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `MIN_FILL_RATIO` (0.7): below this share of the target a take is refined as too short.
 -   `MAX_ACCEPT_SPEEDUP` (1.08): allowed overrun of the limit, sped up in the mix.
 -   `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` (9): faster than this means a swallowed take.
--   `TAKE_CHECK` (judge | whisper | off), `TAKE_VERSIONS` (2): the judge of the voice audition and of every take, and
-    how many takes each synthesis makes.
+-   `TAKE_CHECK` (judge | whisper | off), `TAKE_VERSIONS` (4), `TAKE_VERSIONS_SHORT` (6), `SHORT_LINE_SYLLABLES`
+    (10), `TAKE_GOOD_SCORE` (0.95): the judge of the voice audition and of every take, how many takes each synthesis
+    makes (short lines more), and the score that ends the search early.
 -   `JUDGE_HF_MAX_DB` (12), `JUDGE_MIN_VOICE` (0.35), `JUDGE_MIN_TEXT` (0.5), `JUDGE_ALIGN_MODEL`
     (per language, see 2.2 step 4), `JUDGE_DEVICE` (cpu): the judge's layers. Thresholds to be tuned on measured runs
     (`TAKE_CHECK=whisper`).

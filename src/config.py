@@ -134,7 +134,12 @@ def _take_check_mode(value: str) -> str:
 
 TAKE_CHECK = _take_check_mode(os.environ.get("TAKE_CHECK", "judge"))
 # Takes per synthesis, from different voice references; the judge keeps the best
-TAKE_VERSIONS = max(1, int(os.environ.get("TAKE_VERSIONS", "2")))
+TAKE_VERSIONS = max(1, int(os.environ.get("TAKE_VERSIONS", "4")))
+# Short lines (4 to SHORT_LINE_SYLLABLES syllables: shouts, names) get more takes; the TTS slurs them most often
+TAKE_VERSIONS_SHORT = max(1, int(os.environ.get("TAKE_VERSIONS_SHORT", "6")))
+SHORT_LINE_SYLLABLES = int(os.environ.get("SHORT_LINE_SYLLABLES", "10"))
+# A sound take scoring at least this ends the search for a line early
+TAKE_GOOD_SCORE = float(os.environ.get("TAKE_GOOD_SCORE", "0.95"))
 # Judge layers. Thresholds are first guesses, to be tuned on runs with TAKE_CHECK=whisper
 JUDGE_HF_MAX_DB = float(os.environ.get("JUDGE_HF_MAX_DB", "12"))
 JUDGE_MIN_VOICE = float(os.environ.get("JUDGE_MIN_VOICE", "0.35"))

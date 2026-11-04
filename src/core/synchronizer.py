@@ -5,7 +5,7 @@ import wave
 from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
 from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND
-from config import JUDGE_MIN_TEXT, TAKE_DROP_SIMILARITY
+from config import JUDGE_MIN_TEXT, TAKE_DROP_SIMILARITY, SHORT_LINE_SYLLABLES
 from utils import count_syllables, text_similarity, translation_glossary
 from duration_policy import MAX_SPEEDUP as TTS_MAX_SPEEDUP
 
@@ -14,10 +14,25 @@ logger = logging.getLogger(__name__)
 
 # Extra syntheses of the same text after a broken take (swallowed or unintelligible), each with another voice reference
 SWALLOW_RETRIES = 2
+# Takes of the first round that each clone another reference; later takes resample the best sound one
+FIRST_ROUND_REFS = 2
+# The judge reads the text of lines from this many syllables (Spec 002, 2.2 step 4); shorter ones all score alike
+JUDGE_TEXT_MIN_SYLLABLES = 4
 
 
 class SegmentSynchronizer:
-    def __init__(self, llm_manager, tts_manager, temp_dir, debug_mode=False, take_checker=None, judge=None, versions=1):
+    def __init__(
+        self,
+        llm_manager,
+        tts_manager,
+        temp_dir,
+        debug_mode=False,
+        take_checker=None,
+        judge=None,
+        versions=1,
+        short_versions=None,
+        good_score=None,
+    ):
         self.llm = llm_manager
         self.tts = tts_manager
         self.temp_dir = temp_dir
@@ -29,6 +44,10 @@ class SegmentSynchronizer:
         self.judge = judge
         # Takes per synthesis, each from another voice reference; the best judged one goes on
         self.versions = max(1, versions)
+        # Short lines (shouts, names) are where the TTS slurs words most often; they get more takes, which are cheap
+        self.short_versions = max(self.versions, short_versions or self.versions)
+        # A sound take scoring at least this ends the search early (None: always make every version)
+        self.good_score = good_score
 
     @staticmethod
     def is_swallowed(text: str, duration: float, lang: str) -> bool:
@@ -90,6 +109,19 @@ class SegmentSynchronizer:
                     problem = (score, f"UNINTELLIGIBLE take (Whisper similarity {check[0]:.2f})")
         return result, duration, problem
 
+    def versions_for(self, text: str, lang: str) -> int:
+        """Takes per synthesis: ``short_versions`` for a short line the judge can read, ``versions`` otherwise."""
+        syllables = count_syllables(text, lang)
+        if JUDGE_TEXT_MIN_SYLLABLES <= syllables < SHORT_LINE_SYLLABLES:
+            return self.short_versions
+        return self.versions
+
+    @staticmethod
+    def _rank(result: Dict):
+        """Orders sound takes: the judge's score first, then how close the voice is to its reference."""
+        voice = result.get("voice_match")
+        return (float(result.get("score", 1.0)), float(voice) if voice is not None else 0.0)
+
     def _keep(self, result: Dict, lang: str, idx, n: int) -> Dict:
         """Copies a take away from the TTS output file, which the next synthesis of the line rewrites."""
         kept = os.path.join(self.temp_dir, f"take_{lang}_{idx}_{n}.wav")
@@ -105,14 +137,23 @@ class SegmentSynchronizer:
         """
         idx = tts_item["index"]
         text = tts_item["text"]
+        versions = self.versions_for(text, lang)
         skip = []
-        sound = []  # (score, result, duration)
+        sound = []  # (rank, result, duration)
         best = None  # (score, (result, duration, True)); higher score = less broken
-        total = self.versions + SWALLOW_RETRIES
+        total = versions + SWALLOW_RETRIES
         for n in range(total):
-            if n >= self.versions and sound:
+            if n >= versions and sound:
+                break
+            if sound and self.good_score is not None and max(r[0][0] for r in sound) >= self.good_score:
                 break
             item = dict(tts_item, skip_refs=list(skip))
+            if n >= FIRST_ROUND_REFS and sound:
+                # The first takes tried different references; later ones are new takes of the best sound reference,
+                # because the references further down the list clone worse
+                lead = max(sound, key=lambda x: x[0])[1]
+                if lead.get("ref"):
+                    item["force_ref"] = (lead["ref"], lead.get("voice_type"))
             result = self.tts.synthesize_sync(item, lang, vocals_path, full_script)
             if not result:
                 break
@@ -122,19 +163,19 @@ class SegmentSynchronizer:
             if result.get("audio_path") and total > 1:
                 result = self._keep(result, lang, idx, n)
             if problem is None:
-                sound.append((result.get("score", 1.0), result, duration))
+                sound.append((self._rank(result), result, duration))
                 continue
             score, problem = problem
-            if n + 1 < total and (n + 1 < self.versions or not sound):
+            if n + 1 < total and (n + 1 < versions or not sound):
                 logger.warning(f"[ID: {idx}] {problem}, synthesizing again with another voice reference")
             else:
                 logger.warning(f"[ID: {idx}] {problem}")
             if result.get("audio_path") and (best is None or score > best[0]):
                 best = (score, (result, duration, True))
         if sound:
-            score, result, duration = max(sound, key=lambda x: x[0])
+            rank, result, duration = max(sound, key=lambda x: x[0])
             if len(sound) > 1:
-                logger.debug(f"[ID: {idx}] Best of {len(sound)} sound takes: {result.get('voice_type')} ({score:.2f})")
+                logger.debug(f"[ID: {idx}] Best of {len(sound)} sound takes: {result.get('voice_type')} ({rank[0]:.2f})")
             return result, duration, False
         return best[1] if best else None
 

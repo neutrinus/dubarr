@@ -139,6 +139,17 @@ class TestTTSManager(unittest.TestCase):
         self.assertEqual(call.kwargs["max_duration"], 2.5)
         self.assertTrue(call.args[2].endswith("raw_pl_0.wav"))
 
+    def test_synthesize_item_takes_the_forced_reference_again(self):
+        item = {"speaker": "SPK1", "index": 0, "text": "Hello", "start": 0, "end": 2, "force_ref": ("dyn.wav", "DYNAMIC")}
+        with (
+            patch.object(self.manager, "_select_reference") as select,
+            patch("os.path.exists", return_value=True),
+            patch("os.path.getsize", return_value=5000),
+        ):
+            res = self.manager._synthesize_item(item, "pl", "vocals.wav", [])
+        select.assert_not_called()
+        self.assertEqual((res["payload"]["ref"], res["payload"]["voice_type"]), ("dyn.wav", "DYNAMIC"))
+
     def test_set_speaker_refs_resets_last_good(self):
         self.manager.last_good_samples["SPK1"] = "old.wav"
         self.manager.set_speaker_refs({"SPK3": "ref_SPK3.wav"})
