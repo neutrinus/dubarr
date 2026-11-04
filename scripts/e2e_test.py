@@ -123,7 +123,7 @@ def main():
     src_duration = float(src_meta["format"]["duration"])
     src_audio_count = sum(1 for s in src_meta["streams"] if s["codec_type"] == "audio")
 
-    from config import LANG_MAP, WHISPER_MODEL
+    from config import ISO_639_2, LANG_MAP, WHISPER_MODEL
     from main import AIDubber
 
     dubber = AIDubber()
@@ -157,8 +157,9 @@ def main():
             errors.append(f"no audio track titled '{title}'")
             continue
         tags = audio[idx].get("tags", {})
-        if tags.get("language") != lang:
-            errors.append(f"track '{title}' has language={tags.get('language')!r}, expected {lang!r}")
+        expected_lang = ISO_639_2.get(lang, lang)
+        if tags.get("language") != expected_lang:
+            errors.append(f"track '{title}' has language={tags.get('language')!r}, expected {expected_lang!r}")
 
         vol = mean_volume(clip, idx)
         if vol is None or vol < -50:
