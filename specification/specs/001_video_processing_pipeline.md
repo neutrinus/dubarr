@@ -129,6 +129,10 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
 *   **Reference subtitles:** `<video>.srt`, else `<video>.<lang>[.hi|.sdh].srt` in a non-target language (English and full
     subtitles preferred, forced subtitles skipped), else the first embedded subtitle stream not tagged with a target
     language. Files are read as UTF-8, else as Windows-1250 (common for Polish subtitles).
+    Cues that credit the subtitle makers are left out of every use (reference and target subtitles alike): a web
+    address or domain ("www.addic7ed.com", "napisy24.pl"), a subtitle site's name, "Original air date", or the words
+    they sign with followed by "by"/"and" ("Sync and corrections by", "Subtitles by") or a colon ("Tłumaczenie:",
+    "Synchro:"). MythBusters S11E07 dubbed "Sync and corrections by atrn97g for www.addic7ed.com".
 *   **Target-language subtitles:** `<video>.<lang>.srt` (ISO 639-1 or 639-2 code, e.g. `.pl.srt` / `.pol.srt`; full
     subtitles preferred over `.hi`/`.sdh`, forced subtitles skipped), else an embedded subtitle stream tagged with
     that language. They are a human translation, so they know the show's established names, terms, forms of address
@@ -141,7 +145,8 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
         `♪` removed) of at least 1 s that the transcription does not cover (less than a third of the cue) is speech
         Whisper did not hear: it becomes a line of the script with the cue's text and times, and the speaker the
         diarization finds there. Only when the subtitles are timed to this audio: at least 70% of the spoken cues
-        overlap the transcription (subtitles of another release are often shifted by seconds).
+        overlap the transcription (subtitles of another release are often shifted by seconds), and only where the
+        diarization hears somebody speak for at least 30% of the cue: a credit or an on-screen sign is not speech.
     2.  *Speaker names.* Hearing-impaired subtitles (`.en.hi.srt`, `.en.sdh.srt`) label speakers (`KIRK:`,
         `[SPOCK]`). The label most of a speaker's labelled cues carry (at least 2 cues, 60%) is given to the
         analysis as a hint for naming that speaker.

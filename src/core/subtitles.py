@@ -32,6 +32,21 @@ MIN_CUE_OVERLAP = 1 / 3  # share of a cue's duration that must lie inside a line
 
 _TIME = re.compile(r"(\d+):(\d{2}):(\d{2})[,.](\d{1,3})")
 _TAGS = re.compile(r"<[^>]+>|\{\\[^}]*\}")
+# Credits of the people who made the subtitles: never spoken (Spec 001, 2.3). A web address or domain, or the words
+# subtitle makers sign with ("Sync and corrections by", "Tłumaczenie:", "Original air date").
+_CREDIT = re.compile(
+    r"(https?://|www\.|\b[\w-]+\.(com|org|net|info|tv|pl|de|ru|eu|io|cc|me)\b"
+    r"|\b(subtitles?|subs|captions?|captioning|sync(ed|hro)?|corrections?|corrected|transcript|ripped|encoded"
+    r"|translated|translation|resync|timing)\s+(by|and)\b"
+    r"|\b(addic7ed|opensubtitles|subscene|podnapisi|napiprojekt|napisy24|titlovi|yify|tvsubtitles)\b"
+    r"|\boriginal air ?date\b|\b(tłumaczenie|przekład|synchro(nizacja)?|korekta|napisy)\s*:)",
+    re.IGNORECASE,
+)
+
+
+def is_credit(text: str) -> bool:
+    """A cue that credits the subtitle makers or advertises a site: "Sync and corrections by X for www.addic7ed.com"."""
+    return bool(_CREDIT.search(text or ""))
 
 
 def lang_codes(lang: str) -> set:
@@ -105,7 +120,9 @@ def parse_srt(text: str) -> List[Tuple[float, float, str]]:
                 break
             body = " ".join(_TAGS.sub("", x).strip() for x in lines[i + 1 :])
             body = re.sub(r"\s+", " ", body).strip()
-            if body:
+            if body and is_credit(body):
+                logger.info(f"Subtitles: credit cue left out: '{body[:80]}'")
+            elif body:
                 cues.append((_seconds(times[0]), _seconds(times[1]), body))
             break
     return cues
