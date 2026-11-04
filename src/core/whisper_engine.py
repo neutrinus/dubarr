@@ -104,10 +104,15 @@ def _min_word_prob(segment, words=None) -> Optional[float]:
     return round(min(probs), 3) if probs else None
 
 
+def _is_hallucination(text: str) -> bool:
+    """Empty or one of the phrases Whisper writes over noise and music (HALLUCINATIONS)."""
+    letters = "".join(ch for ch in text.lower() if ch.isalnum())
+    return not letters or letters in HALLUCINATIONS
+
+
 def _plausible(segment) -> bool:
     """A gap-pass segment Whisper is sure of: real speech, not a hallucination over noise."""
-    letters = "".join(ch for ch in segment.text.lower() if ch.isalnum())
-    if not letters or letters in HALLUCINATIONS:
+    if _is_hallucination(segment.text):
         return False
     if segment.no_speech_prob >= 0.5 or segment.avg_logprob < -0.8:
         return False
@@ -277,7 +282,9 @@ class WhisperManager:
                 vad_filter=False,
                 condition_on_previous_text=False,
             )
-            return " ".join(x.text.strip() for x in segments if x.no_speech_prob < 0.6).strip()
+            return " ".join(
+                x.text.strip() for x in segments if x.no_speech_prob < 0.6 and not _is_hallucination(x.text)
+            ).strip()
         except Exception as e:
             logger.warning(f"Whisper second hearing failed: {e}")
             return ""

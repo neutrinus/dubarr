@@ -103,7 +103,12 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
     over music or noise, nothing like the rest of the scene): such a line is not dubbed and the original stays
     audible. It never moves a line to another speaker; the voiceprint check (3) decides that. It does report doubts
     about a speaker ("SPEAKER_03 is described as Jenny Taft, but line 57 addresses him as Chris"): only a signal,
-    logged with a count per speaker and shown in the report's `speaker_doubt` column; nothing changes because of it.
+    logged with a count per speaker and shown in the report's `speaker_doubt` column. The only thing it changes: the
+    cast list no longer overrules that speaker's measured pitch (Spec 002, 2.3).
+    The second hearing leaves out known hallucinations ("We'll be right back.") like the gap pass does. When a line
+    the corrector changed ends with words that the same speaker's next line (within `SENTENCE_MAX_GAP`) starts with,
+    they are dropped from the next line: the second hearing of "...learning their answers to the game" heard into
+    the next line, and "ABCs. ABCs." was dubbed. A next line that is nothing but the repetition stays.
 
 ### 2.3 Stage 3: Global Context Analysis
 *   **Input:** Transcription script, reference subtitles, media metadata.

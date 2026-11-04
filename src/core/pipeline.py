@@ -414,6 +414,34 @@ class DubbingPipeline:
             s["index"] = i
         return kept
 
+    @staticmethod
+    def _trim_repeated_words(script):
+        """Drops words a corrected line repeats at the start of the same speaker's next line (Spec 001, 2.2c step 4).
+
+        The second hearing of an unsure line often hears into the next line: "...learning their ABCs." followed by
+        "ABCs. She was learning how to KO the competition." was dubbed with the word twice.
+        """
+
+        def norm(token):
+            return "".join(ch for ch in token.lower() if ch.isalnum())
+
+        for prev, line in zip(script, script[1:]):
+            if prev.get("asr") not in ("fixed", "guessed") or prev.get("speaker") != line.get("speaker"):
+                continue
+            if line["start"] - prev["end"] > SENTENCE_MAX_GAP:
+                continue
+            tail = [norm(t) for t in prev["text_en"].split()]
+            tokens = line["text_en"].split()
+            head = [norm(t) for t in tokens]
+            for k in range(min(6, len(tail), len(head) - 1), 0, -1):
+                if tail[-k:] == head[:k] and all(head[:k]):
+                    rest = " ".join(tokens[k:])
+                    logger.info(
+                        f"ASR check: [{line['start']:.1f}s] drops '{' '.join(tokens[:k])}' repeated from the line before"
+                    )
+                    line["text_en"] = rest[:1].upper() + rest[1:]
+                    break
+
     def _settle_energy(self, script, vocals_path):
         """Merges a shouting cluster into the same person's calm one (Spec 002, 2.3), then gives every line its
         energy class (Spec 001, 2.4)."""
@@ -986,6 +1014,7 @@ class DubbingPipeline:
             analysis_results.get("script_fixes") or {},
         )
         script = self._drop_hallucinations(script)
+        self._trim_repeated_words(script)
         self._settle_energy(script, vocals)
 
         refs = self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
@@ -1301,6 +1330,9 @@ class DubbingPipeline:
         sideline reporter; the designed voice and the series memory would then carry a woman's voice for him.
         """
         grammar = self._grammar_genders(script)
+        # The corrector doubts the name of these speakers ("Chris Rose is referring to himself in the third person"),
+        # so their cast entry may belong to someone else
+        doubted = {s.get("speaker") for s in (script or []) if s.get("speaker_doubt")}
         for spk, gender in grammar.items():
             self._set_measured_gender(spk, gender, "the subtitles' grammar says so")
         if MOCK_MODE:
@@ -1317,13 +1349,15 @@ class DubbingPipeline:
                     )
                 continue
             cast = cast_gender(getattr(self, "media_info", None) or {}, info.get("name", ""))
-            if gender == "female" and cast == "male":
+            if gender == "female" and cast == "male" and spk not in doubted:
                 # Shouting men and voices of animated or processed characters reach the female band; a low pitch
                 # does not happen to women, so only the male verdict overrules the cast (Star Trek: Kirk at 244 Hz)
                 logger.info(
                     f"Speaker {spk}: pitch {pitch:.0f} Hz, but the cast says '{info.get('name')}' is male: keeping male"
                 )
                 continue
+            if gender == "female" and cast == "male":
+                logger.info(f"Speaker {spk}: the corrector doubts the name '{info.get('name')}', so the pitch decides")
             self._set_measured_gender(spk, gender, f"pitch {pitch:.0f} Hz", pitch)
 
     def _audition_voices(self, all_drafts_by_lang):
