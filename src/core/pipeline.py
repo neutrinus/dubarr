@@ -669,7 +669,7 @@ class DubbingPipeline:
         text = " ".join(script[k]["text_en"].strip() for k in range(i, j + 1))
         return dict(seg, start=start, end=end, text_en=text)
 
-    def _extract_refs(self, script, vocals_path, ddir):
+    def _extract_refs(self, script, vocals_path, ddir):  # noqa: C901 - one pass over speakers and classes
         logger.info("Extracting Smart Weighted Normalized voice references (v2 - Scored 0-100)")
         self.speaker_refs = {}
         self.ref_quality = {}
@@ -763,7 +763,12 @@ class DubbingPipeline:
                 if clips:
                     paths = []
                     seen: Dict[str, int] = {}
+                    used_wavs = set()
                     for seg, score, wav_path, cls in clips:
+                        # The same test clip can win in two energy classes (identical start); move it once
+                        if wav_path in used_wavs:
+                            continue
+                        used_wavs.add(wav_path)
                         seen[cls] = seen.get(cls, 0) + 1
                         out = os.path.join(self.temp_dir, ref_file_name(spk, cls, seen[cls]))
                         shutil.move(wav_path, out)
