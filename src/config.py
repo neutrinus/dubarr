@@ -31,6 +31,9 @@ LLM_API_MODEL = os.environ.get("LLM_API_MODEL", "")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "600"))
 LLM_N_CTX = int(os.environ.get("LLM_N_CTX", "8192"))
+# CPU threads of the in-process model. More threads than cores make llama.cpp spin: 8 threads on a 4-core
+# runner ran at ~1.7 tokens/s.
+LLM_THREADS = int(os.environ.get("LLM_THREADS", "0")) or min(8, os.cpu_count() or 1)
 # Per-request completion budget for the bulk calls (analysis, ASR editor, drafts). A truncated answer
 # triggers one retry with double the budget, so a reasoning model cannot silently swallow the whole reply.
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "4096"))

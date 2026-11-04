@@ -50,6 +50,7 @@ Configuration is only through environment variables (read in `src/config.py`, th
 | `DEMUCS_TIMEOUT` | `1800` | Seconds allowed for the Demucs separation of one file (a 45-minute 720p episode takes ~8 min on a 3060). |
 | `LLM_MODEL_REPO` / `LLM_MODEL_FILE` | `bartowski/google_gemma-3-12b-it-GGUF` / `google_gemma-3-12b-it-Q4_K_M.gguf` | GGUF downloaded to `DATA_DIR/models` on first use (in-process LLM only). |
 | `LLM_N_CTX` | `8192` | Context size of the in-process model. |
+| `LLM_THREADS` | cores, at most 8 | CPU threads of the in-process model (more threads than cores make llama.cpp crawl). |
 | `LLM_API_URL` | none | OpenAI-compatible server (`http://host:8080/v1`, e.g. llama-server). When set, no LLM is loaded in-process. |
 | `LLM_API_MODEL` / `LLM_API_KEY` | none | Model name and key sent to that server (llama-server ignores both). |
 | `LLM_TIMEOUT` | `600` | Seconds per request to that server. |

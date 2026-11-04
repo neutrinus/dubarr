@@ -37,6 +37,7 @@ from config import (
     LLM_API_KEY,
     LLM_TIMEOUT,
     LLM_N_CTX,
+    LLM_THREADS,
     LLM_MAX_TOKENS,
     DUB_SYLLABLES_PER_SECOND,
     TRANSLATION_WINDOW,
@@ -243,7 +244,7 @@ class LLMManager:
                 main_gpu=main_gpu,
                 n_ctx=LLM_N_CTX,
                 n_batch=512,
-                n_threads=8,
+                n_threads=LLM_THREADS,
                 flash_attn=(n_gpu_layers > 0),  # Flash Attn only works with CUDA
                 verbose=False,
             )
