@@ -118,8 +118,9 @@ duplicates content, because the target language orders the sentence differently.
 *   **Output:** `final_{lang}_{index}.wav` segments, sorted and grouped by language.
 *   **Production report:** after the sync loop, one log line per language summarizes it (lines, slot fill, statuses,
     take-check similarity). With `DEBUG=1`, `report_{lang}.tsv` in the debug folder lists every line: time, speaker,
-    slot and limit, take duration and fill, status, voice reference type, similarity, attempts, source text, dub text
-    and what the take check heard.
+    slot and limit, take duration and fill, status, voice reference type, judge score, voice match, text match,
+    similarity, attempts, source text, dub text, what the take check's Whisper heard (`heard`) and what the judge's CTC
+    model read (`ctc_heard`), side by side to calibrate the judge against Whisper.
 
 #### 2.5a Draft translation
 The goal is a complete translation that fits the timing. Run time is secondary.

@@ -242,6 +242,11 @@ class TakeJudge:
 
     def text_match(self, take_path: str, text: str, lang: str) -> Optional[float]:
         """How well the text fits the take (0..1); None when it cannot tell."""
+        reading = self.text_reading(take_path, text, lang)
+        return None if reading is None else reading[0]
+
+    def text_reading(self, take_path: str, text: str, lang: str) -> Optional[Tuple[float, str]]:
+        """(text match 0..1, what the CTC model read); None when it cannot tell."""
         with self._lock:
             loaded = self._align_model(lang)
             if loaded is None:
@@ -252,7 +257,7 @@ class TakeJudge:
 
                 samples = self._samples_16k(take_path)
                 if samples is None or len(samples) == 0:
-                    return 0.0
+                    return 0.0, ""
                 vocab = processor.tokenizer.get_vocab()
                 # Only letters the model can write: digits are spoken as words the text does not spell
                 expected = "".join(ch if (ch in vocab or ch == " ") else " " for ch in text.lower())
@@ -263,7 +268,7 @@ class TakeJudge:
                 # A likelihood of the text itself (exp(-CTC loss)) depends on how sure the model is of the voice:
                 # clear Polish from a cloned shouting commentator scored 0.0 there; what it reads does not
                 heard = processor.tokenizer.decode(ids, group_tokens=False)
-                return text_similarity(expected, heard)
+                return text_similarity(expected, heard), heard
             except Exception as e:
                 logger.warning(f"Take judge: text match failed: {e}")
                 return None
@@ -271,7 +276,7 @@ class TakeJudge:
     # --- all layers ---
 
     def judge(self, text: str, take_path: str, lang: str, ref_path: Optional[str] = None) -> Dict:
-        """{"score", "problem", "voice", "text_match"}; score 0..1, problem None for a sound take.
+        """{"score", "problem", "voice", "text_match"} (and "ctc_heard", the CTC reading); score 0..1, problem None for a sound take.
 
         The score is the text match (1.0 for lines it skips), halved when the voice does not match; a take with an
         artifact scores 0.
@@ -286,8 +291,9 @@ class TakeJudge:
         voice = self.voice_match(take_path, ref_path)
         out["voice"] = None if voice is None else round(voice, 2)
         if count_syllables(text, lang) >= 4:  # interjections ("Wow!") are too short to score
-            match = self.text_match(take_path, text, lang)
-            out["text_match"] = None if match is None else round(match, 2)
+            reading = self.text_reading(take_path, text, lang)
+            if reading is not None:
+                out["text_match"], out["ctc_heard"] = round(reading[0], 2), reading[1]
         score = out["text_match"] if out["text_match"] is not None else 1.0
         if voice is not None and voice < JUDGE_MIN_VOICE:
             out["problem"] = f"WRONG VOICE (voice match {voice:.2f})"

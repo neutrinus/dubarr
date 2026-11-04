@@ -25,6 +25,7 @@ COLUMNS = [
     "source",
     "dub",
     "heard",
+    "ctc_heard",
 ]
 
 
@@ -64,6 +65,7 @@ def report_rows(script: List[Dict], results: List[Dict]) -> List[Dict]:
                 "source": line.get("text_en", line.get("text", "")),
                 "dub": res.get("final_text", ""),
                 "heard": res.get("heard") or "",
+                "ctc_heard": res.get("ctc_heard") or "",
             }
         )
     return rows
