@@ -34,8 +34,6 @@ LLM_N_CTX = int(os.environ.get("LLM_N_CTX", "8192"))
 # Per-request completion budget for the bulk calls (analysis, ASR editor, drafts). A truncated answer
 # triggers one retry with double the budget, so a reasoning model cannot silently swallow the whole reply.
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "4096"))
-# Optional hint about the production, overriding the series/episode parsed from the file name.
-SERIES_CONTEXT = os.environ.get("SERIES_CONTEXT", "")
 
 print(f"DEBUG: config.BASE_DIR={BASE_DIR}", flush=True)
 print(f"DEBUG: config.DATA_DIR={DATA_DIR}", flush=True)
@@ -217,6 +215,20 @@ LANG_MAP = {
     "ja": "Japanese",
     "zh": "Chinese",
     "ru": "Russian",
+}
+
+# ISO 639-2 codes: the language tags of the dubbed tracks (MP4 drops two-letter codes) and of existing tracks
+ISO_639_2 = {
+    "pl": "pol",
+    "en": "eng",
+    "de": "ger",
+    "es": "spa",
+    "fr": "fra",
+    "it": "ita",
+    "ru": "rus",
+    "ja": "jpn",
+    "zh": "chi",
+    "ko": "kor",
 }
 
 TARGET_LANGS = os.environ.get("TARGET_LANGS", "pl").split(",")

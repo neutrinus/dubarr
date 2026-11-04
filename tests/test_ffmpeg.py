@@ -20,6 +20,25 @@ class TestFFmpeg(unittest.TestCase):
         mock_check_output.assert_called_once()
 
     @patch("subprocess.run")
+    def test_mux_keeps_original_streams(self, mock_run):
+        FFmpegWrapper.mux_video("in.mkv", [("pl.wav", "pl", "Polish"), ("de.wav", "de", "German")], "out.mkv", "aac", "192k")
+        args = mock_run.call_args[0][0]
+        joined = " ".join(args)
+        # dubbed tracks first, then the original audio, subtitles and attachments
+        self.assertIn("-map 1:a -map 2:a -map 0:a -map 0:s? -map 0:t?", joined)
+        # only the dubbed tracks are encoded
+        self.assertIn("-c copy -c:a:0 aac -b:a:0 192k -c:a:1 aac -b:a:1 192k", joined)
+        self.assertIn("language=pol", args)
+        self.assertIn("language=ger", args)
+        self.assertIn("title=AI - Polish", args)
+        self.assertFalse(any(a.startswith("handler_name=") for a in args))
+
+    @patch("subprocess.run")
+    def test_mux_mp4_names_the_track_handler(self, mock_run):
+        FFmpegWrapper.mux_video("in.mp4", [("pl.wav", "pl", "Polish")], "out.mp4")
+        self.assertIn("handler_name=AI - Polish", mock_run.call_args[0][0])
+
+    @patch("subprocess.run")
     def test_mean_volume(self, mock_run):
         mock_run.return_value.stderr = "[Parsed_volumedetect_0] mean_volume: -23.4 dB\n[...] max_volume: -3.0 dB"
         self.assertEqual(FFmpegWrapper.mean_volume("a.mp3", 1.0, 2.0), -23.4)
@@ -47,7 +66,7 @@ class TestMuxCodecs(unittest.TestCase):
         FFmpegWrapper.mux_video("in.mkv", [("pl.wav", "pl", "Polish"), ("de.wav", "de", "German")], "out.mkv", "ac3", "384k")
         args = mock_run.call_args[0][0]
         joined = " ".join(args)
-        self.assertIn("-c:a copy", joined)  # original audio untouched
+        self.assertIn("-c copy", joined)  # original audio, subtitles and attachments untouched
         self.assertIn("-c:a:0 ac3 -b:a:0 384k", joined)
         self.assertIn("-c:a:1 ac3 -b:a:1 384k", joined)
         self.assertNotIn("-c:a:2", joined)

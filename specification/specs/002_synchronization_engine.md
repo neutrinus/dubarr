@@ -105,7 +105,7 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
         under it because the mix keeps the original audio).
 
 ### 2.3 Voice Reference Strategy
-**Voice audition** (before the sync loop, `TAKE_CHECK` `on` or `audition`). Each speaker's reference candidates
+**Voice audition** (before the sync loop, `TAKE_CHECK` `judge` or `whisper`). Each speaker's reference candidates
 (Spec 001, 2.4) synthesize the same test line: the speaker's own draft line (first target language) closest to
 18 syllables, at natural pace, preferring a line without glossary respellings ("Ajś-łejw" is heard as "Ice Wave",
 which lowers the score of every candidate alike). The judge scores each take as in 2.2 step 4 (its judge score). The candidates

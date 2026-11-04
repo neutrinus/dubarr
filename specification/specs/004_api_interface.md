@@ -4,12 +4,13 @@
 The Dubarr API provides a REST interface for submitting video dubbing tasks, monitoring progress, and retrieving results. It also includes a WebSocket endpoint for real-time logs.
 
 ## 2. Base URL
--   **Local:** `http://localhost:8000` (Default)
--   **Production:** `http://dubarr.example.com` (Configurable)
+`http://<host>:8000` (`PORT` changes the port).
 
 ## 3. Authentication
 -   **Mechanism:** Basic Auth (`Authorization: Basic <base64_credentials>`)
--   **Credentials:** `API_USER` and `API_PASS` environment variables.
+-   **Credentials:** `API_USER` and `API_PASS` environment variables (default `dubarr` / `dubarr`).
+-   **Protected:** `/upload`, `/webhook`, `/download`, `/debug`. The dashboard, `/health`, `/ws/logs` and the
+    `/retry`, `/purge`, `/delete` form actions have no auth; dubarr is meant for a trusted home network.
 
 ## 4. Endpoints
 
@@ -22,29 +23,24 @@ Uploads a video file and queues it for processing.
 -   **Response:** `303 See Other` (Redirects to Dashboard).
 -   **Task Metadata:**
     -   Extracts metadata (duration, audio languages) via FFmpeg.
-    -   Stores file in `videos/`.
+    -   Stores the file in `/app/videos/` (the app's `videos` folder); an existing file of the same name is refused.
     -   Creates a `QUEUED` task.
 
 #### `POST /webhook`
-Registers an external file path for processing (e.g., from a shared volume).
+Registers an existing file for processing. The path must exist inside the container; a relative path is resolved
+against `/app/videos`. Two payloads are accepted:
+-   `{"path": ...}` (scripts, cURL);
+-   the Sonarr/Radarr built-in **Webhook** connection: the file is `movieFile.path` / `episodeFile.path`, else the
+    `relativePath` joined with `movie.folderPath` / `series.path`. The `Test` event (sent when the connection is
+    saved) returns `{"status": "test"}`; other events without a file (Grab, Rename, ...) return `{"status": "ignored"}`.
+    Neither queues anything. Use the *On File Import* and *On File Upgrade* triggers.
 -   **Method:** POST (JSON)
--   **Payload:**
-    ```json
-    {
-        "path": "/absolute/path/to/video.mp4",
-        "eventType": "optional_event_type"
-    }
-    ```
--   **Response:**
-    ```json
-    {
-        "status": "queued",
-        "path": "/absolute/path/to/video.mp4"
-    }
-    ```
+-   **Payload:** `{"path": "/absolute/path/to/video.mp4"}`, or a Sonarr/Radarr webhook body.
+-   **Response:** `{"status": "queued" | "re-queued" | "ignored", "path": "<absolute path>"}`. A known path that is
+    finished or failed is queued again; one that is queued or processing is ignored.
 
 #### `GET /download/{task_id}`
-Downloads the processed video file.
+Downloads the task's file (after a successful task, the dubbed file that replaced the source in place).
 -   **Method:** GET
 -   **Auth Required:** Yes
 -   **Response:**
@@ -75,6 +71,7 @@ Retrieves intermediate processing results (JSON artifacts).
     -   `transcription`: Raw transcription with timestamps.
     -   `context`: Global story context and glossary.
     -   `speakers`: Identified speaker profiles.
+    -   `media`: Media metadata (Stage 2b).
     -   `production`: Final translated segments per language.
 -   **Response:** `200 OK` (JSON).
 
@@ -104,7 +101,7 @@ Returns system health status and queue statistics.
     ```
 
 #### `WS /ws/logs`
-WebSocket endpoint for streaming live logs from `logs/processing.log`.
+WebSocket endpoint for streaming live logs from `DATA_DIR/logs/processing.log`.
 -   **Protocol:** WebSocket
 -   **Behavior:**
     -   Sends last 50 lines on connect.

@@ -3,22 +3,34 @@
 > [!NOTE]
 > This is a hobby project ("toy"), created entirely in **vibe-coding** mode (AI-driven development).
 
-An automated system for creating professional AI-powered dubbing (voice-over) using **fully local** AI models. Designed to integrate seamlessly with the `*arr` stack (Radarr/Sonarr) for feature-length movies and TV series.
+An automated system for creating professional AI-powered dubbing (voice-over) using **fully local** AI models. Designed to sit next to the `*arr` stack (Radarr/Sonarr) for feature-length movies and TV series.
 
-**100% Private. 100% Local. No Cloud APIs.**
+**Private and local: no cloud AI APIs.** The only optional network calls are show/movie metadata lookups (TVmaze,
+TMDB), which `METADATA_LOOKUP=local` turns off.
 
 ---
 
 ## 🌟 Key Features
-*   **In-Place Multi-Track Processing**: Adds new "AI - [Language]" audio tracks to your existing files (MKV, MP4, MOV) without overwriting original audio.
-*   **Feature-Length Optimization**: Designed for 2h+ movies, maintaining character consistency and context throughout.
-*   **Intelligent Audio Sync**: Uses duration-aware translation and "Ripple Shifting" to prevent audio overlaps and maintain perfect lip-sync.
-*   **Character Consistency**: Uses advanced diarization to identify speakers and assign consistent AI voices.
-*   **Cinematic Quality**: Implements EBU R128 normalization, aggressive ducking (12:1), and "Ambient Ghosting" (preserving room acoustics) to blend AI voices perfectly with original background.
-*   **Subtitle-Assisted Transcription**: Automatically detects and uses external or embedded subtitles to ensure perfect spelling of names and terms.
-*   **Multi-Format Support**: Works with MKV, MP4, and MOV containers, preserving the original container format.
-*   **Multi-GPU Support**: Optimized to split LLM, Audio Analysis, and TTS tasks across multiple cards for maximum speed.
-*   **Automatic Strategy Selection**: Scales from Multi-GPU setups to Single-GPU or CPU-only modes based on detected VRAM.
+*   **In-Place Multi-Track Processing**: Adds "AI - [Language]" audio tracks in front of the original audio of your
+    existing files (MKV, MP4, MOV). The original audio stays in the file, and the untouched source is kept as `<file>.bak`.
+*   **Whole-Sentence, Timing-Aware Translation**: Lines are translated by sentences, in windows with context, with a
+    syllable budget per line and a second pass that restores lost information. Short and long variants let each line
+    fit its slot without dropping content.
+*   **Voice Cloning That Checks Itself**: OmniVoice clones each speaker from their own clips (or a designed voice when
+    no clean clip of theirs clones well), starting from a clip of the line's own energy (calm, lively, shout). Every
+    line is synthesized several times and a take judge (artifacts, voice match, text match) keeps the best take;
+    lines that stay unintelligible are left undubbed rather than garbled.
+*   **Series Memory**: Episodes of a series share name pronunciations, subtitle terms and a voice bank, so the same
+    person keeps the same voice from episode to episode.
+*   **Show and Movie Context**: Recognizes Sonarr/Radarr file names and fetches synopsis and cast (`.nfo`, TVmaze,
+    TMDB) so the translator knows who speaks and uses the right grammatical gender.
+*   **Subtitle-Assisted Script**: Uses external or embedded subtitles as ground truth for names and terms, target-
+    language subtitles as a hint for the translator, and SDH labels to name speakers. Unsure lines are heard again and
+    each line's speaker is checked by its voiceprint.
+*   **Cinematic Mix**: The dub is mixed over the original audio with sidechain ducking and a low-passed "ambient ghost"
+    of the original, so the room sound and effects stay.
+*   **GPU-Aware**: Spreads the LLM and speech synthesis over several cards, serializes them on one card, or runs on
+    the CPU. The LLM can also run in an existing llama.cpp / OpenAI-compatible server.
 
 ---
 
@@ -40,14 +52,16 @@ Older comparison demo (Polish, French and German, GPU models):
 
 ## 💻 Hardware Requirements
 
-The system automatically detects your hardware and chooses the best processing strategy.
+Dubarr detects your hardware at startup: with two or more GPUs the LLM and speech synthesis run side by side on
+different cards; with one GPU or none, an inference lock lets only one model work at a time. Whisper, pyannote and
+Demucs are loaded for their stage and unloaded right after. The take judge's small models run on the CPU.
 
-| Setup | VRAM | Strategy | Description |
+| Setup | VRAM | Mode | Description |
 | :--- | :--- | :--- | :--- |
-| **Multi-GPU** | ~20GB combined (e.g. 12GB + 8GB) | **PARALLEL** | LLM on one card, speech synthesis on the other. Needs ~6GB free on the TTS card for long lines. |
-| **Single GPU** | 20GB+ (e.g. 3090/4090) | **PARALLEL** | Everything runs on one card simultaneously. |
-| **Single GPU** | 12-16GB (e.g. 3060 12GB) | **SEQUENTIAL** | Uses an **Inference Lock** to swap between models, preventing Out-Of-Memory errors. |
-| **CPU Only** | N/A (32GB RAM rec.) | **SEQUENTIAL** | Models run on CPU in 8-bit/fp32. LLM and Whisper are 10-20x slower; speech synthesis is **15-40x slower** than realtime (a 10s line takes 2-4 min on 8 cores). |
+| **Multi-GPU** | ~20GB combined (e.g. 12GB + 8GB) | parallel | LLM on one card, speech synthesis on the other. Needs ~6GB free on the TTS card for long lines. |
+| **Single GPU** | 12GB+ (e.g. 3060 12GB) | serialized | The inference lock switches between the LLM and the TTS, preventing Out-Of-Memory errors. |
+| **External LLM** | ~6GB for the TTS | parallel | `LLM_API_URL` points at a llama.cpp / OpenAI-compatible server; dubarr loads no LLM itself. |
+| **CPU Only** | N/A (32GB RAM rec.) | serialized | LLM and Whisper are 10-20x slower; speech synthesis is **15-40x slower** than realtime (a 10s line takes 2-4 min on 8 cores). |
 
 Measured on a 3060 12GB + 3070 8GB pair, dubbing one 10-minute episode (720p, one target language):
 
@@ -59,18 +73,15 @@ Measured on a 3060 12GB + 3070 8GB pair, dubbing one 10-minute episode (720p, on
 | Speech synthesis (OmniVoice) | **up to 6 GB** for very long lines | 3:50 |
 | Mix + mux | – | 0:15 |
 
+These timings predate several takes per line (`TAKE_VERSIONS=4`, 6 for short lines) and the take judge, so expect
+speech synthesis to take several times longer now.
+
 > [!TIP]
 > Sharing a card with another service (a household `llama-server`, Jellyfin transcoding, ...)? Keep about
 > **6 GB free** on the card that runs speech synthesis. Dubarr puts the TTS server on the card with the most free
 > VRAM, so if the LLM hogs the small card, give it a smaller share of that card (e.g. llama.cpp
 > `--tensor-split 28,2` with more `--n-cpu-moe` layers) instead of shrinking its context. The peak also grows with
 > the length of a single line, which is why long lines are synthesized in ~10s chunks.
-
-> [!TIP]
-> Sharing a card with another service (a household `llama-server`, Jellyfin transcoding, ...)? Keep about
-> **5 GB free** for OmniVoice (≈2 GB for XTTS v2). Dubarr puts the TTS server on the card with the most free
-> VRAM, so if the LLM hogs the small card, give it a smaller share of that card (e.g. llama.cpp
-> `--tensor-split 27,3` plus a few more `--n-cpu-moe` layers) instead of shrinking the context.
 >
 > With no headroom at all, set `TTS_DEVICE=cpu`: dubbing then runs on the CPU, the GPUs stay with the LLM,
 > and synthesis takes roughly 10-30x longer than on a GPU.
@@ -79,18 +90,19 @@ Measured on a 3060 12GB + 3070 8GB pair, dubbing one 10-minute episode (720p, on
 
 ## ⚡ Performance & Speed
 
-Processing time depends on your hardware and the number of target languages.
-
-*   **Rule of Thumb**: Expect processing to take approximately **2x to 3x the video duration** per language on a modern GPU (e.g., RTX 3090/4090).
-*   **Example**: A 10-minute video dubbed into 3 languages (`pl`, `de`, `fr`) takes about 20-30 minutes to complete.
-*   **Parallelism**: If you have multiple GPUs, the system will automatically utilize them to speed up LLM and TTS tasks simultaneously.
+Dubarr optimizes for dub quality, not speed: it translates in several passes, synthesizes every line several times
+and judges each take. Processing takes a few times the video duration per target language on a GPU and grows with
+the number of languages and speakers. Most of the time goes to the LLM and to speech synthesis.
 
 ---
 
 ## 🚀 Getting Started
 
 ### 1. Prerequisites
-*   **Hugging Face Token**: Required for Pyannote 3.1 (Diarization). [Accept terms here](https://huggingface.co/pyannote/speaker-diarization-3.1).
+*   **NVIDIA GPU** with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/) (see the hardware table).
+*   **Hugging Face Token** for pyannote (speaker diarization and voiceprints). Accept the terms of
+    [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) with the
+    account that owns the token. All other models are downloaded on first use into `DATA_DIR`.
 
 ### 2. Deployment (Docker Compose)
 The easiest way to run `dubarr` is using Docker Compose. The image is automatically built and published to `ghcr.io`.
@@ -127,41 +139,77 @@ services:
     restart: unless-stopped
 ```
 
-### 3. Usage
-`dubarr` works as a service. You send tasks via a Webhook.
+Mount the media library so that the paths you send to dubarr exist inside the container. Using the same path as in
+Sonarr/Radarr (e.g. `/tv:/tv`) saves you from translating paths.
 
-**Manual Trigger (cURL):**
+### 3. Usage
+`dubarr` works as a service. Queue a file with the webhook, or upload one on the dashboard (`http://localhost:8000/`).
+
 ```bash
 curl -u dubarr:dubarr -X POST http://localhost:8000/webhook \
   -H "Content-Type: application/json" \
   -d '{"path": "/movies/Diuna/Dune.mkv"}'
 ```
 
+**Sonarr / Radarr:** add a *Webhook* connection (Settings → Connect) with the *On File Import* and *On File Upgrade*
+triggers, URL `http://<dubarr-host>:8000/webhook`, method POST, and the `API_USER` / `API_PASS` credentials. Dubarr
+reads the imported file's path from their payload, so mount the library at the same path in both containers.
+
+![Radarr webhook connection](assets/radarr_config.png)
+
+(The screenshot uses port 8080; the default is 8000. Fill in the username and password.)
+Other endpoints (`/download`, `/retry`, `/debug`, `/health`, `/ws/logs`) are described in
+[Spec 004](specification/specs/004_api_interface.md).
+
+### 4. Configuration
+Everything is configured with environment variables. The ones you are most likely to touch:
+
+| Variable | Default | Meaning |
+| :--- | :--- | :--- |
+| `TARGET_LANGS` | `pl` | Comma-separated target languages. |
+| `HF_TOKEN` | none | Hugging Face token (required). |
+| `LLM_API_URL` / `LLM_API_MODEL` | none | Use an existing OpenAI-compatible server (e.g. `http://llama:8080/v1`) instead of loading Gemma 3 12B in-process. |
+| `TTS_DEVICE` | `auto` | `cpu` keeps the GPUs free for other services (much slower). |
+| `AUDIO_CODEC` | `aac` | Codec of the dubbed tracks: `aac` plays in browsers and on phones, `ac3`/`eac3` suit AV receivers. |
+| `METADATA_LOOKUP` / `TMDB_API_KEY` | `on` / none | Show/movie context: `.nfo`, then TVmaze (episodes) or TMDB (movies, needs a key); `local` or `off`. |
+| `SERIES_MEMORY` | `on` | Share name pronunciations and voices between the episodes of a series. |
+| `DEBUG` | `0` | Keep intermediate files and a per-line report in `videos/debug_<name>/`. |
+| `API_USER` / `API_PASS` | `dubarr` / `dubarr` | Basic auth for the API. |
+
+The full list, with every tuning knob, is in [Spec 005](specification/specs/005_deployment_and_configuration.md#2-configuration).
+
 ---
 
 ## 🏗️ The Pipeline (Step-by-Step)
 
-The system processes each video through 7 major stages:
+1.  **Audio Separation**: Demucs `htdemucs_ft` isolates the voices from music and effects.
+2.  **Audio Analysis**: pyannote finds who speaks when; faster-whisper (`large-v3-turbo`) transcribes the original
+    mix, with a second pass for speech under loud noise. Unsure lines are heard again and checked against subtitles;
+    each line's speaker is checked by its voiceprint. Lines are joined into whole sentences, each with a time budget.
+    The show/episode or movie is identified and its synopsis and cast are fetched.
+3.  **Global Analysis**: the LLM (Gemma 3 12B in-process, or your own server) writes a summary, speaker profiles and
+    a pronunciation glossary for names, and corrects transcription errors (using subtitles when available).
+4.  **Voice References**: the cleanest clips of each speaker are picked per energy class (calm, lively, shout), plus
+    voice-bank clips from earlier episodes of the series.
+5.  **Production**: translation in windows with per-line syllable budgets and a completeness review; a voice
+    audition ranks each speaker's references; then every line is synthesized with OmniVoice, judged, and shortened or
+    restored by the LLM until it fits its slot.
+6.  **Final Mix**: the dub goes over the original audio with sidechain ducking and an "ambient ghost" of the original.
+7.  **Muxing**: the "AI - [Language]" tracks are added to the file in place.
 
-1.  **Stage 1: Audio Separation (Demucs)**: Uses `htdemucs_ft` to isolate vocals from background music and effects.
-2.  **Stage 2: Audio Analysis (Whisper/Pyannote)**:
-    *   **Diarization**: Recognizes who speaks and when (using `pyannote/speaker-diarization-community-1`).
-    *   **Transcription**: Converts speech to text using Whisper Large-v3.
-3.  **Stage 3: Global Analysis (LLM Stage 1 & 2)**: Gemma 3 12B analyzes the full script to create plot summaries and phonetic glossaries for characters.
-4.  **Stage 4: Transcription Correction (Editor)**: Fixes ASR errors while maintaining standard orthography. Uses **reference subtitles** (if found) as ground truth for proper nouns.
-5.  **Stage 5: Production (Parallel)**:
-    *   **Duration-Aware Translation**: Adapts text for dubbing using a strict duration-matching algorithm (audio <= original window) with up to 5 refinement attempts.
-    *   **Resource Management (RPC)**: Uses an internal RPC layer to parallelize production across multiple target languages while serializing GPU access via priority queues.
-    *   **Synthesis (OmniVoice)**: Generates the new audio track with cloned voices and real-time artifact guards (ZCR checking). OmniVoice clones from 3-10 s clips of each line, so the dub keeps the scene's emotion, and squeezes over-long lines into their slot (at most 1.25x faster).
-6.  **Stage 6: Final Mix**: Aggressive sidechain ducking (12:1 ratio) and Ambient Ghosting (low-pass original audio) for a rich, cinematic audio field.
-7.  **Stage 7: Muxing**: Assembles the final video with all new tracks named "AI - [Language]".
+The detailed behaviour is specified in [`specification/`](specification/): the pipeline in
+[Spec 001](specification/specs/001_video_processing_pipeline.md), the sync loop and take judge in
+[Spec 002](specification/specs/002_synchronization_engine.md), the series memory in
+[Spec 006](specification/specs/006_series_memory.md).
 
 ---
 
 ## 📊 Monitoring & Debugging
 *   **Web Dashboard**: Access the management interface at `http://localhost:8000/` to view the task queue, monitor video metadata (size, duration, languages), and track live processing progress with real-time timers.
 *   **Live Logs**: Integrated WebSocket-based log viewer in the dashboard.
-*   **Artifacts**: With `DEBUG=1`, individual audio segments and LLM translations are saved alongside the video for quality auditing.
+*   **Artifacts**: With `DEBUG=1`, individual audio segments, LLM translations and `report_<lang>.tsv` (every line
+    with its timing, voice reference, judge score, source and dub text) are saved in `videos/debug_<name>/`.
+*   **Development**: see [AGENTS.md](AGENTS.md) for the repository map, tests and conventions.
 
 ---
 

@@ -21,7 +21,7 @@ from config import (
     REF_AUDITION_CANDIDATES,
     AUDITION_LINE_REF_MIN,
 )
-from config import VOICE_DESIGN, GLOSSARY_MODE, JUDGE_MIN_TEXT, ASR_VERIFY, EMOTION_REFS
+from config import VOICE_DESIGN, GLOSSARY_MODE, JUDGE_MIN_TEXT, ASR_VERIFY, EMOTION_REFS, ISO_639_2
 from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
@@ -57,19 +57,6 @@ logger = logging.getLogger(__name__)
 
 # A short reference clip grows with the same speaker's lines across pauses up to this long (Spec 001, 2.4)
 CLIP_JOIN_GAP = 0.6
-
-ISO_639_2 = {
-    "pl": "pol",
-    "en": "eng",
-    "de": "ger",
-    "es": "spa",
-    "fr": "fra",
-    "it": "ita",
-    "ru": "rus",
-    "ja": "jpn",
-    "zh": "chi",
-    "ko": "kor",
-}
 
 
 # Voice reference candidates per speaker that are cut and checked for noise (ZCR), best scored first

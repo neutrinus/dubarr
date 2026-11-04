@@ -69,6 +69,53 @@ def test_webhook_success(mock_db):
             assert response.json()["status"] == "queued"
 
 
+def _post_webhook(mock_db, body):
+    with patch("infrastructure.ffmpeg.FFmpegWrapper.get_metadata", return_value={}):
+        with patch("os.path.getsize", return_value=1000):
+            mock_db.add_task.return_value = "queued"
+            return client.post("/webhook", json=body, auth=("testuser", "testpass"))
+
+
+def test_webhook_radarr_payload(mock_db):
+    body = {
+        "eventType": "Download",
+        "movie": {"title": "Dune", "folderPath": "/movies/Dune (2021)"},
+        "movieFile": {"relativePath": "Dune (2021).mkv", "path": "/movies/Dune (2021)/Dune (2021).mkv"},
+    }
+    response = _post_webhook(mock_db, body)
+    assert response.status_code == 200
+    assert response.json()["path"] == "/movies/Dune (2021)/Dune (2021).mkv"
+    assert mock_db.add_task.call_args[0][0] == "/movies/Dune (2021)/Dune (2021).mkv"
+
+
+def test_webhook_sonarr_payload_without_full_path(mock_db):
+    body = {
+        "eventType": "Download",
+        "series": {"title": "BattleBots", "path": "/tv/BattleBots"},
+        "episodeFile": {"relativePath": "Season 1/BattleBots - S01E01.mkv"},
+    }
+    response = _post_webhook(mock_db, body)
+    assert response.json()["path"] == "/tv/BattleBots/Season 1/BattleBots - S01E01.mkv"
+
+
+def test_webhook_arr_test_event_queues_nothing(mock_db):
+    response = _post_webhook(mock_db, {"eventType": "Test", "movie": {"title": "Test Title"}})
+    assert response.status_code == 200
+    assert response.json()["status"] == "test"
+    mock_db.add_task.assert_not_called()
+
+
+def test_webhook_arr_event_without_file_is_ignored(mock_db):
+    response = _post_webhook(mock_db, {"eventType": "Grab", "movie": {"title": "Dune"}})
+    assert response.json()["status"] == "ignored"
+    mock_db.add_task.assert_not_called()
+
+
+def test_webhook_without_path_is_rejected(mock_db):
+    response = _post_webhook(mock_db, {})
+    assert response.status_code == 400
+
+
 def test_delete_task(mock_db):
     response = client.post("/delete/1", follow_redirects=False)
     assert response.status_code == 303  # Redirects to /
