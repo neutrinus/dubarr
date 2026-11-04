@@ -105,6 +105,10 @@ def analyze_audio(
     return diar_result, trans_result, durations, prints
 
 
+# The last filter of the final mix (Spec 001, 2.6): peaks at most ~-1.5 dBFS
+FINAL_LIMITER = "alimiter=limit=0.84:level=disabled"
+
+
 def mix_audio(bg: str, clips: List, out: str, work_dir: str = TEMP_DIR):
     """Mixes background audio with dubbed clips using sidechain compression and batching."""
     if not clips:
@@ -184,7 +188,9 @@ def mix_audio(bg: str, clips: List, out: str, work_dir: str = TEMP_DIR):
         "[bg_main]aformat=sample_rates=48000:channel_layouts=stereo,loudnorm=I=-24:TP=-2:LRA=7,acompressor=threshold=-20dB:ratio=2:attack=20:release=200[bg_fixed]",
         "[bg_ghost_raw]aformat=sample_rates=48000:channel_layouts=stereo,lowpass=f=400,volume=0.05[bg_ghost]",
         "[bg_fixed][trigger]sidechaincompress=threshold=0.005:ratio=12:attack=30:release=600[bg_ducked]",
-        f"[bg_ducked][bg_ghost][speech_out]amix=inputs=3:weights=1 1 1:normalize=0,alimiter=limit=0.95{trim}[out]",
+        # level=disabled: alimiter's default auto-level scales the limited signal back up to 0 dBFS, which clipped
+        # the AC3 track (S01E03: +0.7 dBTP, 18,009 samples at full scale); 0.84 leaves ~1.5 dB for the encoder
+        f"[bg_ducked][bg_ghost][speech_out]amix=inputs=3:weights=1 1 1:normalize=0,{FINAL_LIMITER}{trim}[out]",
     ]
 
     with open(master_filter_path, "w") as f_master:

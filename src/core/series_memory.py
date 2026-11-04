@@ -14,7 +14,7 @@ import tempfile
 import uuid
 from typing import Dict, List, Optional, Tuple
 
-from config import DATA_DIR, SERIES_MEMORY, VOICE_BANK_CLIPS, VOICE_MATCH_MIN
+from config import DATA_DIR, SERIES_MEMORY, VOICE_BANK_CLIPS, VOICE_MATCH_MIN, VOICE_BANK_CLASS_CLIPS, EMOTION_REFS
 from infrastructure.tts_client import ref_text_path
 
 logger = logging.getLogger(__name__)
@@ -164,8 +164,15 @@ class SeriesMemory:
         """Diarization speaker -> person id, for speakers whose voiceprint clearly matches a known person."""
         persons = {pid: p for pid, p in self.persons().items() if p.get("print")}
         matches = {}
+
+        def similarity(emb, person):
+            # A person merged from a shouting and a calm cluster is found by either voice (Spec 006, 4.2)
+            return max(
+                _cosine(emb, person["print"]), _cosine(emb, person.get("shout_print")) if person.get("shout_print") else -1.0
+            )
+
         for spk, emb in (prints or {}).items():
-            ranked = sorted(((_cosine(emb, p["print"]), pid) for pid, p in persons.items()), reverse=True)
+            ranked = sorted(((similarity(emb, p), pid) for pid, p in persons.items()), reverse=True)
             if not ranked:
                 continue
             best, pid = ranked[0]
@@ -203,6 +210,15 @@ class SeriesMemory:
         paths = [os.path.join(self.clips_dir, c["file"]) for c in p.get("clips") or [] if c.get("file")]
         return [x for x in paths if os.path.exists(x)]
 
+    def clip_energies(self, pid: str) -> Dict[str, str]:
+        """Stored clip path -> energy class (calm / lively / shout), for the clips that have one."""
+        p = self.persons().get(pid) or {}
+        return {
+            os.path.join(self.clips_dir, c["file"]): c["energy"]
+            for c in p.get("clips") or []
+            if c.get("file") and c.get("energy")
+        }
+
     def save_voices(self, speakers: Dict[str, Dict]):
         """Updates the bank after a successful episode.
 
@@ -227,6 +243,10 @@ class SeriesMemory:
             if emb:
                 old = person.get("print")
                 person["print"] = [round((o * n + e) / (n + 1), 6) for o, e in zip(old, emb)] if old else list(emb)
+            shout = info.get("shout_print")
+            if shout:
+                old = person.get("shout_print")
+                person["shout_print"] = [round((o + e) / 2, 6) for o, e in zip(old, shout)] if old else list(shout)
             person["episodes"] = n + 1
             profile = info.get("profile") or {}
             measured = profile.get("gender") if profile.get("gender_measured") else None
@@ -253,6 +273,7 @@ class SeriesMemory:
         for clip in clips:
             path, score = clip[0], clip[1]
             quality = clip[2] if len(clip) > 2 else None
+            energy = clip[3] if len(clip) > 3 else None
             if score is None or not path or not os.path.exists(path):
                 continue
             if os.path.dirname(os.path.abspath(path)) == os.path.abspath(self.clips_dir):
@@ -267,14 +288,28 @@ class SeriesMemory:
                 quality = (entries.get(name) or {}).get("quality")  # measured when the clip was cut
             if quality is not None:
                 entry["quality"] = round(float(quality), 2)
+            energy = energy or (entries.get(name) or {}).get("energy")
+            if energy:
+                entry["energy"] = energy
             entries[name] = entry
         ranked = sorted(entries.values(), key=lambda c: -clip_rank(c))
-        for dropped in ranked[VOICE_BANK_CLIPS:]:
+        if EMOTION_REFS:
+            # Slots per energy class, so the calm clips of one episode do not push out the shouted ones (Spec 006, 4.2)
+            per_class: Dict[str, int] = {}
+            kept = []
+            for c in ranked:
+                cls = c.get("energy") or "calm"
+                per_class[cls] = per_class.get(cls, 0) + 1
+                if per_class[cls] <= VOICE_BANK_CLASS_CLIPS:
+                    kept.append(c)
+        else:
+            kept = ranked[:VOICE_BANK_CLIPS]
+        for dropped in [c for c in ranked if c not in kept]:
             path = os.path.join(self.clips_dir, dropped["file"])
             for p in (path, ref_text_path(path)):
                 if os.path.exists(p):
                     os.remove(p)
-        person["clips"] = ranked[:VOICE_BANK_CLIPS]
+        person["clips"] = kept
 
 
 # Between clips that clone about equally well, the cleaner and better sized one stays in the bank

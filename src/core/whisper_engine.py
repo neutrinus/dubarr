@@ -30,6 +30,8 @@ HALLUCINATIONS = {
     "music",
     "applause",
     "bye",
+    "wellberightback",  # 11 times over the music of a Star Trek episode
+    "wewillberightback",
 }
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,13 @@ def _gaps(segments: List[Dict], total: float, min_gap: float) -> List[Tuple[floa
     if total - cursor >= min_gap:
         gaps.append((cursor, total))
     return gaps
+
+
+def _min_word_prob(segment) -> Optional[float]:
+    """Probability of the segment's least certain word (Spec 001, 2.2c); None without word timestamps."""
+    words = getattr(segment, "words", None) or []
+    probs = [w.probability for w in words if getattr(w, "probability", None) is not None]
+    return round(min(probs), 3) if probs else None
 
 
 def _plausible(segment) -> bool:
@@ -86,6 +95,7 @@ class WhisperManager:
         self.take_model = None
         self.take_device = "cpu"
         self._take_lock = threading.Lock()
+        self.language = None  # detected by the last transcription; the second hearing reuses it
 
     def load_model(self):
         """Loads the Whisper model into VRAM or RAM. Skips in MOCK_MODE."""
@@ -145,6 +155,7 @@ class WhisperManager:
         # vad_filter: skip non-speech so Whisper does not hallucinate text/timestamps in silence.
         ts, info = self.model.transcribe(audio_path, word_timestamps=True, vad_filter=True)
         logger.info(f"Whisper: Starting transcription of {info.duration:.2f}s audio (Language: {info.language})")
+        self.language = info.language
 
         res = []
         for x in ts:
@@ -156,6 +167,7 @@ class WhisperManager:
                     "text": x.text.strip(),
                     "avg_logprob": x.avg_logprob,
                     "no_speech_prob": x.no_speech_prob,
+                    "min_word_prob": _min_word_prob(x),
                 }
                 res.append(segment)
                 # Log progress every few segments or every 30 seconds of audio
@@ -195,11 +207,34 @@ class WhisperManager:
                     "text": x.text.strip(),
                     "avg_logprob": x.avg_logprob,
                     "no_speech_prob": x.no_speech_prob,
+                    "min_word_prob": _min_word_prob(x),
+                    "gap": True,
                 }
                 logger.info(f"Whisper gap pass: +[{segment['start']:.2f}-{segment['end']:.2f}] {segment['text']}")
                 added.append(segment)
         logger.info(f"Whisper gap pass: {len(added)} segments added from {len(gaps)} gaps.")
         return sorted(res + added, key=lambda x: x["start"])
+
+    def transcribe_samples(self, samples, prompt: Optional[str] = None, language: Optional[str] = None) -> str:
+        """Text of a short 16 kHz clip (the second hearing of Spec 001, 2.2c); "" when nothing is heard."""
+        if MOCK_MODE:
+            return ""
+        if not self.model:
+            self.load_model()
+            if not self.model:
+                return ""
+        try:
+            segments, _ = self.model.transcribe(
+                samples,
+                language=language or self.language,
+                initial_prompt=prompt,
+                vad_filter=False,
+                condition_on_previous_text=False,
+            )
+            return " ".join(x.text.strip() for x in segments if x.no_speech_prob < 0.6).strip()
+        except Exception as e:
+            logger.warning(f"Whisper second hearing failed: {e}")
+            return ""
 
     def _load_take_model(self):
         """Loads the take-check model on the CPU (default), or with TAKE_CHECK_DEVICE=auto on a GPU with room to spare."""

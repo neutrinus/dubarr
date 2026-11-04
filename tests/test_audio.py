@@ -97,6 +97,33 @@ class TestMixAudio(unittest.TestCase):
             mix_audio(bg, [(speech, 3.0, 3.0)], out)  # speech ends at 6 s, background at 4 s
             self.assertAlmostEqual(FFmpegWrapper.get_duration(out), 4.0, delta=0.2)
 
+    def test_final_limiter_never_reaches_full_scale(self):
+        import re
+        import subprocess
+
+        from core.audio import FINAL_LIMITER
+
+        stats = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostats",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=f=440:d=3,volume=12",
+                "-af",
+                f"{FINAL_LIMITER},astats=measure_perchannel=none",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+        ).stderr
+        peak = float(re.search(r"Peak level dB: (-?[\d.]+)", stats).group(1))
+        # alimiter's default auto level pushed the limited mix back to 0 dBFS (S01E03: +0.7 dBTP after AC3)
+        self.assertLessEqual(peak, -1.0)
+
 
 def test_calm_bonus():
     from core.audio import calm_bonus

@@ -95,7 +95,8 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
     -   **Success:** the accepted take.
     -   **Fallback (attempts exhausted):** among sound takes, the one that fits the limit and is closest to the target;
         if none fits, the shortest sound one. Broken takes are used only if nothing else exists.
-    -   **Dropped:** when every take is broken and none is intelligible to `TAKE_DROP_SIMILARITY` (default 0.3), the
+    -   **Dropped:** when every take is broken and none is intelligible to `TAKE_DROP_SIMILARITY` (default 0.5, the judge's
+        `JUDGE_MIN_TEXT`), the
         line is not dubbed (status `DROPPED`): the original stays audible, which beats gibberish or screams in the dub.
         Only the words count here: the better of the take's text match and Whisper similarity, the judge score only
         when neither was measured (a swallowed or missing take counts as 0, a take with artifacts as its score). A
@@ -122,7 +123,10 @@ speaks at 290-320 Hz (S01E03: the play-by-play man during the fights and the rin
 high pitch tells excitement, not a woman. The measurement overrules the analysis and the series memory (Spec 006),
 which once stored the play-by-play man under the sideline reporter's name and gender, so his designed voice was a
 woman's. When it contradicts the analysis, the analysis took the speaker for someone else, so its name is dropped
-too: the translator saw "Jenny Taft (male)" and the review turned the man's lines into feminine forms. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
+too: the translator saw "Jenny Taft (male)" and the review turned the man's lines into feminine forms. Only a
+male verdict overrules the cast list, though: when the speaker's name is a character (or actor) the metadata
+(Spec 001, 2.2b) lists as male, a female pitch is not believed (Star Trek S01E01: Kirk at 244 Hz and two aliens with
+processed voices at 243-248 Hz were measured as women). A low pitch does not happen to women. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
 it is the speaker's only line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
 other reference, so the voice stays the same across the video. It is the fallback for speakers whose clips do not
 clone: it is used only when none of the speaker's clips scores at least `AUDITION_LINE_REF_MIN` in the audition and
@@ -130,6 +134,15 @@ the designed voice scores better than the best of them. Its voice match compares
 alone it beats every clone speaking another language (S01E03: 0.8 against 0.56 at the median), and in S01E03 it took
 over seven speakers whose clips cloned well. Voice design was also trained on Chinese and English only and may be
 unstable in other languages. It gives a voice to speakers without any clean clip.
+
+**One person, two clusters.** Diarization can split one person's shouting from their calm talk (S01E03: the play-by-
+play man shouting at 319 Hz as SPEAKER_04, whose clips cloned at 0.42 at best, so he got a designed voice, and
+calm as SPEAKER_13, cloning at 0.92-0.97). After the analysis (Stage 3), two speakers are merged into one (the calm one's
+label) when all of these hold: the analysis gave them the same name (not empty or "unknown"); the louder one's median
+voice level is at least 3 dB and its median pitch at least 3 semitones above the other's; no gender measured on both
+(pitch bands, Polish grammar) disagrees; and their centroid voiceprints are at least `SHOUT_MERGE_MIN` (0.3) alike.
+The name alone is not enough: in S01E03 the analysis named the play-by-play man "Jenny Taft". The merged speaker's
+energy classes (Spec 001, 2.4) are measured again over all its lines, so its shouting lines become its `shout` class.
 
 A speaker only ever speaks with **its own voice** (its clips, line clips or designed voice): another speaker's voice in
 its mouth confuses the viewer more than a generic voice does. And with **one voice**: the speaker's kind (the video's
@@ -144,8 +157,12 @@ References are tried in this order; a retry after a broken take skips the ones a
     ZCR < 0.25 and a clarity (vocals over the rest, see Spec 001, 2.4) of at least `REF_MIN_CLARITY_DB`; a line shouted
     over a cheering crowd uses the speaker's references instead.
 2.  **Speaker's references** of the speaker's voice kind that scored at least `TAKE_MIN_SIMILARITY` in the audition
-    (all of them without an audition), in rank order.
-3.  **Last Good Sample:** the last clean line clip of this speaker (not for a speaker in the designed voice).
+    (all of them without an audition). With `EMOTION_REFS` (on) the clips of the line's energy class (Spec 001,
+    2.4) come first, then those of the neighbouring class (shout, lively, calm in that order of distance), each
+    group in rank order; a clip of unknown class counts as one step away. A commentator shouting over a fight is
+    cloned from his shouted clip, a calm line from a calm one. The designed voice has one class and stays as it is.
+3.  **Last Good Sample:** the last clean line clip of this speaker (not for a speaker in the designed voice); with
+    `EMOTION_REFS` it comes after the clips of the line's own class.
 4.  **Speaker's weak references** of that kind: those that scored under `TAKE_MIN_SIMILARITY`.
 5.  **The other kind** (the designed voice for a cloned speaker, the clips for a designed one), by score.
 When all of these were tried, the least broken take is kept (2.2 step 4). Only a speaker with no voice of its own at all
@@ -163,6 +180,8 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `MIN_FILL_RATIO` (0.7): below this share of the target a take is refined as too short.
 -   `MAX_ACCEPT_SPEEDUP` (1.08): allowed overrun of the limit, sped up in the mix.
 -   `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` (9): faster than this means a swallowed take.
+-   `EMOTION_REFS` (on), `SHOUT_MERGE_MIN` (0.3): clips by energy class and the merging of a shouting cluster
+    with the same person's calm one (2.3).
 -   `TAKE_CHECK` (judge | whisper | off), `TAKE_VERSIONS` (4), `TAKE_VERSIONS_SHORT` (6), `SHORT_LINE_SYLLABLES`
     (10), `TAKE_GOOD_SCORE` (0.95): the judge of the voice audition and of every take, how many takes each synthesis
     makes (short lines more), and the score that ends the search early.
@@ -171,7 +190,8 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
     (`TAKE_CHECK=whisper`).
 -   `TAKE_MIN_SIMILARITY` (0.7), `TAKE_CHECK_DEVICE` (cpu), `TAKE_CHECK_THREADS` (all cores): the Whisper similarity
     reported in `whisper` mode.
--   `TAKE_DROP_SIMILARITY` (0.3): a line whose every take is broken below this is not dubbed.
+-   `TAKE_DROP_SIMILARITY` (0.5): a line whose every take is broken below this is not dubbed. On Star Trek S01E01
+    every fallback between 0.31 and 0.44 was Polish-sounding gibberish (an alien's processed voice), every one from 0.7 sound.
 -   `VOICE_DESIGN` (on): one voice-design clip per speaker as an extra reference candidate.
 -   `REF_AUDITION_CANDIDATES` (3), `AUDITION_LINE_REF_MIN` (0.8): reference candidates per speaker, and the audition
     score a speaker needs to use line clips.

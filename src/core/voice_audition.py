@@ -224,6 +224,8 @@ def audition_voices(
                 tts_manager._run_synthesis(text, ref, out, language=lang)
                 duration = FFmpegWrapper.get_duration(out) if os.path.exists(out) else 0.0
                 if duration <= 0 or is_swallowed(text, duration, lang):
+                    why = "no audio" if duration <= 0 else f"swallowed ({duration:.1f}s for the line)"
+                    logger.info(f"Voice audition: {os.path.basename(ref)}: {why}")
                     score = 0.0
                 else:
                     score = scorer(out, text, lang, ref)

@@ -150,17 +150,20 @@ class TakeJudge:
         return self._voice or None
 
     def voiceprint(self, path: str) -> Optional["np.ndarray"]:
+        if not path or not os.path.exists(path) or self._voice_model() is None or np is None:
+            return None
+        # In memory, like the diarization: pyannote decoding a file path needs torchcodec, which breaks across
+        # torch/ffmpeg versions (no take got a voice match that way)
+        return self.voiceprint_samples(self._samples_16k(path), path)
+
+    def voiceprint_samples(self, samples, label: str = "samples") -> Optional["np.ndarray"]:
+        """Normalized voiceprint of 16 kHz mono samples (the voice bank's model, Spec 006, 4.1); None when unknown."""
         model = self._voice_model()
-        if model is None or np is None or not path or not os.path.exists(path):
+        if model is None or np is None or samples is None or len(samples) == 0:
             return None
         try:
             import torch
 
-            # In memory, like the diarization: pyannote decoding a file path needs torchcodec, which breaks across
-            # torch/ffmpeg versions (no take got a voice match that way)
-            samples = self._samples_16k(path)
-            if samples is None or len(samples) == 0:
-                return None
             waveform = torch.from_numpy(np.asarray(samples, dtype=np.float32)).unsqueeze(0)
             emb = np.asarray(model({"waveform": waveform, "sample_rate": 16000}), dtype=np.float32).reshape(-1)
             norm = float(np.linalg.norm(emb))
@@ -170,7 +173,7 @@ class TakeJudge:
                 logger.warning(f"Take judge: voiceprint failed ({e}); the voice match is skipped where it fails")
                 self._print_failed = True
             else:
-                logger.debug(f"Take judge: voiceprint of {path} failed: {e}")
+                logger.debug(f"Take judge: voiceprint of {label} failed: {e}")
             return None
 
     def voice_match(self, take_path: str, ref_path: Optional[str]) -> Optional[float]:

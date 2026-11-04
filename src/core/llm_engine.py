@@ -14,6 +14,7 @@ from utils import (
     respelling_heard_as,
     clean_arpabet,
     check_polish_spelling,
+    strip_title,
 )
 from prompts import (
     T_ANALYSIS,
@@ -94,6 +95,35 @@ def _found_in(term: str, text: str) -> bool:
     """Whether every word of ``term`` occurs in ``text``, inflected (Polish endings change: "Gwiezdnej Floty")."""
     words = re.findall(r"\w+", term.lower())
     return bool(words) and all(w[: max(3, len(w) - 3)] in text for w in words)
+
+
+def apply_editor_flags(script: List[Dict], flags: Dict, doubts: Dict, fixes: Optional[Dict] = None):
+    """Marks each line's ``asr`` (sure / unsure / fixed / guessed / hallucination) and ``speaker_doubt`` (Spec 001,
+    2.2c step 4). Also used to re-apply a cached Stage 3."""
+    fixes = fixes or {}
+    for idx, line in enumerate(script):
+        flag = flags.get(str(idx))
+        if flag in ("guessed", "hallucination"):
+            line["asr"] = flag
+        elif line.get("asr_unsure"):
+            line["asr"] = "fixed" if str(idx) in fixes else "unsure"
+        else:
+            line["asr"] = "fixed" if str(idx) in fixes else "sure"
+        if str(idx) in doubts:
+            line["speaker_doubt"] = doubts[str(idx)]
+
+
+def log_editor_flags(script: List[Dict], doubts: Dict):
+    counts: Dict[str, int] = {}
+    for line in script:
+        counts[line.get("asr", "sure")] = counts.get(line.get("asr", "sure"), 0) + 1
+    logging.info("ASR check: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())))
+    by_speaker: Dict[str, List[str]] = {}
+    for idx, reason in doubts.items():
+        if 0 <= int(idx) < len(script):
+            by_speaker.setdefault(script[int(idx)].get("speaker", "?"), []).append(f"L_{idx}: {reason}")
+    for spk, reasons in sorted(by_speaker.items(), key=lambda x: -len(x[1])):
+        logging.warning(f"Speaker doubt: {spk} ({len(reasons)} lines) - " + " | ".join(reasons[:3]))
 
 
 def speaker_label(speaker_info: Dict, speaker_id: str) -> str:
@@ -373,6 +403,9 @@ class LLMManager:
         speaker_info = analysis.get("speakers", {})
         glossary = global_context.get("glossary")
         glossary = glossary if isinstance(glossary, dict) else {}
+        # Ranks are translated, not respelled: "Captain James Tiberius Kirk" became "Kapten Dzejms Tajberius Kark"
+        glossary = dict(strip_title(str(t), str(sp)) for t, sp in glossary.items() if isinstance(sp, (str, int, float)))
+        global_context["glossary"] = glossary
         if GLOSSARY_MODE == "phonemes":
             # The translation keeps the original names; the TTS gets their English phonemes
             names_only = {str(t): str(t) for t in list(glossary) + list(fixed_phonemes or {})}
@@ -394,18 +427,24 @@ class LLMManager:
             global_context["name_phonemes"] = name_phonemes
             global_context["glossary_replaced"] = sorted(replaced)
 
-        # 2. ASR Correction
+        # 2. ASR Correction; unsure lines come with their other hearings (Spec 001, 2.2c step 4)
         logging.info("LLM: Starting ASR Correction (Editor)")
         chunk_sz = 100
-        script_fixes = {}
+        script_fixes: Dict[str, str] = {}
+        script_flags: Dict[str, str] = {}
+        speaker_doubts: Dict[str, str] = {}
         glossary_str = json.dumps(global_context.get("glossary", {}))
+        summary = str(global_context.get("summary") or "")[:1500]
         for i in range(0, len(script), chunk_sz):
             chunk = script[i : i + chunk_sz]
-            txt = "\n".join([f"L_{i + j}: {s['text_en']}" for j, s in enumerate(chunk)])
+            txt = "\n".join(self._editor_line(i + j, s, speaker_info) for j, s in enumerate(chunk))
             t0 = time.perf_counter()
             res = self._run_inference(
                 [
-                    {"role": "system", "content": T_ED.format(glossary=glossary_str, subtitles=subtitles, names=names_str)},
+                    {
+                        "role": "system",
+                        "content": T_ED.format(glossary=glossary_str, subtitles=subtitles, names=names_str, summary=summary),
+                    },
                     {"role": "user", "content": txt},
                 ],
                 priority=2,
@@ -413,28 +452,82 @@ class LLMManager:
                 temperature=0.0,
             )
             self._update_stats(res, time.perf_counter() - t0)
-
             try:
-                corrections = parse_json(res["choices"][0]["text"])
-                if isinstance(corrections, dict):
-                    for idx_str, new_text in corrections.items():
-                        try:
-                            idx = int(idx_str.replace("L_", ""))
-                            if 0 <= idx < len(script):
-                                if script[idx]["text_en"] != new_text and self.debug_mode:
-                                    logging.info(f"ASR Fix L_{idx}: '{script[idx]['text_en']}' -> '{new_text}'")
-                                script[idx]["text_en"] = new_text
-                                script_fixes[str(idx)] = new_text
-                        except ValueError:
-                            continue
+                fixes, flags, doubts = self._editor_answer(parse_json(res["choices"][0]["text"]), script, i, len(chunk))
             except Exception as e:
                 logging.warning(f"Failed to parse ASR corrections for chunk {i}: {e}")
+                continue
+            for idx, new_text in fixes.items():
+                if script[idx]["text_en"] != new_text and self.debug_mode:
+                    logging.info(f"ASR Fix L_{idx}: '{script[idx]['text_en']}' -> '{new_text}'")
+                script[idx]["text_en"] = new_text
+                script_fixes[str(idx)] = new_text
+            script_flags.update({str(k): v for k, v in flags.items()})
+            speaker_doubts.update({str(k): v for k, v in doubts.items()})
+        apply_editor_flags(script, script_flags, speaker_doubts, script_fixes)
+        log_editor_flags(script, speaker_doubts)
 
         if self.debug_mode:
             self._dump_debug(ddir, global_context, speaker_info, script)
 
         # The corrections are returned too, so a resumed job can re-apply them from the step cache
-        return {"context": global_context, "speakers": speaker_info, "script_fixes": script_fixes}
+        return {
+            "context": global_context,
+            "speakers": speaker_info,
+            "script_fixes": script_fixes,
+            "script_flags": script_flags,
+            "speaker_doubts": speaker_doubts,
+        }
+
+    @staticmethod
+    def _editor_line(idx: int, line: Dict, speaker_info: Dict) -> str:
+        """`L_12 (Chris Rose): text`, and `|| UNSURE` with the other hearings for an unsure line."""
+        out = f"L_{idx} ({speaker_label(speaker_info, line.get('speaker', ''))}): {line['text_en']}"
+        if line.get("asr_unsure"):
+            hearings = line.get("asr_hearings") or {}
+            out += " || UNSURE" + "".join(f'; {kind}: "{text}"' for kind, text in sorted(hearings.items()))
+        return out
+
+    @staticmethod
+    def _editor_answer(answer, script: List[Dict], start: int, size: int):
+        """(fixes {idx: text}, flags {idx: guessed|hallucination}, doubts {idx: reason}) from the corrector's JSON.
+
+        The old flat answer ({"12": "text"}) is read as fixes. Indices outside the chunk are ignored.
+        """
+        if not isinstance(answer, dict):
+            return {}, {}, {}
+        structured = any(k in answer for k in ("fixes", "guessed", "hallucinations", "speaker_doubts"))
+        raw_fixes = answer.get("fixes") if structured else answer
+
+        def index(key):
+            try:
+                idx = int(str(key).replace("L_", "").strip())
+            except ValueError:
+                return None
+            return idx if start <= idx < start + size and idx < len(script) else None
+
+        fixes = {}
+        for key, text in (raw_fixes or {}).items() if isinstance(raw_fixes, dict) else []:
+            idx = index(key)
+            if idx is not None and isinstance(text, str) and text.strip():
+                fixes[idx] = text.strip()
+        flags = {}
+        for key in answer.get("guessed") or [] if structured else []:
+            idx = index(key)
+            if idx is not None:
+                flags[idx] = "guessed"
+        for key in answer.get("hallucinations") or [] if structured else []:
+            idx = index(key)
+            # Only a short or unsure line may be a hallucination: a long, confident one is speech
+            if idx is not None and (script[idx].get("asr_unsure") or len(script[idx]["text_en"].split()) <= 4):
+                flags[idx] = "hallucination"
+        doubts = {}
+        raw_doubts = answer.get("speaker_doubts") if structured else None
+        for key, reason in (raw_doubts or {}).items() if isinstance(raw_doubts, dict) else []:
+            idx = index(key)
+            if idx is not None and isinstance(reason, str) and reason.strip():
+                doubts[idx] = reason.strip()[:200]
+        return fixes, flags, doubts
 
     def _hear_spellings(self, spellings: List[str], lang_name: str) -> List[str]:
         """What each spelling sounds like in English spelling ("" when the model gave nothing)."""

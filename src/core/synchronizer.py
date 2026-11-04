@@ -269,6 +269,7 @@ class SegmentSynchronizer:
                 "index": idx,
                 "text": current_text,
                 "source_text": original_text,
+                "energy": segment.get("energy"),
                 "speaker": speaker,
                 "start": segment["start"],
                 "end": segment["end"],
@@ -299,6 +300,7 @@ class SegmentSynchronizer:
                     "delta": delta,
                     "broken": broken,
                     "voice_type": result.get("voice_type"),
+                    "ref": result.get("ref"),
                     "similarity": result.get("similarity"),
                     "heard": result.get("heard"),
                     "score": result.get("score"),
@@ -444,6 +446,7 @@ class SegmentSynchronizer:
         """What the per-line report (DEBUG) shows about the chosen take."""
         return {
             "voice_type": attempt.get("voice_type"),
+            "ref": attempt.get("ref"),
             "similarity": attempt.get("similarity"),
             "heard": attempt.get("heard"),
             "score": attempt.get("score"),

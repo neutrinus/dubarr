@@ -20,6 +20,8 @@ Analyze the movie script provided by the user. Return A SINGLE JSON object conta
    - In Polish the English "w" is written "ł" and the English "v" is written "w": 'Warhead' -> 'Łorhed',
      'Ice Wave' -> 'Ajs Łejw', 'Beaver' -> 'Biwer'. A Polish "w" is read as "v".
    - Keep EVERY consonant sound of the original: a spelling that drops one names something else.
+   - Keep the stressed vowels too: 'Kirk' -> 'Kirk' or 'Kerk', never 'Kark'.
+   - Names only, without ranks or titles ('Captain', 'Lt.', 'Dr.', 'Mr.'): those are translated, not respelled.
    - This is crucial for the TTS engine to pronounce them correctly. Words that are translated do not belong here.
    - Include the entries of the FIXED GLOSSARY that occur in the script, unchanged.
 3. 'speakers': A dictionary where keys are speaker IDs (e.g. SPEAKER_00) and values are objects with:
@@ -83,24 +85,38 @@ OUTPUT FORMAT (JSON):
 {{"phonemes": [{{"id": 0, "arpabet": "R EY1 Z ER0 B AE2 K"}}]}}
 """
 
-T_ED = """You are a Transcription Corrector. Your task is to fix ASR (speech-to-text) errors in the source text.
+T_ED = """You are a Transcription Corrector. Your task is to fix ASR (speech-to-text) errors in the source text of a video.
 
+SUMMARY OF THE VIDEO: {summary}
 CONTEXT GLOSSARY (For name reference only): {glossary}
 NAMES THAT OCCUR IN THIS EPISODE (correct spelling): {names}
 REFERENCE SUBTITLES: "{subtitles}"
 
-RULES:
-1. Identify lines with misheard names or phonetic ASR errors.
-2. USE STANDARD ORTHOGRAPHY of the source language. NEVER use phonetic transcriptions (like 'æ', 'ð', 'ʃ') in the output.
-3. Verify proper nouns against the Reference Subtitles and the names that occur in this episode: a misheard name
-   ("Icewing" for "Ice Wave") is replaced by its correct spelling.
-4. Return ONLY a JSON object where keys are Line Indices (integers) and values are the Corrected Source Text.
-5. IF A LINE IS CORRECT, DO NOT INCLUDE IT.
+Each line reads `L_<index> (<speaker>): <text>`. A line Whisper was unsure of ends with `|| UNSURE` and, when there
+are any, its other hearings (from the separated voice, from a hearing with the names as a hint, from the subtitles).
 
-OUTPUT FORMAT:
+RULES:
+1. Fix misheard names and phonetic ASR errors. Verify proper nouns against the Reference Subtitles and the names that
+   occur in this episode: a misheard name ("Icewing" for "Ice Wave") is replaced by its correct spelling.
+2. USE STANDARD ORTHOGRAPHY of the source language. NEVER use phonetic transcriptions (like 'æ', 'ð', 'ʃ').
+3. For an UNSURE line: pick the hearing that makes sense in the scene, or combine them. When none makes sense,
+   reconstruct the most likely sentence from the neighbouring lines, the summary and the names: it must SOUND like
+   what was heard (same rhythm, similar words, e.g. "It's Robux! A fight in time!" -> "It's Robots! Fight time!") and
+   must not add facts the context does not hold. List such reconstructed lines under "guessed".
+4. A line that is a Whisper hallucination over music or noise ("Thank you.", "Instruction.", "Please subscribe.",
+   words that belong to nothing around them) goes under "hallucinations"; it will not be dubbed. Never list a line
+   that may be real speech.
+5. Never move a line to another speaker. When the text suggests that a speaker's description is wrong (the speaker
+   is addressed by another name, speaks of themself in another gender, says what another person would say), write
+   a short reason under "speaker_doubts". This is only a note for a human.
+6. IF A LINE IS CORRECT, DO NOT INCLUDE IT.
+
+OUTPUT FORMAT (JSON):
 {{
-  "12": "Corrected text in original language",
-  "45": "Corrected text in original language"
+  "fixes": {{"12": "Corrected text in the original language", "45": "Corrected text"}},
+  "guessed": [45],
+  "hallucinations": [80],
+  "speaker_doubts": {{"57": "SPEAKER_03 is described as Jenny Taft, but is addressed as Chris"}}
 }}
 """
 

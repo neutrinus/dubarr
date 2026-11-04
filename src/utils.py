@@ -329,6 +329,70 @@ def _align_sounds(english, read):
     return list(reversed(ops))
 
 
+# Polish vowel letters that can carry each stressed English vowel ("Kirk" is never "Kark")
+_STRESSED_VOWELS = {
+    "AA": "ao", "AE": "ea", "AH": "aeouy", "AO": "oa", "AW": "aou", "AY": "a", "EH": "ea", "ER": "eyiou",
+    "EY": "e", "IH": "iye", "IY": "iy", "OW": "ou", "OY": "o", "UH": "uo", "UW": "u",
+}  # fmt: skip
+_PL_VOWEL_SOUND = str.maketrans("óąę", "uoe")
+
+
+def stressed_vowels_lost(spelling: str, arpabet: str) -> list:
+    """Stressed English vowels the Polish spelling reads as another vowel: ["ER read as a"] for "Kark" (Kirk).
+
+    The vowel is looked up between the spelling's letters of the consonants around it (aligned as in the consonant
+    check); a vowel next to a lost consonant is not checked.
+    """
+    english = english_consonants(arpabet)
+    reading = polish_reading(spelling)
+    read = [snd for snd, _a, _b in reading]
+    to_read = {ei: ri for op, ei, ri in _align_sounds(english, read) if op in ("match", "sub")}
+    text = (spelling or "").lower().translate(_PL_VOWEL_SOUND)
+    lost, c = [], 0
+    for tok in (arpabet or "").upper().split():
+        base = tok.rstrip("012")
+        if base not in ARPABET:
+            continue
+        is_consonant = base == "ER" or base not in _STRESSED_VOWELS and base != "Y"
+        if base in _STRESSED_VOWELS and tok.endswith("1"):
+            prev_ok = c == 0 or (c - 1) in to_read
+            next_ok = c >= len(english) or c in to_read
+            if prev_ok and next_ok:
+                lo = reading[to_read[c - 1]][2] if c > 0 else 0
+                hi = reading[to_read[c]][1] if c < len(english) else len(text)
+                region = "".join(ch for ch in text[lo:hi] if ch in "aeiouy")
+                if not region:
+                    lost.append(f"{base} missing")
+                elif not any(ch in _STRESSED_VOWELS[base] for ch in region):
+                    lost.append(f"{base} read as {region}")
+        if is_consonant:
+            c += 1
+    return lost
+
+
+# Ranks and titles before a name: translated by the translator, never respelled ("Kapten", "Letnant")
+TITLES = {
+    "captain", "capt", "lieutenant", "lt", "commander", "cmdr", "ensign", "admiral", "doctor", "dr", "mr", "mrs",
+    "ms", "miss", "sir", "sergeant", "sgt", "colonel", "general", "major", "chief", "professor", "prof", "nurse",
+    "officer", "agent", "detective", "judge", "president",
+}  # fmt: skip
+
+
+def strip_title(term: str, spelling: str):
+    """("Captain James Tiberius Kirk", "Kapten Dżejms Tajberius Kark") -> ("James Tiberius Kirk", "Dżejms Tajberius
+    Kark"); the spelling loses as many leading words as the term when it has more than the name left."""
+    words = term.split()
+    n = 0
+    while n < len(words) - 1 and words[n].lower().strip(".") in TITLES:
+        n += 1
+    if not n:
+        return term, spelling
+    rest = words[n:]
+    sp_words = str(spelling).split()
+    sp = " ".join(sp_words[n:]) if len(sp_words) - n >= len(rest) else " ".join(rest)
+    return " ".join(rest), sp
+
+
 def check_polish_spelling(spelling: str, arpabet: str):
     """Whether a Polish respelling, read by Polish rules, keeps the consonants of the name's English phonemes.
 
@@ -357,8 +421,9 @@ def check_polish_spelling(spelling: str, arpabet: str):
         if op in ("sub", "del")
     ]
     hard = any(e in ("W", "V") and r in ("W", "V") and e != r for e, r in lost)
-    ok = not hard and len(lost) <= len(english) // 6
-    lost_text = ", ".join(f"{e} read as {r}" if r != "-" else f"{e} missing" for e, r in lost)
+    vowels = stressed_vowels_lost(fixed, arpabet)
+    ok = not hard and not vowels and len(lost) <= len(english) // 6
+    lost_text = ", ".join([f"{e} read as {r}" if r != "-" else f"{e} missing" for e, r in lost] + vowels)
     return ok, fixed, lost_text
 
 

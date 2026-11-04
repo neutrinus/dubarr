@@ -135,6 +135,23 @@ def episode_names(info: Dict) -> List[str]:
     return [n for n in names if not (n.lower() in seen or seen.add(n.lower()))]
 
 
+def cast_gender(info: Dict, name: str) -> Optional[str]:
+    """The cast list's gender of the character (or actor) a speaker is named after; None when unknown or ambiguous."""
+    key = re.sub(r"[^a-z ]", "", (name or "").lower()).split()
+    if not key:
+        return None
+    found = set()
+    for c in ((info or {}).get("cast") or []) + ((info or {}).get("guest_cast") or []):
+        if c.get("gender") not in ("male", "female"):
+            continue
+        for field in ("character", "actor"):
+            words = re.sub(r"[^a-z ]", "", (c.get(field) or "").lower()).split()
+            # The whole name, or its last word (the surname: "Kirk" for "Captain James Tiberius Kirk")
+            if words and (words == key or words[-1] == key[-1]):
+                found.add(c["gender"])
+    return found.pop() if len(found) == 1 else None
+
+
 def lookup_media_info(path: str, online: bool = True, tmdb_api_key: str = "", timeout: int = 10, local: bool = True) -> Dict:
     """Returns what is known about the video (empty dict if nothing was found). Never raises."""
     try:

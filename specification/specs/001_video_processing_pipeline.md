@@ -31,7 +31,9 @@ The system verifies model presence and downloads missing files. To maximize avai
         a referee's countdown), so a second pass (`ASR_GAP_PASS`, on) transcribes every gap of at least `ASR_GAP_MIN`
         (2 s) without VAD and keeps only confident segments: `no_speech_prob < 0.5`, `avg_logprob >= -0.8`,
         compression ratio <= 2.4, mean word probability >= 0.5, and not a known hallucination ("Thank you.",
-        "Instruction.").
+        "Instruction.", "We'll be right back."). A gap-pass segment where nobody is heard speaking (diarized speech
+        under 30% of it) and no reference subtitle cue lies is dropped as a hallucination over music: Star Trek
+        S01E01 got "We'll be right back." 11 times, all without a speaker.
 *   **Output:**
     *   `diarization.json` (Time ranges mapped to speakers, plus each speaker's centroid embedding for the voice
         bank, Spec 006, 4).
@@ -42,12 +44,17 @@ Whisper splits speech into segments that often end mid-sentence. Translating suc
 duplicates content, because the target language orders the sentence differently. The script is therefore built from
 **dialogue units**:
 1.  Each Whisper segment gets the speaker with the largest overlap. A segment whose length is far beyond what its words
-    can take (e.g. one word stretched over 25 s of music) is clamped to `max(2 s, 1 s + syllables / 3)`.
+    can take (e.g. one word stretched over 25 s of music) is clamped to `max(2 s, 1 s + syllables / 3)`, the window
+    placed where the diarization hears the most speech in the segment, not at its start ("That's the heart of a
+    galaxy" ran from 20:24 to 20:40 with the words at 20:39; dubbed from 20:24, the English line stayed audible).
 2.  Consecutive segments of the same speaker are joined when the pause between them is under `MERGE_MAX_GAP` (0.3 s) and
     the unit stays under `MERGE_MAX_DURATION` (10 s), **or** when the earlier one does not end a sentence (no `.`, `!`,
     `?`, `…`), the pause is under `SENTENCE_MAX_GAP` (1.5 s) and the unit stays under `SENTENCE_MAX_DURATION` (20 s).
 3.  Lines shorter than `MIN_SEGMENT_DURATION` are joined with a same-speaker neighbour.
-4.  Each unit has a **time budget**: `end - start` is the time the original speaks (the target), and `max_end` adds the
+4.  **Tiny slots.** A unit shorter than half the time its English words take (syllables / 5 per second; S01E03 timed
+    "We'll be right back." at 0.12 s, and OmniVoice returned nothing) is lengthened to that time into the silence
+    after it, then before it, never into another line.
+5.  Each unit has a **time budget**: `end - start` is the time the original speaks (the target), and `max_end` adds the
     silence after it, up to `SLACK_AFTER_MAX` (1.5 s) and minus a 0.15 s guard before the next speech; `min_start`
     allows up to `SLACK_BEFORE_MAX` (0.5 s) of the silence before it, minus the same guard. The hard limit is
     `max_end - min_start`. The silence after is used first; a take starts early only when it would still run past
@@ -65,6 +72,34 @@ duplicates content, because the target language orders the sentence differently.
     4.  Any failure is logged and the job continues; at worst the title guessed from the file name is used.
 *   **Output:** `media_info.json` (cached step result; written to the debug folder in debug mode).
 
+### 2.2c Stage 2c: Script Verification
+Whisper's mistakes on shouted commentary ("It's Robux! A fight in time!") used to reach the translator unmarked. This
+stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY`, on).
+1.  **Confidence.** A Whisper segment is unsure when its `avg_logprob` is under `ASR_UNSURE_LOGPROB` (-0.6) or one
+    of its words has a probability under `ASR_UNSURE_WORD` (0.3).
+2.  **Second hearing** of the unsure segments only, with the same Whisper model, loaded again after Stage 2b:
+    1.  the segment (with 0.3 s around it) from the Demucs vocals: under a fight separation often helps, although it
+        loses on the whole episode (Stage 2);
+    2.  the segment from the original mix with an `initial_prompt` of the previous line and the names known to occur
+        (episode title, cast, series glossary): robots and people are often misheard names;
+    3.  the reference subtitle cues spoken during the segment, when there are subtitles.
+    The candidates stay on the segment and go with it into its line (2.2a).
+3.  **Who speaks.** Every Whisper segment of at least 1.5 s gets a voiceprint from the vocals (the voice bank's model,
+    Spec 006, 4.1) and is compared with the diarization speakers' centroids. When it is at least
+    `SPEAKER_RECHECK_MARGIN` (0.1) closer to another speaker than to the one it overlaps most, and that similarity is
+    at least `SPEAKER_RECHECK_MIN` (0.5), the segment is that speaker's: a contestant's sentence inside the narrator's
+    intro does not join the narrator's line.
+4.  **The arbiter** is the transcript corrector of Stage 3 (2.3): an unsure line comes with its other hearings and
+    subtitle, and the LLM picks one, combines them, or, when none makes sense, reconstructs the most likely sentence
+    from the context (neighbouring lines, summary, names): it must sound like what Whisper heard and add no facts the
+    context does not hold. Such a line is marked `guessed`; a corrected one `fixed`. Lines are never dropped for being
+    unclear: the best version is dubbed. The corrector sees each line's speaker name and also fixes clear ASR errors
+    of sure lines, as before. It may mark a line as a Whisper hallucination (a "Thank you." or "Instruction." written
+    over music or noise, nothing like the rest of the scene): such a line is not dubbed and the original stays
+    audible. It never moves a line to another speaker; the voiceprint check (3) decides that. It does report doubts
+    about a speaker ("SPEAKER_03 is described as Jenny Taft, but line 57 addresses him as Chris"): only a signal,
+    logged with a count per speaker and shown in the report's `speaker_doubt` column; nothing changes because of it.
+
 ### 2.3 Stage 3: Global Context Analysis
 *   **Input:** Transcription script, reference subtitles, media metadata.
 *   **Action:**
@@ -73,7 +108,10 @@ duplicates content, because the target language orders the sentence differently.
         entry the gender is a best guess from names, pronouns, forms of address and role; "unknown" only without any
         hint (it leaves the speaker with a generic designed voice and ungendered translation forms).
     2.  Generates a glossary for translation: the names that keep their original sound, with a phonetic spelling in
-        the target language for the TTS. In a series the stored spellings are fixed, and every new spelling must pass
+        the target language for the TTS. Every name the episode is known to contain goes in, not only those the LLM
+        notices: the cast, the episode title, and the capitalised names of the script and the reference subtitles
+        (S01E03 had no entry for "Chuck Pitzer", and "przez Chucka Pitzera" came out as "szesczu kapicera"). An
+        inflected Polish form keeps the respelled stem ("Czaka Pitzera"). In a series the stored spellings are fixed, and every new spelling must pass
         a reading test before it is used (Spec 006, 3). The names in the episode title and the cast are given to the
         analysis and to the transcript corrector as names that occur in the episode.
     3.  The translator gets the show/episode, the synopsis and each line's speaker gender, so gendered forms
@@ -121,7 +159,14 @@ duplicates content, because the target language orders the sentence differently.
     2.  **Short clips grow:** a candidate under 6 s is joined with the same speaker's lines right before or after it
         (pauses of at most 0.6 s), as long as each joined line is clean enough (clarity at least `REF_MIN_CLARITY_DB`)
         and the clip stays within 10 s; OmniVoice clones best from 6-10 s. The transcripts are joined too.
-    3.  Tests the best candidates (up to 8) for Zero Crossing Rate (ZCR <= 0.15, after denoising) and keeps the first
+    3.  **Energy classes** (`EMOTION_REFS`, on). OmniVoice has no emotion control, but carries the energy of the clip
+        it clones, so a speaker gets clips for each energy of its lines. Every line is measured on the vocals against
+        the speaker's own medians: voice level (dB), pitch (semitones) and pace (syllables per second). Level and pitch
+        add up to an arousal score: `shout` from +6 (e.g. +4 dB and +4 semitones), `lively` from +2.5, else `calm`;
+        a pace 30% above the median adds 1. The candidates are ranked within each class (the calm score applies to the
+        calm class only), and steps 2-4 pick up to `REF_AUDITION_CANDIDATES` clips per class. The clarity filter stays,
+        so a shout over a cheering crowd does not become a clip and the shout class is often empty.
+    4.  Tests the best candidates (up to 8) for Zero Crossing Rate (ZCR <= 0.15, after denoising) and keeps the first
         `REF_AUDITION_CANDIDATES` (3) that pass, best score first. When none passes, the tested candidate with the
         lowest ZCR is used: the speaker's own voice beats another speaker's reference. Which of the kept clips the TTS
         clones best is decided by the voice audition in Stage 5 (Spec 002, 2.3).

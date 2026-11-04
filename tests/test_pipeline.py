@@ -435,10 +435,13 @@ class TestBankUpdate(unittest.TestCase):
         pipe.tts_manager.speaker_refs = {"A": ["ref_A.wav", "design_A.wav", "ref_A_2.wav"], "B": ["ref_B.wav"]}
         pipe.tts_manager.audition = {"ref_A.wav": 0.9, "design_A.wav": 0.95}
         pipe.tts_manager.designed = {"design_A.wav"}
+        pipe.ref_energy = {"ref_A.wav": "calm"}
+        pipe.shout_prints = {"A": [0.0, 1.0]}
         script = [{"speaker": "A"}] * 3 + [{"speaker": "B"}] * 2
         update = pipe._bank_update(script)
         self.assertEqual(list(update), ["A"])
-        self.assertEqual(update["A"]["clips"], [("ref_A.wav", 0.9, None)])
+        self.assertEqual(update["A"]["clips"], [("ref_A.wav", 0.9, None, "calm")])
+        self.assertEqual(update["A"]["shout_print"], [0.0, 1.0])
         self.assertEqual((update["A"]["person"], update["A"]["profile"]["name"]), ("V001", "Host"))
 
 

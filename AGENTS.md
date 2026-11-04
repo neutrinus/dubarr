@@ -55,6 +55,7 @@ src/
     take_judge.py          Judges takes without Whisper: signal artifacts, voiceprint match, CTC text match (Spec 002).
     series_memory.py       Between episodes of a series: settled name spellings, terms and the voice bank (Spec 006).
     subtitles.py           Sidecar/embedded subtitles: cues, alignment to lines, missing speech, SDH names, gender from grammar.
+    script_check.py        Stage 2c: unsure lines heard again, voiceprint speaker check; energy classes, shout/calm merge.
     report.py              Per-line production report: summary in the log, report_<lang>.tsv in the debug folder.
   infrastructure/
     database.py            SQLite: `tasks` queue + `job_steps` (cached JSON results per stage).
@@ -166,7 +167,13 @@ why the image used to need separate venvs.
 | `VOICE_MATCH_MIN` / `VOICE_BANK_CLIPS` | `0.6` / `5` | Voiceprint similarity from which a speaker is a known person of the series; clips kept per person. |
 | `GLOSSARY_MODE` | `respell` | `respell`: names get a phonetic spelling that must pass a reading check (Polish: by spelling rules against the name's English phonemes, `w` for English W becomes `ł`; other languages: an LLM reading test). `phonemes` (experiment): names stay as written and the TTS gets their English CMU phonemes. |
 | `VOICE_DESIGN` | `on` | One OmniVoice voice-design clip per speaker (gender/age/pitch from the speaker profile, the gender measured from the clips' pitch when it is clear, a generic voice when nothing is known) joins the reference candidates; it is used only when none of the speaker's clips reaches `AUDITION_LINE_REF_MIN` in the voice audition, and then a speaker keeps that kind of voice (clone or designed) for all lines. A speaker never borrows another speaker's voice. |
-| `TAKE_DROP_SIMILARITY` | `0.3` | A line whose every take is broken and unintelligible below this (the better of the CTC text match and the Whisper similarity; a wrong voice alone never drops a line) is left undubbed (the original stays audible). |
+| `ASR_VERIFY` | `on` | Stage 2c script check: unsure segments are heard again (vocals, prompted with names, subtitles), every segment's speaker is checked by its voiceprint, and the LLM corrector picks or reconstructs the text (marked `guessed`), drops Whisper hallucinations and notes speaker doubts (a signal only). |
+| `ASR_UNSURE_LOGPROB` / `ASR_UNSURE_WORD` | `-0.6` / `0.3` | A segment below this average log-probability, or with a word below this probability, is unsure. |
+| `SPEAKER_RECHECK_MIN` / `SPEAKER_RECHECK_MARGIN` | `0.5` / `0.1` | A segment of at least 1.5 s moves to another speaker only when its voice matches that speaker's centroid at least this well and this much better than its own. |
+| `EMOTION_REFS` | `on` | Every line gets an energy class (calm / lively / shout, relative to its speaker's level, pitch and pace); reference clips are picked per class and a line starts from a clip of its own class. |
+| `SHOUT_MERGE_MIN` | `0.3` | A shouting cluster joins the same person's calm one when the LLM names them alike, it is ≥3 dB louder and ≥3 semitones higher, no measured gender differs and the voiceprints are at least this alike. |
+| `VOICE_BANK_CLASS_CLIPS` | `2` | Series voice bank clips kept per energy class (with `EMOTION_REFS`). |
+| `TAKE_DROP_SIMILARITY` | `0.5` | A line whose every take is broken and unintelligible below this (the better of the CTC text match and the Whisper similarity; a wrong voice alone never drops a line) is left undubbed (the original stays audible). |
 | `REF_AUDITION_CANDIDATES` / `AUDITION_LINE_REF_MIN` | `3` / `0.8` | Reference clips kept per speaker for the voice audition; a speaker scoring below this does not clone from line clips. |
 | `TAKE_CHECK_DEVICE` | `cpu` | Where the Whisper of `TAKE_CHECK=whisper` runs. `auto` uses a GPU only with 8.5 GB free; on the TTS card it starves OmniVoice. |
 | `TAKE_CHECK_THREADS` | all cores | CPU threads of that Whisper (faster-whisper would use 4). |
