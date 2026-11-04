@@ -495,3 +495,63 @@ class TestAuditionScore(unittest.TestCase):
 
         pipe.judge.judge.return_value = {"score": 0.8, "problem": None, "voice": 0.7, "text_match": 0.8}
         self.assertEqual(pipe._audition_score("a.wav", "Po wielu długich godzinach w warsztacie", "pl", "ref.wav"), 0.8)
+
+
+class TestSubtitlesInThePipeline(unittest.TestCase):
+    def setUp(self):
+        self.pipe = DubbingPipeline(MagicMock(), MagicMock(), MagicMock(), MagicMock(), target_langs=["pl"])
+        self.dir = tempfile.mkdtemp()
+        self.video = os.path.join(self.dir, "Show - S01E01.mkv")
+
+    def write(self, suffix, text):
+        with open(os.path.splitext(self.video)[0] + suffix, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    @staticmethod
+    def srt(cues):
+        return "\n\n".join(f"{i + 1}\n00:00:{s:02d},000 --> 00:00:{e:02d},000\n{t}" for i, (s, e, t) in enumerate(cues))
+
+    def test_target_cues_go_to_the_lines(self):
+        self.write(".pl.srt", self.srt([(1, 3, "Byłem tam."), (5, 6, "Dobrze.")]))
+        script = [
+            {"index": 0, "start": 0.5, "end": 3.5, "speaker": "A"},
+            {"index": 1, "start": 4.0, "end": 7.0, "speaker": "B"},
+        ]
+        self.pipe._attach_target_subtitles(self.video, script)
+        self.assertEqual([s.get("subtitles") for s in script], [{"pl": "Byłem tam."}, {"pl": "Dobrze."}])
+
+    def test_missing_speech_joins_the_transcription(self):
+        cues = [(i * 4, i * 4 + 2, f"Line {i}.") for i in range(12)] + [(50, 53, "Unheard words.")]
+        trans = [{"start": i * 4.0, "end": i * 4.0 + 2.0, "text": f"Line {i}."} for i in range(12)]
+        out = self.pipe._add_missing_speech(trans, self.srt(cues))
+        self.assertEqual(out[-1]["text"], "Unheard words.")
+        self.assertEqual(len(out), 13)
+        self.assertEqual(self.pipe._add_missing_speech(trans, ""), trans)
+
+    def test_grammar_gender_beats_the_pitch(self):
+        self.pipe.speaker_info = {"SPEAKER_01": {"name": "Uhura", "gender": "female"}}
+        script = [{"speaker": "SPEAKER_01", "subtitles": {"pl": t}} for t in ("Byłem tam.", "Zrobiłem to.", "Widziałem go.")]
+        with (
+            patch("core.pipeline.MOCK_MODE", False),
+            patch("core.pipeline.pitch_gender", return_value=("female", 240.0)) as pitch,
+        ):
+            self.pipe._check_genders({"SPEAKER_01": ["a.wav"]}, script)
+        info = self.pipe.speaker_info["SPEAKER_01"]
+        self.assertEqual((info["gender"], info["gender_measured"], info["name"]), ("male", True, ""))
+        pitch.assert_not_called()
+
+    def test_terms_of_the_series_and_the_episode(self):
+        self.pipe.series = MagicMock()
+        self.pipe.series.terms.return_value = ({"Starfleet": "Gwiezdna Flota", "phaser": "fazer"}, {"A -> B": "ty"})
+        self.pipe.global_context = {}
+        self.pipe.llm_manager.extract_terms.return_value = {"terms": {"phaser": "fazer ręczny"}, "address": {}}
+        script = [{"text_en": "Phaser!", "subtitles": {"pl": "Fazer!"}}]
+        self.pipe._prepare_terms(script, "pl")
+        self.assertEqual(self.pipe.global_context["terms"]["pl"], {"Starfleet": "Gwiezdna Flota", "phaser": "fazer ręczny"})
+        self.assertEqual(self.pipe.global_context["address"]["pl"], {"A -> B": "ty"})
+        # No subtitles: no LLM request, the series' terms only
+        self.pipe.llm_manager.extract_terms.reset_mock()
+        self.pipe._prepare_terms([{"text_en": "Hi."}], "pl")
+        self.pipe.llm_manager.extract_terms.assert_not_called()
+        self.pipe._remember_series([{"text_en": "Starfleet calls."}])
+        self.pipe.series.save_terms.assert_called_with("pl", {}, {}, ["Starfleet"])
