@@ -3,7 +3,8 @@
 1. missing or swallowed (in the synchronizer: no audio, or far too short for its text),
 2. artifacts on the signal: squeaks, clipping, a long silence inside the take,
 3. voice match: the take's voiceprint against the voice it cloned,
-4. text match: how well the text fits the audio under a CTC speech model of the target language.
+4. text match: what a CTC speech model of the target language reads in the take, compared with the text letter by
+   letter on the scale of the Whisper similarity.
 
 Layers 3 and 4 need their models; when a model is missing (MOCK_MODE, the light dev environment, a failed download)
 the layer is skipped and the take is judged by the others.
@@ -15,10 +16,10 @@ import subprocess
 import tempfile
 import threading
 import wave
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from config import MOCK_MODE, HF_TOKEN, JUDGE_ALIGN_MODEL, JUDGE_DEVICE, JUDGE_HF_MAX_DB, JUDGE_MIN_TEXT, JUDGE_MIN_VOICE
-from utils import count_syllables
+from utils import count_syllables, text_similarity
 
 try:
     import numpy as np
@@ -108,27 +109,14 @@ def _longest_run(mask) -> int:
     return best
 
 
-def ctc_score(log_probs, targets, blank: int) -> float:
-    """exp(-CTC loss per character): ~1 when the text fits the audio, ~0 for gibberish or missing words."""
-    import torch
-
-    if len(targets) == 0:
-        return 1.0
-    if log_probs.shape[0] < len(targets):
-        return 0.0
-    loss = torch.nn.functional.ctc_loss(
-        log_probs[:, None, :],
-        torch.tensor([targets], dtype=torch.long),
-        torch.tensor([log_probs.shape[0]]),
-        torch.tensor([len(targets)]),
-        blank=blank,
-        reduction="sum",
-        zero_infinity=True,
-    )
-    value = float(loss)
-    if value == 0.0 and log_probs.shape[0] > 0:  # zero_infinity: no alignment at all
-        return 0.0
-    return float(torch.exp(torch.tensor(-value / len(targets))))
+def ctc_greedy(log_probs, blank: int) -> List[int]:
+    """The CTC model's own reading of the audio (best token per frame, repeats merged, blanks dropped)."""
+    ids, prev = [], None
+    for token in log_probs.argmax(-1).tolist():
+        if token != prev and token != blank:
+            ids.append(token)
+        prev = token
+    return ids
 
 
 class TakeJudge:
@@ -266,12 +254,16 @@ class TakeJudge:
                 if samples is None or len(samples) == 0:
                     return 0.0
                 vocab = processor.tokenizer.get_vocab()
-                words = "".join(ch if (ch in vocab or ch == " ") else " " for ch in text.lower()).split()
-                targets = [i for i in processor.tokenizer(" ".join(words)).input_ids if i != processor.tokenizer.unk_token_id]
+                # Only letters the model can write: digits are spoken as words the text does not spell
+                expected = "".join(ch if (ch in vocab or ch == " ") else " " for ch in text.lower())
                 inputs = processor(samples, sampling_rate=16000, return_tensors="pt")
                 with torch.no_grad():
                     logits = model(inputs.input_values.to(model.device)).logits[0].float().cpu()
-                return ctc_score(logits.log_softmax(-1), targets, processor.tokenizer.pad_token_id)
+                ids = ctc_greedy(logits, processor.tokenizer.pad_token_id)
+                # A likelihood of the text itself (exp(-CTC loss)) depends on how sure the model is of the voice:
+                # clear Polish from a cloned shouting commentator scored 0.0 there; what it reads does not
+                heard = processor.tokenizer.decode(ids, group_tokens=False)
+                return text_similarity(expected, heard)
             except Exception as e:
                 logger.warning(f"Take judge: text match failed: {e}")
                 return None

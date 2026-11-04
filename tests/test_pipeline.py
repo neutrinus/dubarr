@@ -438,8 +438,47 @@ class TestBankUpdate(unittest.TestCase):
         script = [{"speaker": "A"}] * 3 + [{"speaker": "B"}] * 2
         update = pipe._bank_update(script)
         self.assertEqual(list(update), ["A"])
-        self.assertEqual(update["A"]["clips"], [("ref_A.wav", 0.9)])
+        self.assertEqual(update["A"]["clips"], [("ref_A.wav", 0.9, None)])
         self.assertEqual((update["A"]["person"], update["A"]["profile"]["name"]), ("V001", "Host"))
+
+
+class TestExtendShortClip(unittest.TestCase):
+    def line(self, start, end, spk="A", text="x"):
+        return {"start": start, "end": end, "speaker": spk, "text_en": text}
+
+    def test_a_short_clip_grows_with_adjacent_lines_of_the_speaker(self):
+        script = [
+            self.line(0.0, 2.0, "B"),
+            self.line(2.2, 4.0, text="Hello."),
+            self.line(4.3, 7.0, text="Calm talk."),
+            self.line(7.2, 15.0, text="Too long to join."),
+        ]
+        with patch("core.pipeline.clarity_db", return_value=12.0):
+            out = DubbingPipeline._extend_short_clip(script[2], script, "v.wav")
+        # The next line would make it 10.8 s; the previous one (another speaker before it) fits
+        self.assertEqual((out["start"], out["end"], out["text_en"]), (2.2, 7.0, "Hello. Calm talk."))
+
+    def test_noisy_or_distant_neighbours_do_not_join(self):
+        script = [self.line(0.0, 2.0), self.line(3.0, 5.0), self.line(5.2, 7.0)]
+        with patch("core.pipeline.clarity_db", return_value=1.0):  # crowd over the voice
+            self.assertIs(DubbingPipeline._extend_short_clip(script[1], script, "v.wav"), script[1])
+        long_clip = self.line(10.0, 17.0)
+        self.assertIs(DubbingPipeline._extend_short_clip(long_clip, [long_clip], "v.wav"), long_clip)
+
+
+class TestCheckGenders(unittest.TestCase):
+    def test_measured_pitch_overrules_the_analysis(self):
+        pipe = DubbingPipeline.__new__(DubbingPipeline)
+        pipe.speaker_info = {"SPEAKER_12": {"name": "Jenny Taft", "gender": "female"}, "SPEAKER_03": {"gender": "male"}}
+        verdicts = {"a.wav": ("male", 118.0), "b.wav": (None, 170.0)}
+        with (
+            patch("core.pipeline.MOCK_MODE", False),
+            patch("core.pipeline.pitch_gender", side_effect=lambda paths: verdicts[paths[0]]),
+        ):
+            pipe._check_genders({"SPEAKER_12": ["a.wav"], "SPEAKER_03": ["b.wav"]})
+        self.assertEqual(pipe.speaker_info["SPEAKER_12"]["gender"], "male")
+        self.assertTrue(pipe.speaker_info["SPEAKER_12"]["gender_measured"])
+        self.assertEqual(pipe.speaker_info["SPEAKER_03"], {"gender": "male"})  # in between: the guess stays
 
 
 class TestAuditionScore(unittest.TestCase):

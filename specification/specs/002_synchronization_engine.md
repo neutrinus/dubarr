@@ -51,10 +51,13 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
         `JUDGE_MIN_VOICE` (0.5) the clone is not that voice: the model drifted into another voice or into noise.
     4.  *text match*: a CTC speech model of the target language (`JUDGE_ALIGN_MODEL`; default
         `jonatasgrosman/wav2vec2-large-xlsr-53-polish` for Polish, 300 M parameters, and `facebook/mms-1b-all` with
-        the language's adapter for other languages; on the CPU) scores how well the take's text fits the audio: the
-        CTC loss of the text per character, turned into a score in [0, 1] (`exp(-loss / chars)`). It writes no
-        transcript and has no fixed 30 s window, so it costs well under Whisper's 10 s per take. Under
-        `JUDGE_MIN_TEXT` (0.5) the take is gibberish or lost words. Lines under 4 syllables skip this layer.
+        the language's adapter for other languages; on the CPU) reads the take (greedy CTC decoding, no language
+        model) and that reading is compared with the text on letters only, like the Whisper similarity (0..1). It has
+        no fixed 30 s window, so it costs well under Whisper's 10 s per take. Under `JUDGE_MIN_TEXT` (0.5) the take is
+        gibberish or lost words. Lines under 4 syllables skip this layer. Digits are left out of the text (the take
+        speaks them as words). The likelihood of the text (`exp(-CTC loss / chars)`), used first, depends on how sure
+        the model is of the voice rather than of the words: in the first run with it (S01E02) clear Polish from the
+        cloned commentators scored 0.0-0.1, and 109 of 139 dropped lines were heard right by Whisper.
         The processor is loaded without the model's language model (it needs `pyctcdecode` and the score does not
         use it); when the language's model does not load, `facebook/mms-1b-all` is tried. When no CTC model loads,
         that is an error in the log, and in `whisper` mode the Whisper similarity takes the text match's place for
@@ -84,9 +87,11 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
     -   **Success:** the accepted take.
     -   **Fallback (attempts exhausted):** among sound takes, the one that fits the limit and is closest to the target;
         if none fits, the shortest sound one. Broken takes are used only if nothing else exists.
-    -   **Dropped:** when every take is broken and none reaches `TAKE_DROP_SIMILARITY` (default 0.3; a swallowed take
-        counts as 0), the line is not dubbed (status `DROPPED`): the original stays audible, which beats gibberish or
-        screams in the dub.
+    -   **Dropped:** when every take is broken and none is intelligible to `TAKE_DROP_SIMILARITY` (default 0.3), the
+        line is not dubbed (status `DROPPED`): the original stays audible, which beats gibberish or screams in the dub.
+        Only the words count here: the better of the take's text match and Whisper similarity, the judge score only
+        when neither was measured (a swallowed or missing take counts as 0, a take with artifacts as its score). A
+        take in a doubtful voice is still used: the English original showing through is worse.
     -   **Critical failure:** silence of the target length, so the pipeline does not stall (the original stays audible
         under it because the mix keeps the original audio).
 
@@ -102,24 +107,31 @@ worse from an arbitrary line. Without the audition the Stage 4 order is kept and
 **Designed voice** (`VOICE_DESIGN`, on by default). Before the audition, OmniVoice voice design synthesizes one clip
 per speaker that has lines, from the attributes it understands: gender, age and pitch, taken from the speaker
 profile (Stage 3; e.g. "male, middle-aged, low pitch"; age words match whole words only). With nothing known OmniVoice
-picks a generic voice. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
+picks a generic voice. The gender is measured, not guessed, when the speaker's reference clips tell: a median pitch
+(autocorrelation over the voiced frames of up to `REF_AUDITION_CANDIDATES` clips) of at most 160 Hz is male, of at
+least 180 Hz female, anything between leaves the profile's gender. The measurement overrules the analysis and the
+series memory (Spec 006), which once stored the play-by-play man under the sideline reporter's name and gender, so
+his designed voice was a woman's. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
 it is the speaker's only line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
 other reference, so the voice stays the same across the video. The audition decides whether it beats the speaker's
 own clips (voice design was trained on Chinese and English only and may be unstable in other languages). It gives a
 voice to speakers without any clean clip.
 
 A speaker only ever speaks with **its own voice** (its clips, line clips or designed voice): another speaker's voice in
-its mouth confuses the viewer more than a generic voice does.
+its mouth confuses the viewer more than a generic voice does. And with **one voice**: the kind of the audition's best
+candidate (the video's clips, or the designed voice) is used for every line; the other kind only after all references
+of that kind were tried for a line. In S01E02 the takes of one speaker alternated between a clone and the designed
+voice from line to line. A speaker whose best candidate is the designed voice does not use line clips.
 
 References are tried in this order; a retry after a broken take skips the ones already tried for that line:
 1.  **Line clip:** a clean clip of the line itself when it is 3-10 s long (carries the scene's emotion). Clean means
     ZCR < 0.25 and a clarity (vocals over the rest, see Spec 001, 2.4) of at least `REF_MIN_CLARITY_DB`; a line shouted
     over a cheering crowd uses the speaker's references instead.
-2.  **Speaker's references:** the candidates that scored at least `JUDGE_MIN_TEXT` in the audition (all of them
-    without an audition), in rank order.
-3.  **Last Good Sample:** the last clean line clip of this speaker.
-4.  **Designed voice**, when it scored under `JUDGE_MIN_TEXT` (a better score ranks it in step 2).
-5.  **Speaker's weak references:** the clips that scored under `JUDGE_MIN_TEXT`.
+2.  **Speaker's references** of the speaker's voice kind that scored at least `TAKE_MIN_SIMILARITY` in the audition
+    (all of them without an audition), in rank order.
+3.  **Last Good Sample:** the last clean line clip of this speaker (not for a speaker in the designed voice).
+4.  **Speaker's weak references** of that kind: those that scored under `TAKE_MIN_SIMILARITY`.
+5.  **The other kind** (the designed voice for a cloned speaker, the clips for a designed one), by score.
 When all of these were tried, the least broken take is kept (2.2 step 4). Only a speaker with no voice of its own at all
 (no clip, design off or failed) uses another speaker's last good sample or reference, so the line is still dubbed.
 

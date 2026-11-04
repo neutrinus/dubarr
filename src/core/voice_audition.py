@@ -7,11 +7,16 @@ A few syntheses per speaker before Stage 5 replace most of the retries the per-t
 import logging
 import os
 import re
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
 from utils import count_syllables
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +89,70 @@ def design_text(drafts: List[Dict], speaker: str, lang: str, avoid: Optional[str
         if total >= DESIGN_SYLLABLES:
             break
     return " ".join(picked) if total >= MIN_AUDITION_SYLLABLES else None
+
+
+# Speaking pitch (median F0 of calm speech): men mostly 85-155 Hz, women 165-255 Hz; between the two, no verdict
+PITCH_MALE_MAX = 160.0
+PITCH_FEMALE_MIN = 180.0
+PITCH_MIN_FRAMES = 20  # voiced 10 ms frames needed for a verdict
+
+
+def median_pitch(samples, rate: int, fmin: float = 60.0, fmax: float = 400.0) -> Optional[float]:
+    """Median fundamental frequency (Hz) of the voiced frames, by autocorrelation; None with too little voice."""
+    if np is None or samples is None or rate <= 0:
+        return None
+    frame, hop = int(0.04 * rate), int(0.01 * rate)
+    lo, hi = max(1, int(rate / fmax)), int(rate / fmin)
+    if len(samples) < frame or hi >= frame:
+        return None
+    starts = range(0, len(samples) - frame, hop)
+    energy = np.array([float(np.mean(samples[i : i + frame] ** 2)) for i in starts])
+    if not len(energy) or energy.max() <= 0:
+        return None
+    loud = energy.max() * 0.05  # 13 dB below the loudest frame: speech, not breath or room
+    f0s = []
+    for i, e in zip(starts, energy):
+        if e < loud:
+            continue
+        x = samples[i : i + frame] - np.mean(samples[i : i + frame])
+        spec = np.fft.rfft(x, 2 * frame)
+        r = np.fft.irfft(spec * np.conj(spec))[:frame]
+        if r[0] <= 0:
+            continue
+        seg = r[lo:hi] / r[0]
+        peak = float(seg.max())
+        if peak < 0.5:  # not periodic enough to be voiced
+            continue
+        # The first lag close to the best one: a period's multiples score almost as high (octave errors)
+        k = int(np.argmax(seg >= 0.9 * peak))
+        while k + 1 < len(seg) and seg[k + 1] > seg[k]:  # up to the top of that peak
+            k += 1
+        shift = 0.0
+        if 0 < k < len(seg) - 1:  # parabolic interpolation between the lags around the top
+            a, b, c = seg[k - 1], seg[k], seg[k + 1]
+            shift = 0.5 * (a - c) / (a - 2 * b + c) if (a - 2 * b + c) else 0.0
+        f0s.append(rate / (lo + k + shift))
+    return float(np.median(f0s)) if len(f0s) >= PITCH_MIN_FRAMES else None
+
+
+def pitch_gender(paths: List[str]) -> Tuple[Optional[str], Optional[float]]:
+    """("male" | "female" | None, median pitch) of a speaker's reference clips; None when the pitch is in between."""
+    from core.take_judge import read_wav_mono
+
+    pitches = []
+    for path in paths:
+        read = read_wav_mono(path) if path and os.path.exists(path) else None
+        pitch = median_pitch(*read) if read else None
+        if pitch:
+            pitches.append(pitch)
+    if not pitches:
+        return None, None
+    pitch = float(np.median(pitches))
+    if pitch <= PITCH_MALE_MAX:
+        return "male", pitch
+    if pitch >= PITCH_FEMALE_MIN:
+        return "female", pitch
+    return None, pitch
 
 
 def design_voices(tts_manager, speaker_info: Dict[str, Dict], drafts: List[Dict], lang: str, work_dir: str) -> Dict[str, str]:

@@ -186,10 +186,14 @@ class SeriesMemory:
                 old = person.get("print")
                 person["print"] = [round((o * n + e) / (n + 1), 6) for o, e in zip(old, emb)] if old else list(emb)
             person["episodes"] = n + 1
+            profile = info.get("profile") or {}
             for key in ("name", "gender", "desc"):
-                value = (info.get("profile") or {}).get(key)
+                value = profile.get(key)
                 if value and value != "unknown" and not person.get(key):
                     person[key] = value
+            # A gender measured from the voice's pitch replaces one the LLM guessed in an earlier episode
+            if profile.get("gender_measured") and profile.get("gender") in ("male", "female"):
+                person["gender"] = profile["gender"]
             self._merge_clips(pid, person, info.get("clips") or [])
         _write_json(self.voices_path, data)
         logger.info(f"Series memory '{self.key}': voice bank has {len(persons)} persons")
@@ -197,7 +201,9 @@ class SeriesMemory:
     def _merge_clips(self, pid: str, person: Dict, clips):
         """The best VOICE_BANK_CLIPS clips by audition score, from the bank and this episode."""
         entries = {c["file"]: c for c in person.get("clips") or [] if c.get("file")}
-        for path, score in clips:
+        for clip in clips:
+            path, score = clip[0], clip[1]
+            quality = clip[2] if len(clip) > 2 else None
             if score is None or not path or not os.path.exists(path):
                 continue
             if os.path.dirname(os.path.abspath(path)) == os.path.abspath(self.clips_dir):
@@ -207,14 +213,42 @@ class SeriesMemory:
                 shutil.copy(path, os.path.join(self.clips_dir, name))
                 if os.path.exists(ref_text_path(path)):
                     shutil.copy(ref_text_path(path), ref_text_path(os.path.join(self.clips_dir, name)))
-            entries[name] = {"file": name, "score": round(float(score), 2)}
-        ranked = sorted(entries.values(), key=lambda c: -c.get("score", 0.0))
+            entry = {"file": name, "score": round(float(score), 2)}
+            if quality is None:
+                quality = (entries.get(name) or {}).get("quality")  # measured when the clip was cut
+            if quality is not None:
+                entry["quality"] = round(float(quality), 2)
+            entries[name] = entry
+        ranked = sorted(entries.values(), key=lambda c: -clip_rank(c))
         for dropped in ranked[VOICE_BANK_CLIPS:]:
             path = os.path.join(self.clips_dir, dropped["file"])
             for p in (path, ref_text_path(path)):
                 if os.path.exists(p):
                     os.remove(p)
         person["clips"] = ranked[:VOICE_BANK_CLIPS]
+
+
+# Between clips that clone about equally well, the cleaner and better sized one stays in the bank
+QUALITY_WEIGHT = 0.1
+CLIP_BEST_SECONDS = (6.0, 10.0)  # OmniVoice clones best from 6-10 s
+
+
+def clip_quality(duration: float, clarity: Optional[float]) -> float:
+    """0..1: how good a reference clip is as such, from its length and how far the voice stands above the mix (dB)."""
+    lo, hi = CLIP_BEST_SECONDS
+    if duration < lo:
+        fit = max(0.0, duration / lo)
+    elif duration > hi:
+        fit = max(0.0, 1.0 - (duration - hi) / hi)
+    else:
+        fit = 1.0
+    clean = 0.5 if clarity is None else min(1.0, max(0.0, (clarity - 3.0) / 12.0))
+    return round(0.5 * fit + 0.5 * clean, 2)
+
+
+def clip_rank(entry: Dict) -> float:
+    """Audition score first; the clip's quality decides between clips within about 0.1 of each other."""
+    return float(entry.get("score", 0.0)) + QUALITY_WEIGHT * float(entry.get("quality", 0.5))
 
 
 def _cosine(a, b) -> float:

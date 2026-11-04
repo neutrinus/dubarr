@@ -93,6 +93,34 @@ class TestVoiceBank(unittest.TestCase):
         self.assertEqual(len(clips), 2)
         self.assertTrue(os.path.exists(os.path.splitext(clips[0])[0] + ".txt"))
 
+    def test_a_measured_gender_replaces_a_guessed_one(self):
+        self.first_episode()
+        profile = {"name": "Jenny Taft", "gender": "female", "gender_measured": False}
+        self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": profile, "clips": []}})
+        self.assertEqual(self.mem.persons()["V001"]["gender"], "male")  # a guess does not overwrite
+        profile = {"gender": "female", "gender_measured": True}
+        self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": profile, "clips": []}})
+        self.assertEqual(self.mem.persons()["V001"]["gender"], "female")
+
+    def test_a_cleaner_clip_wins_between_equal_scores(self):
+        self.first_episode()
+        # Same audition score as the stored 0.9 clip, but longer and cleaner; the 0.4 one is pushed out first
+        with patch.object(series_memory, "VOICE_BANK_CLIPS", 2):
+            self.mem.save_voices(
+                {"SPEAKER_00": {"person": "V001", "print": None, "profile": {}, "clips": [(self.clip("long.wav"), 0.88, 1.0)]}}
+            )
+        clips = self.mem.persons()["V001"]["clips"]
+        self.assertEqual([c["score"] for c in clips], [0.88, 0.9])
+        self.assertEqual(clips[0]["quality"], 1.0)
+
+    def test_clip_quality(self):
+        from core.series_memory import clip_quality
+
+        self.assertEqual(clip_quality(8.0, 15.0), 1.0)
+        self.assertLess(clip_quality(3.0, 15.0), clip_quality(7.0, 15.0))
+        self.assertLess(clip_quality(8.0, 4.0), clip_quality(8.0, 12.0))
+        self.assertEqual(clip_quality(8.0, None), 0.75)  # clarity unknown: middle
+
     def test_match_needs_a_clear_winner(self):
         self.first_episode()
         matches = self.mem.match({"SPEAKER_05": [0.95, 0.1, 0.0], "SPEAKER_06": [0.7, 0.7, 0.0], "X": [0.0, 0.0, 1.0]})

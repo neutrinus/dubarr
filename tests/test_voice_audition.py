@@ -1,9 +1,12 @@
+import os
+import tempfile
 import unittest
+import wave
 from unittest.mock import MagicMock, patch
 
 from core.synchronizer import SegmentSynchronizer
 from core.tts_manager import TTSManager
-from core.voice_audition import audition_voices, pick_test_line
+from core.voice_audition import audition_voices, median_pitch, pick_test_line, pitch_gender
 
 
 class TestPickTestLine(unittest.TestCase):
@@ -145,3 +148,38 @@ class TestVoiceDesign(unittest.TestCase):
             item = {"speaker": "EXP", "index": 1, "start": 0.0, "end": 12.0}
             path, _ = tts._select_reference(item, "v.wav", "pl", skip={"exp.wav"})
             self.assertNotIn(path, designed.values())
+
+
+def voiced(f0, rate=16000, seconds=1.5):
+    """A buzzy vowel-like tone: harmonics of f0, as a voice has."""
+    np = __import__("numpy")
+    t = np.arange(int(rate * seconds)) / rate
+    return sum(np.sin(2 * np.pi * f0 * k * t) / k for k in range(1, 6)).astype("float32") * 0.2
+
+
+class TestPitchGender(unittest.TestCase):
+    def setUp(self):
+        __import__("pytest").importorskip("numpy")
+
+    def test_median_pitch_of_a_voice(self):
+        self.assertAlmostEqual(median_pitch(voiced(120.0), 16000), 120.0, delta=4)
+        self.assertAlmostEqual(median_pitch(voiced(220.0), 16000), 220.0, delta=6)
+        self.assertIsNone(median_pitch(voiced(120.0)[:400], 16000))  # too short to tell
+
+    def wav(self, samples, rate=16000):
+        np = __import__("numpy")
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        with wave.open(path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(rate)
+            wf.writeframes((samples * 32767).astype(np.int16).tobytes())
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_gender_from_the_reference_clips(self):
+        self.assertEqual(pitch_gender([self.wav(voiced(115.0)), self.wav(voiced(125.0))])[0], "male")
+        self.assertEqual(pitch_gender([self.wav(voiced(210.0))])[0], "female")
+        self.assertEqual(pitch_gender([self.wav(voiced(170.0))])[0], None)  # in between: the profile stays
+        self.assertEqual(pitch_gender(["missing.wav"]), (None, None))
