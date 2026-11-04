@@ -332,3 +332,57 @@ class TestWindowedTranslation(unittest.TestCase):
         self.chat.return_value = reply(json.dumps({"fixes": [{"id": 0, "text": "Mają dwa małe miniboty."}]}))
         reviewed = self.manager.review_drafts(drafts, "pl", {}, {})
         self.assertEqual(reviewed[0]["variants"], ["Mają dwa małe miniboty."])
+
+
+class TestSubtitleHints(unittest.TestCase):
+    """Spec 001, 2.5a, 7-8 and Spec 006, 5: target-language subtitles as a hint, terms and forms of address."""
+
+    def setUp(self):
+        patcher = patch("core.llm_engine.MOCK_MODE", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.manager = LLMManager(model_path="fake_model.gguf", inference_lock=None, debug_mode=False, target_langs=["pl"])
+        self.manager.llm = MagicMock()
+        self.chat = self.manager.llm.create_chat_completion
+
+    def test_translator_sees_the_subtitle_and_the_terms(self):
+        script = [
+            {"speaker": "A", "text_en": "Starfleet calling.", "start": 0, "end": 2, "subtitles": {"pl": "Tu Gwiezdna Flota."}},
+            {"speaker": "A", "text_en": "Over.", "start": 2, "end": 3},
+        ]
+        self.chat.return_value = reply(json.dumps({"translations": [{"id": 0, "text": "Mówi Gwiezdna Flota."}]}))
+        context = {
+            "glossary": {"Starfleet": "Starflit", "Spock": "Spok"},
+            "terms": {"pl": {"Starfleet": "Gwiezdna Flota"}},
+            "address": {"pl": {"Spock -> Kirk": "formal: 'kapitanie'"}},
+        }
+        drafts = self.manager.generate_drafts(script, "pl", {}, context)
+        messages = self.chat.call_args.kwargs["messages"]
+        request = json.loads(messages[1]["content"])
+        self.assertEqual(request["translate"][0]["subtitle"], "Tu Gwiezdna Flota.")
+        self.assertNotIn("subtitle", request["translate"][1])
+        system = messages[0]["content"]
+        self.assertIn('"Starfleet": "Gwiezdna Flota"', system)
+        self.assertIn("Spock -> Kirk: formal", system)
+        self.assertNotIn("Starflit", system)  # translated, so not respelled
+        self.assertIn("Spok", system)
+        self.assertEqual(drafts[0]["subtitle"], "Tu Gwiezdna Flota.")
+
+    def test_terms_must_be_in_the_script_and_the_subtitles(self):
+        script = [
+            {
+                "speaker": "A",
+                "text_en": "Starfleet orders, captain.",
+                "subtitles": {"pl": "Rozkazy Gwiezdnej Floty, kapitanie."},
+            },
+            {"speaker": "B", "text_en": "Phasers on stun.", "subtitles": {"pl": "Fazery na ogłuszanie."}},
+        ]
+        answer = {
+            "terms": {"Starfleet": "Gwiezdna Flota", "phaser": "fazer", "Klingon": "Klingon", "Romulan": "Romulanin"},
+            "address": [{"speaker": "A", "addressee": "B", "form": "formal: 'kapitanie'"}],
+        }
+        self.chat.return_value = reply(json.dumps(answer))
+        out = self.manager.extract_terms(script, "pl", {})
+        # inflected forms count; an unchanged name and a term absent from both texts do not
+        self.assertEqual(out["terms"], {"Starfleet": "Gwiezdna Flota", "phaser": "fazer"})
+        self.assertEqual(out["address"], {"A -> B": "formal: 'kapitanie'"})

@@ -6,7 +6,15 @@ import threading
 import gc
 import re
 from typing import List, Dict, Optional, Any
-from utils import parse_json, clean_output, count_syllables, respelling_heard_as, clean_arpabet, check_polish_spelling
+from utils import (
+    translation_glossary,
+    parse_json,
+    clean_output,
+    count_syllables,
+    respelling_heard_as,
+    clean_arpabet,
+    check_polish_spelling,
+)
 from prompts import (
     T_ANALYSIS,
     T_ED,
@@ -16,6 +24,7 @@ from prompts import (
     T_GLOSSARY_READ,
     T_GLOSSARY_RESPELL,
     T_GLOSSARY_CMU,
+    T_TERMS,
     RESPELL_RULES,
 )
 from config import (
@@ -69,6 +78,22 @@ def speaker_gender(speaker_info: Dict, speaker_id: str) -> str:
     if re.search(r"\b(male|man|boy|guy)\b", desc):
         return "male"
     return ""
+
+
+def _terms_text(global_context: Dict, lang: str) -> str:
+    terms = (global_context.get("terms") or {}).get(lang) or {}
+    return json.dumps(terms, ensure_ascii=False) if terms else "(none)"
+
+
+def _address_text(global_context: Dict, lang: str) -> str:
+    address = (global_context.get("address") or {}).get(lang) or {}
+    return "\n".join(f"- {k}: {v}" for k, v in sorted(address.items())) if address else "(none)"
+
+
+def _found_in(term: str, text: str) -> bool:
+    """Whether every word of ``term`` occurs in ``text``, inflected (Polish endings change: "Gwiezdnej Floty")."""
+    words = re.findall(r"\w+", term.lower())
+    return bool(words) and all(w[: max(3, len(w) - 3)] in text for w in words)
 
 
 def speaker_label(speaker_info: Dict, speaker_id: str) -> str:
@@ -580,7 +605,7 @@ class LLMManager:
             or "(unknown)"
         )
 
-    def _draft_entry(self, script, idx, text, speaker_info):
+    def _draft_entry(self, script, idx, text, speaker_info, lang=""):
         return {
             "index": idx,
             "text": text,
@@ -591,6 +616,7 @@ class LLMManager:
             "min_start": script[idx].get("min_start", script[idx]["start"]),
             "text_en": script[idx]["text_en"],  # Keep original for reference
             "speaker_label": speaker_label(speaker_info, script[idx]["speaker"]),
+            "subtitle": (script[idx].get("subtitles") or {}).get(lang, ""),
         }
 
     def generate_drafts(
@@ -601,10 +627,14 @@ class LLMManager:
         global_context: Dict,
     ) -> List[Dict]:
         """Translates the script in windows with surrounding context and per-line syllable budgets (Spec 001, 2.5a)."""
-        glossary = global_context.get("glossary", {})
+        glossary = translation_glossary(global_context, lang)
         lang_name = LANG_MAP.get(lang, lang)
         system = T_TRANS_SYSTEM.format(
-            lang_name=lang_name, context=self._about(global_context), glossary=json.dumps(glossary, ensure_ascii=False)
+            lang_name=lang_name,
+            context=self._about(global_context),
+            glossary=json.dumps(glossary, ensure_ascii=False),
+            terms=_terms_text(global_context, lang),
+            address=_address_text(global_context, lang),
         )
 
         valid_indices = [idx for idx, s in enumerate(script) if not self._is_sound_marker(s["text_en"])]
@@ -643,6 +673,9 @@ class LLMManager:
                 if gender:
                     item["speaker_gender"] = gender
                 item.update(self.syllable_budget(script[idx]))
+                subtitle = (script[idx].get("subtitles") or {}).get(lang)
+                if subtitle:
+                    item["subtitle"] = subtitle
                 request["translate"].append(item)
 
             messages = [
@@ -675,10 +708,54 @@ class LLMManager:
 
         drafts = []
         for idx in valid_indices:
-            entry = self._draft_entry(script, idx, translated.get(idx, script[idx]["text_en"]), speaker_info)
+            entry = self._draft_entry(script, idx, translated.get(idx, script[idx]["text_en"]), speaker_info, lang)
             entry["variants"] = variants.get(idx, [entry["text"]])
             drafts.append(entry)
         return drafts
+
+    def extract_terms(self, script: List[Dict], lang: str, speaker_info: Dict, chunk: int = 60) -> Dict:
+        """{"terms": {source: target}, "address": {"A -> B": form}} that the episode's target-language subtitles show
+        (Spec 006, 5). A pair is kept only when the source term is in the script and the target term in the subtitles."""
+        lang_name = LANG_MAP.get(lang, lang)
+        system = T_TERMS.format(lang_name=lang_name)
+        lines = [
+            {"speaker": speaker_name(speaker_info, s["speaker"]), "source": s["text_en"], "subtitle": s["subtitles"][lang]}
+            for s in script
+            if (s.get("subtitles") or {}).get(lang)
+        ]
+        source_text = " ".join(s.get("text_en", "") for s in script).lower()
+        subtitle_text = " ".join(x["subtitle"] for x in lines).lower()
+        terms: Dict[str, str] = {}
+        address: Dict[str, str] = {}
+        for start in range(0, len(lines), chunk):
+            if self.abort_event.is_set():
+                break
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps({"lines": lines[start : start + chunk]}, indent=1, ensure_ascii=False)},
+            ]
+            t0 = time.perf_counter()
+            try:
+                res = self._run_inference(messages, priority=2, max_tokens=LLM_MAX_TOKENS, temperature=0.1)
+                self._update_stats(res, time.perf_counter() - t0)
+                parsed = parse_json(res["choices"][0]["text"]) or {}
+            except Exception as e:
+                logging.warning(f"LLM: Term extraction failed for lines {start}+: {e}")
+                continue
+            for term, target in (parsed.get("terms") or {}).items():
+                term, target = str(term).strip(), str(target or "").strip()
+                if not term or not target or term.lower() == target.lower():
+                    continue
+                if term.lower() in source_text and _found_in(target, subtitle_text):
+                    terms[term] = target
+                else:
+                    logging.debug(f"Terms ({lang}): dropping '{term}' -> '{target}' (not in the script and subtitles)")
+            for entry in parsed.get("address") or []:
+                if isinstance(entry, dict) and entry.get("speaker") and entry.get("addressee") and entry.get("form"):
+                    address[f"{entry['speaker']} -> {entry['addressee']}"] = str(entry["form"]).strip()
+        if terms or address:
+            logging.info(f"Terms ({lang}) from the subtitles: {terms}; forms of address: {address}")
+        return {"terms": terms, "address": address}
 
     def review_drafts(self, drafts: List[Dict], lang: str, speaker_info: Dict, global_context: Dict) -> List[Dict]:
         """Completeness review: a second pass fixes lines with missing or wrong information (Spec 001, 2.5a)."""
@@ -686,7 +763,9 @@ class LLMManager:
         system = T_REVIEW.format(
             lang_name=lang_name,
             context=self._about(global_context),
-            glossary=json.dumps(global_context.get("glossary", {}), ensure_ascii=False),
+            glossary=json.dumps(translation_glossary(global_context, lang), ensure_ascii=False),
+            terms=_terms_text(global_context, lang),
+            address=_address_text(global_context, lang),
         )
         by_index = {d["index"]: d for d in drafts}
         order = [d["index"] for d in drafts]
@@ -702,6 +781,7 @@ class LLMManager:
                     "source": by_index[i].get("text_en", ""),
                     "translation": by_index[i].get("text", ""),
                     "max_syllables": self.syllable_budget(by_index[i])["max_syllables"],
+                    **({"subtitle": by_index[i]["subtitle"]} if by_index[i].get("subtitle") else {}),
                 }
                 for i in window
             ]
@@ -746,6 +826,7 @@ class LLMManager:
         actual_dur: float,
         target_dur: float,
         glossary: Dict,
+        terms: Optional[Dict] = None,
         context_before: str = "",
         context_after: str = "",
         speaker: str = "",
@@ -770,6 +851,7 @@ class LLMManager:
             status=status,
             delta=round(delta, 2),
             glossary=json.dumps(glossary, ensure_ascii=False),
+            terms=json.dumps(terms, ensure_ascii=False) if terms else "(none)",
             context_before=context_before,
             context_after=context_after,
             speaker=speaker or "unknown",

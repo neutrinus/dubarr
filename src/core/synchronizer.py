@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from infrastructure.ffmpeg import FFmpegWrapper
 from config import MAX_ACCEPT_SPEEDUP, MIN_FILL_RATIO, MAX_PLAUSIBLE_SYLLABLES_PER_SECOND
 from config import JUDGE_MIN_TEXT, TAKE_DROP_SIMILARITY
-from utils import count_syllables, text_similarity
+from utils import count_syllables, text_similarity, translation_glossary
 from duration_policy import MAX_SPEEDUP as TTS_MAX_SPEEDUP
 
 logger = logging.getLogger(__name__)
@@ -307,7 +307,8 @@ class SegmentSynchronizer:
                 current_text=current_text,
                 actual_dur=actual_dur,
                 target_dur=aim,
-                glossary=global_context.get("glossary", {}),
+                glossary=translation_glossary(global_context, lang),
+                terms=(global_context.get("terms") or {}).get(lang) or {},
                 context_before=context_before,
                 context_after=context_after,
                 language=lang,
