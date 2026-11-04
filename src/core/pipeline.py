@@ -21,7 +21,7 @@ from config import (
     REF_AUDITION_CANDIDATES,
     AUDITION_LINE_REF_MIN,
 )
-from config import VOICE_DESIGN, GLOSSARY_MODE, JUDGE_MIN_TEXT
+from config import VOICE_DESIGN, GLOSSARY_MODE, JUDGE_MIN_TEXT, ASR_VERIFY, EMOTION_REFS
 from utils import count_syllables
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import write_ref_text
@@ -48,6 +48,9 @@ from core.gpu_services import LLMService, TTSService
 from core.media_context import lookup_media_info, format_media_context, format_short_context, episode_names
 from core.series_memory import CLIP_BEST_SECONDS, SeriesMemory, clip_quality, merge_matched_speakers
 from core.take_judge import TakeJudge
+from core import script_check
+from core.llm_engine import apply_editor_flags
+from core.voice_audition import median_pitch
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
@@ -71,6 +74,39 @@ ISO_639_2 = {
 
 # Voice reference candidates per speaker that are cut and checked for noise (ZCR), best scored first
 REF_CANDIDATES = 8
+
+
+def ref_file_name(spk: str, cls: str, n: int) -> str:
+    """ref_SPEAKER_03.wav, ref_SPEAKER_03_2.wav (calm); ref_SPEAKER_03_shout.wav, ref_SPEAKER_03_shout_2.wav, ..."""
+    tag = "" if cls == "calm" else f"_{cls}"
+    return f"ref_{spk}{tag}.wav" if n == 1 else f"ref_{spk}{tag}_{n}.wav"
+
+
+def ref_file_energy(path: str) -> Optional[str]:
+    """The energy class in a Stage 4 clip's name (kept in the name, so a cached Stage 4 still knows it)."""
+    name = os.path.basename(path or "")
+    if not name.startswith("ref_"):
+        return None
+    for cls in ("lively", "shout"):
+        if re.search(rf"_{cls}(_\d+)?\.wav$", name):
+            return cls
+    return "calm"
+
+
+# A capitalised run of words (names of people, robots, teams), as written in the script or the subtitles
+NAME_RE = re.compile(r"\b([A-Z][a-z]+(?:[ -](?:[A-Z][a-z]+|[A-Z]{2,}))+)\b")
+
+
+def script_names(script: List[Dict], subtitles: str = "") -> List[str]:
+    """Multi-word capitalised names of the script and the reference subtitles, for the glossary (Spec 001, 2.3).
+
+    The LLM only noticed some of them: S01E03 had no glossary entry for "Chuck Pitzer".
+    """
+    text = " ".join(s.get("text_en", "") for s in script) + " " + clean_srt(subtitles or "")
+    counts: Dict[str, int] = {}
+    for match in NAME_RE.finditer(text):
+        counts[match.group(1)] = counts.get(match.group(1), 0) + 1
+    return [n for n, _ in sorted(counts.items(), key=lambda x: -x[1])][:60]
 
 
 class DubbingPipeline:
@@ -103,6 +139,8 @@ class DubbingPipeline:
         self.global_context = {}
         self.series = None  # SeriesMemory of the current episode (Spec 006)
         self.voiceprints: Dict[str, List[float]] = {}  # speaker -> diarization centroid
+        self.shout_prints: Dict[str, List[float]] = {}  # speaker -> centroid of its merged shouting cluster
+        self.ref_energy: Dict[str, str] = {}  # reference clip -> energy class (Spec 001, 2.4)
         self.voice_matches: Dict[str, str] = {}  # speaker -> person of the voice bank
         self.available_pans = [-0.10, 0.10, -0.03, 0.03, -0.17, 0.17]
         self.speaker_pans = {}
@@ -184,6 +222,7 @@ class DubbingPipeline:
                 ):
                     prev["text"] = prev["text"].strip() + " " + line["text"].strip()
                     prev["end"] = line["end"]
+                    prev["parts"] = (prev.get("parts") or []) + (line.get("parts") or [])
                     continue
             out.append(line)
 
@@ -193,6 +232,7 @@ class DubbingPipeline:
             if first["speaker"] == nxt["speaker"] and nxt["end"] - first["start"] <= MERGE_MAX_DURATION:
                 nxt["text"] = first["text"].strip() + " " + nxt["text"].strip()
                 nxt["start"] = first["start"]
+                nxt["parts"] = (first.get("parts") or []) + (nxt.get("parts") or [])
                 out.pop(0)
         return out
 
@@ -225,12 +265,43 @@ class DubbingPipeline:
             return True
         return not self._ends_sentence(curr["text"]) and gap < SENTENCE_MAX_GAP and merged_duration <= SENTENCE_MAX_DURATION
 
+    @staticmethod
+    def _parts(seg) -> List[Dict]:
+        """What a script line remembers of its Whisper segments for the script check (Spec 001, 2.2c)."""
+        return [
+            {
+                "text": seg.get("text", ""),
+                "hearings": seg.get("hearings") or {},
+                "unsure": bool(seg.get("unsure")),
+                "moved_from": seg.get("speaker_moved_from"),
+            }
+        ]
+
+    @staticmethod
+    def _fit_tiny_slots(lines):
+        """Lengthens a unit far shorter than its words take into the silence around it (Spec 001, 2.2a step 4)."""
+        for i, s in enumerate(lines):
+            natural = count_syllables(s.get("text", ""), "en") / 5.0
+            if s["end"] - s["start"] >= natural / 2:
+                continue
+            nxt = lines[i + 1]["start"] - SLACK_GUARD if i + 1 < len(lines) else s["start"] + natural
+            prv = lines[i - 1]["end"] + SLACK_GUARD if i > 0 else 0.0
+            end = max(s["end"], min(s["start"] + natural, nxt))
+            start = min(s["start"], max(end - natural, prv))
+            if (start, end) != (s["start"], s["end"]):
+                logger.info(
+                    f"Tiny slot: [{s['start']:.2f}-{s['end']:.2f}] -> [{start:.2f}-{end:.2f}] for '{s.get('text', '')[:40]}'"
+                )
+                s["start"], s["end"] = start, end
+        return lines
+
     def _create_script(self, diar, trans):
         raw_script = []
         for t in trans:
             t = self._clamp_stretched(t)
-            spk = self._dominant_speaker(diar, t["start"], t["end"])
-            raw_script.append({**t, "speaker": spk})
+            # The script check (Spec 001, 2.2c) may have moved the segment to the speaker its voice is
+            spk = t.get("speaker") or self._dominant_speaker(diar, t["start"], t["end"])
+            raw_script.append({**t, "speaker": spk, "parts": self._parts(t)})
 
         if not raw_script:
             return []
@@ -242,13 +313,14 @@ class DubbingPipeline:
             if self._joins(curr, nxt):
                 curr["text"] = curr["text"].strip() + " " + nxt["text"].strip()
                 curr["end"] = nxt["end"]
+                curr["parts"] = curr["parts"] + nxt["parts"]
                 if "avg_logprob" in curr and "avg_logprob" in nxt:
                     curr["avg_logprob"] = (curr["avg_logprob"] + nxt["avg_logprob"]) / 2
             else:
                 merged.append(curr)
                 curr = nxt
         merged.append(curr)
-        merged = self._merge_short_lines(merged)
+        merged = self._fit_tiny_slots(self._merge_short_lines(merged))
 
         script = []
         for i, s in enumerate(merged):
@@ -258,9 +330,10 @@ class DubbingPipeline:
             # A long take may also start a little early, in the silence before the line
             gap_before = s["start"] - merged[i - 1]["end"] if i > 0 else s["start"] + SLACK_GUARD
             slack_before = min(max(gap_before - SLACK_GUARD, 0.0), SLACK_BEFORE_MAX)
-            script.append(
+            parts = s.get("parts") or []
+            line = {k: v for k, v in s.items() if k not in ("parts", "hearings", "unsure", "speaker_moved_from")}
+            line.update(
                 {
-                    **s,
                     "speaker": s["speaker"],
                     "text_en": s["text"].strip(),
                     "avg_logprob": s.get("avg_logprob", 0),
@@ -269,7 +342,82 @@ class DubbingPipeline:
                     "min_start": s["start"] - slack_before,
                 }
             )
+            if any(p.get("unsure") for p in parts):
+                line["asr_unsure"] = True
+                hearings = script_check.line_hearings(parts)
+                if hearings:
+                    line["asr_hearings"] = hearings
+            moved = sorted({p["moved_from"] for p in parts if p.get("moved_from")})
+            if moved:
+                line["speaker_moved"] = ",".join(moved)
+            script.append(line)
         return script
+
+    def _verify_transcript(self, trans, diar, original_path, vocals_path, subtitles, names):
+        """Stage 2c (Spec 001, 2.2c): each segment's speaker by its voiceprint, unsure segments heard again."""
+        segments = [dict(t, speaker=t.get("speaker") or self._dominant_speaker(diar, t["start"], t["end"])) for t in trans]
+        if MOCK_MODE:
+            return segments
+        vocals = script_check.load_samples(vocals_path, self.temp_dir)
+        segments = script_check.recheck_speakers(segments, self.voiceprints, self.judge.voiceprint_samples, vocals)
+        if not any(script_check.is_unsure(t) for t in segments):
+            return segments
+        original = script_check.load_samples(original_path, self.temp_dir)
+        self.whisper_manager.load_model()
+        try:
+            segments = script_check.second_hearing(
+                segments,
+                lambda samples, prompt: self.whisper_manager.transcribe_samples(samples, prompt),
+                original,
+                vocals,
+                names,
+                parse_srt(subtitles) if subtitles else [],
+            )
+        finally:
+            self.whisper_manager.shutdown()
+        return segments
+
+    @staticmethod
+    def _drop_hallucinations(script):
+        """Lines the corrector marked as Whisper hallucinations are not dubbed (Spec 001, 2.2c step 4)."""
+        kept = [s for s in script if s.get("asr") != "hallucination"]
+        if len(kept) == len(script):
+            return script
+        for s in script:
+            if s.get("asr") == "hallucination":
+                logger.info(f"ASR check: [{s['start']:.1f}s] '{s['text_en']}' is a Whisper hallucination, not dubbed")
+        for i, s in enumerate(kept):
+            s["index"] = i
+        return kept
+
+    def _settle_energy(self, script, vocals_path):
+        """Merges a shouting cluster into the same person's calm one (Spec 002, 2.3), then gives every line its
+        energy class (Spec 001, 2.4)."""
+        if not EMOTION_REFS or MOCK_MODE or not script:
+            return
+        samples = script_check.load_samples(vocals_path, self.temp_dir)
+        if samples is None:
+            return
+        measures = script_check.measure_lines(script, samples, median_pitch)
+        measured = {
+            s: (i or {}).get("gender") for s, i in (self.speaker_info or {}).items() if (i or {}).get("gender_measured")
+        }
+        measured.update(self._grammar_genders(script))
+        merges = script_check.shout_merges(script, measures, self.speaker_info or {}, self.voiceprints or {}, measured)
+        for loud, calm in merges.items():
+            for s in script:
+                if s["speaker"] == loud:
+                    s["speaker"] = calm
+                    s["speaker_moved"] = ",".join(x for x in (s.get("speaker_moved"), loud) if x)
+            if self.voiceprints.get(loud):
+                self.shout_prints[calm] = self.voiceprints.pop(loud)
+            if loud in self.voice_matches:
+                self.voice_matches.setdefault(calm, self.voice_matches[loud])
+                del self.voice_matches[loud]
+            (self.speaker_info or {}).pop(loud, None)
+        counts = script_check.assign_energy(script, measures)
+        for spk, by_class in sorted(counts.items()):
+            logger.info(f"Energy {spk}: " + ", ".join(f"{n} {c}" for c, n in sorted(by_class.items())))
 
     def _find_external_subtitles(self, vpath) -> Optional[str]:
         """Picks a sidecar .srt in the source language: `<video>.srt`, `<video>.en.srt`, `<video>.en.hi.srt`, ...
@@ -418,7 +566,17 @@ class DubbingPipeline:
             out.append((s, total + bonus))
         return out
 
-    def _pick_clean_clips(self, spk, top, vocals_path, count=1):
+    @staticmethod
+    def _energy_groups(scored):
+        """[(energy class, scored candidates)]: one group per class with EMOTION_REFS (Spec 001, 2.4 step 3)."""
+        if not EMOTION_REFS:
+            return [("calm", scored)]
+        groups: Dict[str, list] = {}
+        for seg, score in scored:
+            groups.setdefault(seg.get("energy") or "calm", []).append((seg, score))
+        return [(cls, groups[cls]) for cls in script_check.ENERGY_CLASSES if cls in groups]
+
+    def _pick_clean_clips(self, spk, top, vocals_path, count=1, allow_noisy=True):
         """Cuts the best scored candidates and returns up to ``count`` that pass the ZCR check as [(segment, score, wav)].
 
         When none passes, the least noisy one is returned: the speaker's own voice beats another speaker's reference.
@@ -445,7 +603,7 @@ class DubbingPipeline:
                 os.remove(tmp_wav)
 
         if least_noisy and os.path.exists(least_noisy[3]):
-            if picked:
+            if picked or not allow_noisy:
                 os.remove(least_noisy[3])
             else:
                 logger.warning(
@@ -562,15 +720,28 @@ class DubbingPipeline:
                 scored_candidates.append((s, total))
 
             if scored_candidates:
-                scored_candidates = self._apply_calm_scores(scored_candidates, vocals_path, spk)
-                top = sorted(scored_candidates, key=lambda x: x[1], reverse=True)[:REF_CANDIDATES]
-                top = [(self._extend_short_clip(seg, script, vocals_path), score) for seg, score in top]
-                clips = self._pick_clean_clips(spk, top, vocals_path, REF_AUDITION_CANDIDATES)
+                clips = []
+                for cls, group in self._energy_groups(scored_candidates):
+                    if cls == "calm":
+                        group = self._apply_calm_scores(group, vocals_path, spk)
+                    top = sorted(group, key=lambda x: x[1], reverse=True)[:REF_CANDIDATES]
+                    top = [(self._extend_short_clip(seg, script, vocals_path), score) for seg, score in top]
+                    # Only the calm class falls back to a noisy clip: an empty shout class is better than a noisy one
+                    picked = self._pick_clean_clips(spk, top, vocals_path, REF_AUDITION_CANDIDATES, allow_noisy=cls == "calm")
+                    clips += [(seg, score, wav, cls) for seg, score, wav in picked]
+                if not clips and EMOTION_REFS:
+                    # No clean clip in any class: the least noisy one of all, like before the classes
+                    top = sorted(scored_candidates, key=lambda x: x[1], reverse=True)[:REF_CANDIDATES]
+                    top = [(self._extend_short_clip(seg, script, vocals_path), score) for seg, score in top]
+                    picked = self._pick_clean_clips(spk, top, vocals_path, 1)
+                    clips = [(seg, score, wav, seg.get("energy") or "calm") for seg, score, wav in picked]
 
                 if clips:
                     paths = []
-                    for n, (seg, score, wav_path) in enumerate(clips):
-                        out = os.path.join(self.temp_dir, f"ref_{spk}.wav" if n == 0 else f"ref_{spk}_{n + 1}.wav")
+                    seen: Dict[str, int] = {}
+                    for seg, score, wav_path, cls in clips:
+                        seen[cls] = seen.get(cls, 0) + 1
+                        out = os.path.join(self.temp_dir, ref_file_name(spk, cls, seen[cls]))
                         shutil.move(wav_path, out)
                         write_ref_text(out, seg["text_en"])
                         paths.append(out)
@@ -578,7 +749,7 @@ class DubbingPipeline:
                         self.ref_quality[out] = clip_quality(seg["end"] - seg["start"], clarity)
                         if ref_debug:
                             shutil.copy(out, os.path.join(ref_debug, os.path.basename(out)[4:]))
-                    best_seg, best_score, _ = clips[0]
+                    best_seg, best_score = clips[0][0], clips[0][1]
                     best_per_speaker[spk] = (best_seg, best_score)
                     self.speaker_refs[spk] = paths
                     logger.info(
@@ -715,6 +886,7 @@ class DubbingPipeline:
         # Series memory (Spec 006): known persons by voice (merging split speakers), settled name spellings
         self.series = SeriesMemory.for_media(media_info)
         self.voice_matches = {}
+        self.shout_prints = {}
         if self.series and self.voiceprints:
             self.voice_matches = self.series.match(self.voiceprints)
             diar, self.voiceprints, self.voice_matches = merge_matched_speakers(diar, self.voiceprints, self.voice_matches)
@@ -726,6 +898,19 @@ class DubbingPipeline:
 
         source_subs = self._source_subtitles(vpath)
         trans = self._add_missing_speech(trans, source_subs)
+        if ASR_VERIFY:
+            names = episode_names(media_info) + list(fixed_glossary or {}) + list(fixed_phonemes or {})
+            trans = self._run_step(
+                "Stage 2c: Script Verification",
+                self._verify_transcript,
+                task_id,
+                trans,
+                diar,
+                a_stereo,
+                vocals,
+                source_subs,
+                names,
+            )
         script = self._create_script(diar, trans)
         self._attach_target_subtitles(vpath, script)
         if self.debug_mode:
@@ -750,7 +935,7 @@ class DubbingPipeline:
             ref_subs,
             media_text,
             fixed_glossary,
-            episode_names(media_info),
+            episode_names(media_info) + script_names(script, source_subs),
             fixed_phonemes,
         )
         self.global_context = analysis_results["context"]
@@ -763,6 +948,14 @@ class DubbingPipeline:
         for idx_str, text in analysis_results.get("script_fixes", {}).items():
             if 0 <= int(idx_str) < len(script):
                 script[int(idx_str)]["text_en"] = text
+        apply_editor_flags(
+            script,
+            analysis_results.get("script_flags") or {},
+            analysis_results.get("speaker_doubts") or {},
+            analysis_results.get("script_fixes") or {},
+        )
+        script = self._drop_hallucinations(script)
+        self._settle_energy(script, vocals)
 
         refs = self._run_step("Stage 4: Transcription Correction", self._extract_refs, task_id, script, vocals, ddir)
         self.speaker_refs = {spk: list(paths) for spk, paths in (refs or {}).items()}
@@ -774,7 +967,10 @@ class DubbingPipeline:
                 logger.info(f"Series memory: {spk} gets {len(bank)} reference clips of {pid} from earlier episodes")
         self._check_genders(refs or {}, script)
         genders = {spk: (info or {}).get("gender", "") for spk, info in (self.speaker_info or {}).items()}
-        self.tts_manager.set_speaker_refs(self.speaker_refs, genders)
+        self.ref_energy = {p: ref_file_energy(p) for paths in self.speaker_refs.values() for p in paths if ref_file_energy(p)}
+        for pid in set(self.voice_matches.values()):
+            self.ref_energy.update(self.series.clip_energies(pid))
+        self.tts_manager.set_speaker_refs(self.speaker_refs, genders, self.ref_energy)
         self.tts_manager.phonemes = self.global_context.get("phonemes") or {}
 
         # 5. Production (Per Language / Global Task Pool)
@@ -913,6 +1109,7 @@ class DubbingPipeline:
             update[spk] = {
                 "person": self.voice_matches.get(spk),
                 "print": self.voiceprints.get(spk),
+                "shout_print": self.shout_prints.get(spk),
                 "profile": {
                     "name": info.get("name"),
                     "gender": info.get("gender"),
@@ -921,7 +1118,7 @@ class DubbingPipeline:
                     "gender_hz": info.get("gender_hz"),
                 },
                 "clips": [
-                    (p, audition.get(p), (getattr(self, "ref_quality", None) or {}).get(p))
+                    (p, audition.get(p), (getattr(self, "ref_quality", None) or {}).get(p), self.ref_energy.get(p))
                     for p in refs
                     if p not in designed and audition.get(p) is not None
                 ],
@@ -993,7 +1190,9 @@ class DubbingPipeline:
         for lang in self.target_langs:
             try:
                 if self.debug_mode:
-                    summary = write_report(os.path.join(ddir, f"report_{lang}.tsv"), script, sync_results_by_lang[lang])
+                    summary = write_report(
+                        os.path.join(ddir, f"report_{lang}.tsv"), script, sync_results_by_lang[lang], self.ref_energy
+                    )
                 else:
                     summary = report_summary(report_rows(script, sync_results_by_lang[lang]))
                 logger.info(f"Production report ({lang}): {summary}")

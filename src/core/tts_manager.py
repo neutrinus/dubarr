@@ -10,6 +10,8 @@ from typing import List, Dict, Optional, Any, Tuple
 from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
 from utils import measure_zcr, count_syllables, apply_phonemes
 from config import AUDITION_LINE_REF_MIN, MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS, REF_MIN_CLARITY_DB, TAKE_MIN_SIMILARITY
+from config import EMOTION_REFS
+from core.script_check import class_distance
 from core import audio as audio_processor
 from core.gpu_manager import GPUManager
 
@@ -105,6 +107,7 @@ class TTSManager:
         self.audition = {}  # reference path -> audition score, when the voice audition ran
         self.audition_min = AUDITION_LINE_REF_MIN  # a clip scoring this well keeps the speaker off its designed voice
         self.line_refs_off = set()  # speakers whose voice clones badly; they skip line clips
+        self.ref_energy: Dict[str, str] = {}  # reference clip -> energy class
         self.designed = set()  # voice-design clips (from the speaker profile, not from the video)
         self.phonemes = {}  # name -> English CMU phonemes (GLOSSARY_MODE=phonemes)
         self.set_speaker_refs(speaker_refs)
@@ -329,7 +332,9 @@ class TTSManager:
         # No audio, but the caller learns which reference failed and can try another one
         return {"payload": {"item": item, "raw_path": None, "voice_type": voice_type, "ref": chosen_ref}, "duration": 0.0}
 
-    def set_speaker_refs(self, speaker_refs: Dict, genders: Optional[Dict[str, str]] = None):
+    def set_speaker_refs(
+        self, speaker_refs: Dict, genders: Optional[Dict[str, str]] = None, energies: Optional[Dict[str, str]] = None
+    ):
         """Installs the references of the current video (speaker -> path or candidate list, best first).
 
         Drops the samples and the audition left over from the previous video.
@@ -339,6 +344,8 @@ class TTSManager:
             for spk, refs in (speaker_refs or {}).items()
         }
         self.genders = {spk: (g or "").lower() for spk, g in (genders or {}).items()}
+        # Reference clip -> energy class (calm / lively / shout; Spec 001, 2.4); lines prefer clips of their class
+        self.ref_energy = dict(energies or {})
         self.audition = {}
         self.line_refs_off = set()
         self.designed = set()
@@ -383,7 +390,7 @@ class TTSManager:
         best_clip = max(clips, default=0.0)
         return best_clip < self.audition_min and max(designed) > best_clip
 
-    def _ref_order(self, spk: str) -> List[Tuple[str, str]]:
+    def _ref_order(self, spk: str, energy: Optional[str] = None) -> List[Tuple[str, str]]:
         """Every reference this speaker may use after the line clip, as (path or LAST_GOOD, voice type), in order.
 
         Only the speaker's own voice: another speaker's voice in this mouth confuses the viewer, so a speaker without
@@ -408,7 +415,13 @@ class TTSManager:
         if not primary:  # no reference of its kind (files gone): the other kind rather than silence
             primary = [p for p in own if os.path.exists(p)]
         good = [p for p in primary if score(p) >= TAKE_MIN_SIMILARITY]
-        order = [entry(p) for p in good] + [("LAST_GOOD", "LAST_GOOD")]
+        if EMOTION_REFS and energy and not designed_voice:
+            # The clips of the line's energy first, then the nearest classes, each in rank order (Spec 002, 2.3)
+            good = sorted(good, key=lambda p: class_distance(self.ref_energy.get(p), energy))
+            same = [p for p in good if class_distance(self.ref_energy.get(p), energy) == 0]
+            order = [entry(p) for p in same] + [("LAST_GOOD", "LAST_GOOD")] + [entry(p) for p in good if p not in same]
+        else:
+            order = [entry(p) for p in good] + [("LAST_GOOD", "LAST_GOOD")]
         order += [entry(p) for p in by_score([p for p in primary if p not in good])]
         return order
 
@@ -431,7 +444,7 @@ class TTSManager:
             if dyn_ref:
                 return dyn_ref, "DYNAMIC"
 
-        for path, voice_type in self._ref_order(spk):
+        for path, voice_type in self._ref_order(spk, item.get("energy")):
             if path == "LAST_GOOD":
                 path = self.last_good_samples.get(spk)
                 if spk in self.line_refs_off:
@@ -442,7 +455,7 @@ class TTSManager:
 
         # Every reference of the speaker's voice was tried for this line: a new take of the best one, never the other
         # kind of voice and never another speaker's voice
-        own = [(p, t) for p, t in self._ref_order(spk) if p != "LAST_GOOD"]
+        own = [(p, t) for p, t in self._ref_order(spk, item.get("energy")) if p != "LAST_GOOD"]
         if own:
             return own[0]
         if any(os.path.exists(p) for p in self.speaker_refs.get(spk) or []):

@@ -2,7 +2,7 @@
 
 import csv
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,11 @@ COLUMNS = [
     "dub",
     "heard",
     "ctc_heard",
+    "asr",
+    "speaker_moved",
+    "speaker_doubt",
+    "energy",
+    "ref_energy",
 ]
 
 
@@ -38,8 +43,9 @@ def _num(value) -> str:
     return "" if value is None else f"{value:.2f}"
 
 
-def report_rows(script: List[Dict], results: List[Dict]) -> List[Dict]:
-    """One row per dubbed line, in script order."""
+def report_rows(script: List[Dict], results: List[Dict], ref_energy: Optional[Dict[str, str]] = None) -> List[Dict]:
+    """One row per dubbed line, in script order. ``ref_energy``: reference clip -> energy class (Spec 001, 2.4)."""
+    ref_energy = ref_energy or {}
     rows = []
     for res in sorted(results, key=lambda r: r["index"]):
         line = script[res["index"]]
@@ -66,6 +72,11 @@ def report_rows(script: List[Dict], results: List[Dict]) -> List[Dict]:
                 "dub": res.get("final_text", ""),
                 "heard": res.get("heard") or "",
                 "ctc_heard": res.get("ctc_heard") or "",
+                "asr": line.get("asr") or "",
+                "speaker_moved": line.get("speaker_moved") or "",
+                "speaker_doubt": line.get("speaker_doubt") or "",
+                "energy": line.get("energy") or "",
+                "ref_energy": ref_energy.get(res.get("ref") or "", "DESIGNED" if res.get("voice_type") == "DESIGNED" else ""),
             }
         )
     return rows
@@ -88,12 +99,20 @@ def summary(rows: List[Dict]) -> str:
         parts.append(f"judge min {min(scores):.2f} mean {sum(scores) / len(scores):.2f}")
     if sims:
         parts.append(f"similarity min {min(sims):.2f} mean {sum(sims) / len(sims):.2f}")
+    classes = ("calm", "lively", "shout")
+    matched = [r for r in rows if r.get("energy") in classes and r.get("ref_energy") in classes]
+    if matched:
+        same = sum(r["energy"] == r["ref_energy"] for r in matched)
+        parts.append(f"energy of the clip = the line's in {same}/{len(matched)}")
+    asr = [r.get("asr") for r in rows if r.get("asr") in ("fixed", "guessed", "unsure")]
+    if asr:
+        parts.append("ASR " + ", ".join(f"{k} {asr.count(k)}" for k in ("fixed", "guessed", "unsure") if asr.count(k)))
     return ", ".join(parts)
 
 
-def write_report(path: str, script: List[Dict], results: List[Dict]) -> str:
+def write_report(path: str, script: List[Dict], results: List[Dict], ref_energy: Optional[Dict[str, str]] = None) -> str:
     """Writes the report as a tab-separated file (opens in any spreadsheet) and returns its summary."""
-    rows = report_rows(script, results)
+    rows = report_rows(script, results, ref_energy)
     with open(path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=COLUMNS, delimiter="\t")
         writer.writeheader()

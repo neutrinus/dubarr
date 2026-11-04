@@ -54,6 +54,13 @@ DEMUCS_TIMEOUT = int(os.environ.get("DEMUCS_TIMEOUT", "1800"))
 ASR_SOURCE = os.environ.get("ASR_SOURCE", "original").lower()
 ASR_GAP_PASS = os.environ.get("ASR_GAP_PASS", "on").lower() not in ("0", "off", "false", "no")
 ASR_GAP_MIN = float(os.environ.get("ASR_GAP_MIN", "2.0"))
+# Script verification (Spec 001, 2.2c): unsure segments are heard again, the corrector picks or reconstructs the line
+ASR_VERIFY = os.environ.get("ASR_VERIFY", "on").lower() not in ("0", "off", "false", "no")
+ASR_UNSURE_LOGPROB = float(os.environ.get("ASR_UNSURE_LOGPROB", "-0.6"))
+ASR_UNSURE_WORD = float(os.environ.get("ASR_UNSURE_WORD", "0.3"))
+# A segment closer to another speaker's voiceprint by this margin (and at least this similar) is that speaker's
+SPEAKER_RECHECK_MARGIN = float(os.environ.get("SPEAKER_RECHECK_MARGIN", "0.1"))
+SPEAKER_RECHECK_MIN = float(os.environ.get("SPEAKER_RECHECK_MIN", "0.5"))
 
 # Seconds per TTS request (raise it on CPU, synthesis is slow there)
 TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))
@@ -164,6 +171,11 @@ VOICE_DESIGN = os.environ.get("VOICE_DESIGN", "on").lower() not in ("0", "off", 
 SERIES_MEMORY = os.environ.get("SERIES_MEMORY", "on").lower() not in ("0", "off", "false", "no")
 VOICE_MATCH_MIN = float(os.environ.get("VOICE_MATCH_MIN", "0.6"))
 VOICE_BANK_CLIPS = max(1, int(os.environ.get("VOICE_BANK_CLIPS", "5")))
+VOICE_BANK_CLASS_CLIPS = max(1, int(os.environ.get("VOICE_BANK_CLASS_CLIPS", "2")))
+# Reference clips by energy class (calm / lively / shout) and the merging of a shouting cluster with the same person's
+# calm one (Spec 001, 2.4; Spec 002, 2.3)
+EMOTION_REFS = os.environ.get("EMOTION_REFS", "on").lower() not in ("0", "off", "false", "no")
+SHOUT_MERGE_MIN = float(os.environ.get("SHOUT_MERGE_MIN", "0.3"))
 # How names keep their sound: respell = a phonetic spelling in the target language (checked by a reading test);
 # phonemes = the translation keeps the original name and the TTS gets its English CMU phonemes ("[R EY1 Z ER0 ...]").
 # phonemes is an experiment: OmniVoice documents them for English text only.
