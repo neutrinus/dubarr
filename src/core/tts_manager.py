@@ -281,7 +281,12 @@ class TTSManager:
         idx = item["index"]
 
         # 1. Select Reference Audio (Migration Strategy); a retry skips the references already tried
-        chosen_ref, voice_type = self._select_reference(item, vocals_path, lang, skip=item.get("skip_refs") or ())
+        forced = item.get("force_ref")
+        if forced and forced[0] and os.path.exists(forced[0]):
+            # Another take of a reference that already gave a sound take of this line (Spec 002, 2.2 step 4)
+            chosen_ref, voice_type = forced[0], forced[1] or "GOLDEN"
+        else:
+            chosen_ref, voice_type = self._select_reference(item, vocals_path, lang, skip=item.get("skip_refs") or ())
 
         # 2. Prepare TTS inputs (GLOSSARY_MODE=phonemes: names become their English CMU phonemes)
         clean_text = apply_phonemes(item["text"].strip(), self.phonemes)

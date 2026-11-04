@@ -15,6 +15,8 @@ from config import (
     TRANSLATION_REVIEW,
     TAKE_CHECK,
     TAKE_VERSIONS,
+    TAKE_VERSIONS_SHORT,
+    TAKE_GOOD_SCORE,
     REF_MIN_CLARITY_DB,
     REF_AUDITION_CANDIDATES,
     AUDITION_LINE_REF_MIN,
@@ -119,6 +121,8 @@ class DubbingPipeline:
             take_checker=self.take_checker,
             judge=self.judge,
             versions=TAKE_VERSIONS,
+            short_versions=TAKE_VERSIONS_SHORT,
+            good_score=TAKE_GOOD_SCORE,
         )
 
     def _enter_workspace(self, task_id):
