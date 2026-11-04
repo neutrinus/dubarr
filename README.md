@@ -17,13 +17,16 @@ TMDB), which `METADATA_LOOKUP=local` turns off.
     syllable budget per line and a second pass that restores lost information. Short and long variants let each line
     fit its slot without dropping content.
 *   **Voice Cloning That Checks Itself**: OmniVoice clones each speaker from their own clips (or a designed voice when
-    no clean clip exists). Every line is synthesized twice and a take judge (artifacts, voice match, text match) keeps
-    the better take; broken lines are left undubbed rather than garbled.
-*   **Series Memory**: Episodes of a series share name pronunciations and a voice bank, so the same person keeps the
-    same voice from episode to episode.
+    no clean clip of theirs clones well), starting from a clip of the line's own energy (calm, lively, shout). Every
+    line is synthesized several times and a take judge (artifacts, voice match, text match) keeps the best take;
+    lines that stay unintelligible are left undubbed rather than garbled.
+*   **Series Memory**: Episodes of a series share name pronunciations, subtitle terms and a voice bank, so the same
+    person keeps the same voice from episode to episode.
 *   **Show and Movie Context**: Recognizes Sonarr/Radarr file names and fetches synopsis and cast (`.nfo`, TVmaze,
     TMDB) so the translator knows who speaks and uses the right grammatical gender.
-*   **Subtitle-Assisted Transcription**: Uses external or embedded subtitles as ground truth for names and terms.
+*   **Subtitle-Assisted Script**: Uses external or embedded subtitles as ground truth for names and terms, target-
+    language subtitles as a hint for the translator, and SDH labels to name speakers. Unsure lines are heard again and
+    each line's speaker is checked by its voiceprint.
 *   **Cinematic Mix**: The dub is mixed over the original audio with sidechain ducking and a low-passed "ambient ghost"
     of the original, so the room sound and effects stay.
 *   **GPU-Aware**: Spreads the LLM and speech synthesis over several cards, serializes them on one card, or runs on
@@ -70,8 +73,8 @@ Measured on a 3060 12GB + 3070 8GB pair, dubbing one 10-minute episode (720p, on
 | Speech synthesis (OmniVoice) | **up to 6 GB** for very long lines | 3:50 |
 | Mix + mux | – | 0:15 |
 
-These timings predate two takes per line (`TAKE_VERSIONS=2`) and the take judge, so expect speech synthesis to take
-roughly twice as long now.
+These timings predate several takes per line (`TAKE_VERSIONS=4`, 6 for short lines) and the take judge, so expect
+speech synthesis to take several times longer now.
 
 > [!TIP]
 > Sharing a card with another service (a household `llama-server`, Jellyfin transcoding, ...)? Keep about
@@ -87,7 +90,7 @@ roughly twice as long now.
 
 ## ⚡ Performance & Speed
 
-Dubarr optimizes for dub quality, not speed: it translates in several passes, synthesizes every line at least twice
+Dubarr optimizes for dub quality, not speed: it translates in several passes, synthesizes every line several times
 and judges each take. Processing takes a few times the video duration per target language on a GPU and grows with
 the number of languages and speakers. Most of the time goes to the LLM and to speech synthesis.
 
@@ -180,12 +183,13 @@ The full list, with every tuning knob, is in [Spec 005](specification/specs/005_
 
 1.  **Audio Separation**: Demucs `htdemucs_ft` isolates the voices from music and effects.
 2.  **Audio Analysis**: pyannote finds who speaks when; faster-whisper (`large-v3-turbo`) transcribes the original
-    mix, with a second pass for speech under loud noise. Lines are joined into whole sentences, each with a time budget.
+    mix, with a second pass for speech under loud noise. Unsure lines are heard again and checked against subtitles;
+    each line's speaker is checked by its voiceprint. Lines are joined into whole sentences, each with a time budget.
     The show/episode or movie is identified and its synopsis and cast are fetched.
 3.  **Global Analysis**: the LLM (Gemma 3 12B in-process, or your own server) writes a summary, speaker profiles and
     a pronunciation glossary for names, and corrects transcription errors (using subtitles when available).
-4.  **Voice References**: the cleanest, calmest clips of each speaker are picked (plus voice-bank clips from earlier
-    episodes of the series).
+4.  **Voice References**: the cleanest clips of each speaker are picked per energy class (calm, lively, shout), plus
+    voice-bank clips from earlier episodes of the series.
 5.  **Production**: translation in windows with per-line syllable budgets and a completeness review; a voice
     audition ranks each speaker's references; then every line is synthesized with OmniVoice, judged, and shortened or
     restored by the LLM until it fits its slot.

@@ -4,7 +4,7 @@
 The **Video Dubbing Pipeline** is the core business process of Dubarr. It transforms a source video into a dubbed version with synchronized audio in one or more target languages.
 
 ## 2. Process Flow
-The pipeline runs its stages in order (1, 2, 2b, 3, 4, 5, 6, 7, then reporting). Each stage's result is cached in the
+The pipeline runs its stages in order (1, 2, 2b, 2c, 3, 4, 5, 6, 7, then reporting). Each stage's result is cached in the
 database (`job_steps`, Spec 003) so a retried task resumes where it failed; Stage 5 also checkpoints per line.
 Each task works in its own folder, `TEMP_DIR/task_<id>` (`standalone` without a task): file names inside are fixed,
 and checkpoints point at them, so a shared folder would let a retried task pick up another task's audio.

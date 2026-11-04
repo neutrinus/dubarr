@@ -30,6 +30,8 @@ The system is designed as a **Modular Monolith** with a clear separation between
     - `voice_audition.py`: Ranks each speaker's voice references by the judge's score of their clones (Spec 002).
     - `series_memory.py`: Glossary and voice bank shared by the episodes of a series (Spec 006).
     - `media_context.py`: Identifies the show/episode or movie and gathers metadata for the prompts (Spec 001).
+    - `subtitles.py`: Sidecar and embedded subtitles: cues by language, alignment to lines, SDH names (Spec 001).
+    - `script_check.py`: Stage 2c script verification, energy classes, shout/calm merge (Spec 001).
     - `whisper_engine.py`, `diarization_engine.py`, `audio.py`: ASR, speaker diarization, Demucs and ffmpeg mixing.
     - `llm_engine.py`: Analysis, transcript correction, translation and refinement.
     - `tts_manager.py`: Voice reference selection and Text-to-Speech calls.
@@ -60,6 +62,7 @@ The system is designed as a **Modular Monolith** with a clear separation between
     -   **Stage 1: Separation:** Vocals are isolated from background music/noise (Demucs).
     -   **Stage 2: Analysis:** Diarization identifies speakers, Whisper transcribes the original mix; the script is built
         from dialogue units with time budgets. **Stage 2b:** media metadata (show, episode, cast).
+        **Stage 2c:** script verification (unsure lines heard again, speaker check by voiceprint).
     -   **Stage 3: Global analysis:** LLM summary, glossary, speaker profiles, transcript correction.
     -   **Stage 4: Voice references:** reference clips per speaker are scored and ZCR-checked.
     -   **Stage 5: Production (Global Task Pool):**
