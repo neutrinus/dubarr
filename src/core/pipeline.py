@@ -545,8 +545,9 @@ class DubbingPipeline:
                 logger.info(f"Found embedded {lang} subtitles.")
         return parse_srt(content)
 
-    def _add_missing_speech(self, trans, content: str):
-        """Speech of the reference subtitles that Whisper did not hear joins the transcription (Spec 001, 2.3)."""
+    def _add_missing_speech(self, trans, content: str, diar=None):
+        """Speech of the reference subtitles that Whisper did not hear joins the transcription (Spec 001, 2.3), where
+        diarization hears somebody speak during the cue (a credit or a sign is not speech)."""
         cues = parse_srt(content)
         if not cues or not trans:
             return trans
@@ -554,6 +555,16 @@ class DubbingPipeline:
             logger.info("Reference subtitles are not timed to this audio: not used to find missing speech")
             return trans
         missing = missing_speech(trans, cues)
+        if diar:
+            heard = []
+            for seg in missing:
+                dur = max(0.01, seg["end"] - seg["start"])
+                spoken = sum(max(0.0, min(seg["end"], d["end"]) - max(seg["start"], d["start"])) for d in diar)
+                if spoken < 0.3 * dur:
+                    logger.info(f"Subtitles: cue at {seg['start']:.1f}s not added, nobody speaks there: '{seg['text'][:60]}'")
+                else:
+                    heard.append(seg)
+            missing = heard
         for seg in missing:
             logger.info(f"Subtitles: speech Whisper missed at {seg['start']:.1f}-{seg['end']:.1f}s: '{seg['text'][:60]}'")
         return sorted(list(trans) + missing, key=lambda t: t["start"]) if missing else trans
@@ -956,7 +967,7 @@ class DubbingPipeline:
 
         source_subs = self._source_subtitles(vpath)
         trans = self._drop_unheard_gap_segments(trans, diar, parse_srt(source_subs) if source_subs else [])
-        trans = self._add_missing_speech(trans, source_subs)
+        trans = self._add_missing_speech(trans, source_subs, diar)
         if ASR_VERIFY:
             names = episode_names(media_info) + list(fixed_glossary or {}) + list(fixed_phonemes or {})
             trans = self._run_step(

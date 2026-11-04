@@ -531,6 +531,37 @@ class TestSubtitlesInThePipeline(unittest.TestCase):
         self.assertEqual(len(out), 13)
         self.assertEqual(self.pipe._add_missing_speech(trans, ""), trans)
 
+    def test_missing_speech_needs_somebody_speaking(self):
+        cues = [(i * 4, i * 4 + 2, f"Line {i}.") for i in range(12)] + [(50, 53, "Unheard words."), (55, 58, "A sign.")]
+        trans = [{"start": i * 4.0, "end": i * 4.0 + 2.0, "text": f"Line {i}."} for i in range(12)]
+        diar = [{"start": 50.0, "end": 53.0, "speaker": "A"}]
+        out = self.pipe._add_missing_speech(trans, self.srt(cues), diar)
+        self.assertEqual([t["text"] for t in out[12:]], ["Unheard words."])
+
+    def test_subtitle_credits_are_not_cues(self):
+        from core.subtitles import is_credit, parse_srt
+
+        for credit in (
+            "MythBusters 11x07 Surreal Gourmet Hour Original air date Nov",
+            "Sync and corrections by atrn97g for www.addic7ed.com",
+            "Subtitles by explosiveskull",
+            "Tłumaczenie: Jan Kowalski",
+            "Downloaded from OpenSubtitles",
+            "napisy24.pl",
+        ):
+            self.assertTrue(is_credit(credit), credit)
+        for line in (
+            "Let's sync the cameras.",
+            "The translation is wrong, Spock.",
+            "Napisy są złe.",
+            "Mr. Spock, report.",
+            "I lost 3.5 pounds.",
+            "Corrections to the course, Mr. Sulu.",
+        ):
+            self.assertFalse(is_credit(line), line)
+        cues = parse_srt(self.srt([(1, 3, "Sync and corrections by atrn97g for www.addic7ed.com"), (5, 6, "Hello.")]))
+        self.assertEqual([c[2] for c in cues], ["Hello."])
+
     def test_grammar_gender_beats_the_pitch(self):
         self.pipe.speaker_info = {"SPEAKER_01": {"name": "Uhura", "gender": "female"}}
         script = [{"speaker": "SPEAKER_01", "subtitles": {"pl": t}} for t in ("Byłem tam.", "Zrobiłem to.", "Widziałem go.")]
