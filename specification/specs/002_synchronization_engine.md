@@ -127,7 +127,13 @@ profile (Stage 3; e.g. "male, middle-aged, low pitch"; age words match whole wor
 picks a generic voice. The gender comes from, in this order: the Polish subtitles' grammar (Spec 001, 2.3); the cast
 list of the metadata (Spec 001, 2.2b), when the speaker's name is a character (or actor) it lists, and the corrector
 raises no doubt about that speaker's name (Spec 001, 2.2c step 4: in BattleBots S01E01 the host Molly McGrath was
-named Chris Rose); else the analysis. The speaking pitch of the reference clips is logged but never decides: as the
+named Chris Rose); else the analysis, when it names the speaker (a name carries a gender). Only when none of these
+tells (no grammar, no cast entry, and the analysis has no name for the speaker, or the corrector doubts it), a voice
+classifier decides: `GENDER_MODEL` (default audeering/wav2vec2-large-robust-24-ft-age-gender, CC-BY-NC-SA 4.0, on
+the CPU) reads up to 6 of the speaker's calm lines (1.5-10 s, longest first; shouting lines only when there is no
+calm one) from the unfiltered vocals, averages their female/male/child probabilities, and its verdict counts when it
+reaches `GENDER_MIN_CONFIDENCE` (0.9); a child's voice tells no gender. Its verdict and confidence are logged for
+every speaker, so it can be checked against the speakers whose gender is known. The speaking pitch of the reference clips is logged but never decides: as the
 decider it was right in 2 of 11 verdicts, and the 9 wrong ones all made a man a woman (shouting commentators at
 290-320 Hz, Kirk and processed alien voices at 243-248 Hz, and MythBusters' Jamie, Alton and Tory at 220-237 Hz,
 measured on reference clips whose filter takes out a man's fundamental). The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
