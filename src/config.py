@@ -165,6 +165,9 @@ JUDGE_MIN_VOICE = float(os.environ.get("JUDGE_MIN_VOICE", "0.35"))
 JUDGE_MIN_TEXT = float(os.environ.get("JUDGE_MIN_TEXT", "0.5"))
 JUDGE_ALIGN_MODEL = os.environ.get("JUDGE_ALIGN_MODEL", "")  # empty: per language (core/take_judge.py)
 JUDGE_DEVICE = os.environ.get("JUDGE_DEVICE", "cpu").lower()
+# Voice gender classifier (Spec 002, 2.3), the last resort when neither subtitles, cast nor a named profile tell; "off"
+GENDER_MODEL = os.environ.get("GENDER_MODEL", "audeering/wav2vec2-large-robust-24-ft-age-gender")
+GENDER_MIN_CONFIDENCE = float(os.environ.get("GENDER_MIN_CONFIDENCE", "0.9"))
 # cpu by default: a check model on the TTS card takes the VRAM OmniVoice needs for its peaks and makes it crash
 TAKE_CHECK_DEVICE = os.environ.get("TAKE_CHECK_DEVICE", "cpu").lower()
 # Every accepted take under 0.7 in the 2026-11 BattleBots run was mangled ("fuego, bo ta", squeaks before the text)

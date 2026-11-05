@@ -64,6 +64,7 @@ src/
     worker.py              JobWorker: polls SQLite for QUEUED tasks and runs a fresh pipeline per task.
     voice_audition.py      Before Stage 5: ranks each speaker's reference clips by the take judge's score of their clones.
     take_judge.py          Judges takes without Whisper: signal artifacts, voiceprint match, CTC text match (Spec 002).
+    gender_classifier.py   Voice gender classifier (audeering wav2vec2): the last resort for a speaker's gender (Spec 002).
     series_memory.py       Between episodes of a series: settled name spellings, terms and the voice bank (Spec 006).
     subtitles.py           Sidecar/embedded subtitles: cues, alignment to lines, missing speech, SDH names, gender from grammar.
     script_check.py        Stage 2c: unsure lines heard again, voiceprint speaker check; energy classes, shout/calm merge.
