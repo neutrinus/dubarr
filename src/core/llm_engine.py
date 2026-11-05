@@ -923,9 +923,13 @@ class LLMManager:
                     text = clean_output(fix.get("text") or "", self.target_langs)
                     if i not in window or not text:
                         continue
+                    if _untranslated(text, by_index[i].get("text_en", "")):
+                        continue
                     budget = self.syllable_budget(by_index[i])["max_syllables"]
-                    # A fix far over budget would only be cut again in the sync loop
-                    if count_syllables(text, lang) > budget * 1.25 + 2:
+                    # A fix far over budget would only be cut again in the sync loop; but a line the draft left in
+                    # the original language takes any translation: the sync loop shortens it, English is dropped
+                    untranslated = _untranslated(by_index[i].get("text", ""), by_index[i].get("text_en", ""))
+                    if count_syllables(text, lang) > budget * 1.25 + 2 and not untranslated:
                         logging.info(f"Review ({lang}) L_{i}: fix over budget, kept the draft")
                         continue
                     if text != by_index[i].get("text"):
