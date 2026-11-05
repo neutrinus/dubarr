@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 import os
 import sys
 import tempfile
-from infrastructure.tts_client import OmniVoiceClient, TTSWrapper, write_ref_text
+from infrastructure.tts_client import OmniVoiceClient, TTSOutOfMemory, TTSWrapper, write_ref_text
 import requests
 
 
@@ -79,6 +79,32 @@ class TestTTSClient(unittest.TestCase):
         mock_get.return_value.status_code = 200
         with self.assertRaises(RuntimeError):
             self.client.synthesize("text", "ref.wav", "out.wav", "pl")
+
+
+    @patch("infrastructure.tts_client.time.sleep")
+    @patch("requests.get")
+    @patch("requests.post")
+    def test_out_of_memory_waits_instead_of_restarting(self, mock_post, mock_get, mock_sleep):
+        # Another process filled the card: the server is fine, so it is not restarted; the request waits and asks again
+        oom = MagicMock(status_code=500, text='{"message":"CUDA out of memory. Tried to allocate 20.00 MiB."}')
+        ok = MagicMock(status_code=200, text="")
+        mock_post.side_effect = [oom, oom, ok]
+        with patch.object(self.client, "_handle_restart") as restart:
+            self.client.synthesize("text", "ref.wav", "out.wav", "pl")
+        restart.assert_not_called()
+        self.assertEqual(mock_post.call_count, 3)
+        self.assertEqual([c.args[0] for c in mock_sleep.call_args_list], [5.0, 10.0])
+
+    @patch("infrastructure.tts_client.TTS_OOM_WAIT", 20)
+    @patch("infrastructure.tts_client.time.sleep")
+    @patch("requests.post")
+    def test_out_of_memory_gives_up_after_the_wait(self, mock_post, mock_sleep):
+        mock_post.return_value = MagicMock(status_code=500, text="CUDA out of memory.")
+        with patch.object(self.client, "_handle_restart") as restart:
+            with self.assertRaises(TTSOutOfMemory):
+                self.client.synthesize("text", "ref.wav", "out.wav", "pl")
+        restart.assert_not_called()
+        self.assertEqual(sum(c.args[0] for c in mock_sleep.call_args_list), 35.0)  # 5 + 10 + 20
 
 
 class TestTTSWrapper(unittest.TestCase):
