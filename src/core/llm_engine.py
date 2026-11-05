@@ -428,7 +428,8 @@ class LLMManager:
                 spellings = {
                     str(t): str(sp) for t, sp in {**glossary, **fixed_glossary}.items() if isinstance(sp, (str, int, float))
                 }
-                terms = [t for t, sp in spellings.items() if sp.strip() != t.strip() and not (t.isupper() and len(t) <= 6)]
+                # A name left in its English spelling is read by Polish rules too ("Jamie", "Belleci"), so it is checked
+                terms = [t for t, sp in spellings.items() if not (t.isupper() and len(t) <= 6)]
                 name_phonemes = self.glossary_phonemes(terms, fixed_phonemes) if terms else {}
             replaced: set = set()
             global_context["glossary"] = self.check_glossary(
@@ -609,7 +610,10 @@ class LLMManager:
         by_rules = lang == "pl"
 
         def checkable(t, sp):
-            return sp.strip() != t.strip() and not (t.isupper() and len(t.replace(".", "")) <= 6)
+            if t.isupper() and len(t.replace(".", "")) <= 6:
+                return False
+            # An unchanged spelling can only be checked by rules: read back as English it always sounds right
+            return sp.strip() != t.strip() or by_rule(t)
 
         def by_rule(term):
             return by_rules and term in phonemes
@@ -923,9 +927,13 @@ class LLMManager:
                     text = clean_output(fix.get("text") or "", self.target_langs)
                     if i not in window or not text:
                         continue
+                    if _untranslated(text, by_index[i].get("text_en", "")):
+                        continue
                     budget = self.syllable_budget(by_index[i])["max_syllables"]
-                    # A fix far over budget would only be cut again in the sync loop
-                    if count_syllables(text, lang) > budget * 1.25 + 2:
+                    # A fix far over budget would only be cut again in the sync loop; but a line the draft left in
+                    # the original language takes any translation: the sync loop shortens it, English is dropped
+                    untranslated = _untranslated(by_index[i].get("text", ""), by_index[i].get("text_en", ""))
+                    if count_syllables(text, lang) > budget * 1.25 + 2 and not untranslated:
                         logging.info(f"Review ({lang}) L_{i}: fix over budget, kept the draft")
                         continue
                     if text != by_index[i].get("text"):

@@ -231,7 +231,10 @@ The goal is a complete translation that fits the timing. Run time is secondary.
     has spare budget. It must never move to another speaker.
 4.  **Completeness review** (`TRANSLATION_REVIEW=on`, default). A second LLM pass compares each window's source and
     translation, lists the information that is missing or wrong and returns corrected lines within their budgets. Only
-    the corrected lines are replaced.
+    the corrected lines are replaced; a correction far over its budget (more than 125% + 2 syllables) is ignored,
+    except for a line the drafts left in the source language, which takes any translation (the sync loop shortens it;
+    MythBusters S2012E19 kept "Now luckily, we've got just the guy to do that." because its fix was too long). A
+    "correction" that repeats the source line is ignored.
 5.  **Length variants.** Besides the main translation (aimed at `target_syllables`), the translator returns a `short`
     variant (towards `min_syllables`, essentials only) and a `long` one (towards `max_syllables`, fuller phrasing, no
     invented facts). All carry the same information as far as their length allows. The sync loop picks between them
