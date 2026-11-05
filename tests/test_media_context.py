@@ -46,6 +46,14 @@ class TestParseMediaPath(unittest.TestCase):
         info = parse_media_path(SNW)
         self.assertEqual((info["title"], info["season"], info["episode"]), ("Star Trek - Strange New Worlds", 3, 3))
 
+    def test_year_seasons(self):
+        # Sonarr numbers MythBusters' seasons by year; "S2012E20" was taken for a movie and no cast was found
+        info = parse_media_path("/tv/MythBusters/Season 2012/MythBusters - S2012E20 - Food Fables HDTV-720p.mkv")
+        self.assertEqual(
+            (info["kind"], info["title"], info["season"], info["episode"], info["episode_title"], info["year"]),
+            ("episode", "MythBusters", 2012, 20, "Food Fables", None),
+        )
+
     def test_folder_fallback_year_and_ids(self):
         info = parse_media_path("/tv/Doctor Who (2005) {tvdb-78804}/Season 01/S01E03.mkv")
         self.assertEqual((info["title"], info["year"], info["tvdb_id"]), ("Doctor Who", 2005, "78804"))

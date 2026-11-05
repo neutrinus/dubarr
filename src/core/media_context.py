@@ -14,7 +14,10 @@ from infrastructure import metadata_client
 
 logger = logging.getLogger(__name__)
 
-EPISODE_RE = re.compile(r"(?<![a-z0-9])s(\d{1,2})[ ._-]?e(\d{1,3})(?!\d)|(?<!\d)(\d{1,2})x(\d{2,3})(?!\d)", re.IGNORECASE)
+# S01E02, 1x02, and Sonarr's year seasons of long-running shows (MythBusters - S2012E20)
+EPISODE_RE = re.compile(
+    r"(?<![a-z0-9])s(\d{1,2}|(?:19|20)\d{2})[ ._-]?e(\d{1,3})(?!\d)|(?<!\d)(\d{1,2})x(\d{2,3})(?!\d)", re.IGNORECASE
+)
 YEAR_RE = re.compile(r"[\s.(\[_-]((?:19|20)\d{2})(?=[\s.)\]_-]|$)")
 ID_RE = re.compile(r"[\[{]?(tvdb|tmdb|imdb)(?:id)?[-=]((?:tt)?\d+)[\]}]?", re.IGNORECASE)
 SEASON_DIR_RE = re.compile(r"^(season\s*\d+|specials|s\d{1,2})$", re.IGNORECASE)
