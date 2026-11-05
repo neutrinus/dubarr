@@ -470,21 +470,17 @@ class TestExtendShortClip(unittest.TestCase):
 
 
 class TestCheckGenders(unittest.TestCase):
-    def test_measured_pitch_overrules_the_analysis(self):
+    def test_pitch_never_changes_the_gender(self):
+        # MythBusters: Jamie, Alton and Tory measured 220-237 Hz and spoke feminine Polish ("Próbowałam")
         pipe = DubbingPipeline.__new__(DubbingPipeline)
-        pipe.speaker_info = {"SPEAKER_12": {"name": "Jenny Taft", "gender": "female"}, "SPEAKER_03": {"gender": "male"}}
-        verdicts = {"a.wav": ("male", 118.0), "b.wav": (None, 170.0)}
+        pipe.target_langs = ["pl"]
+        pipe.speaker_info = {"SPEAKER_05": {"name": "Alton Brown", "gender": "male"}}
         with (
             patch("core.pipeline.MOCK_MODE", False),
-            patch("core.pipeline.pitch_gender", side_effect=lambda paths: verdicts[paths[0]]),
+            patch("core.pipeline.speaker_pitch", return_value=225.0),
         ):
-            pipe._check_genders({"SPEAKER_12": ["a.wav"], "SPEAKER_03": ["b.wav"]})
-        self.assertEqual(pipe.speaker_info["SPEAKER_12"]["gender"], "male")
-        self.assertTrue(pipe.speaker_info["SPEAKER_12"]["gender_measured"])
-        self.assertEqual(pipe.speaker_info["SPEAKER_12"]["gender_hz"], 118)
-        # "Jenny Taft (male)" made the translator use feminine forms for him: the wrong name goes
-        self.assertEqual(pipe.speaker_info["SPEAKER_12"]["name"], "")
-        self.assertEqual(pipe.speaker_info["SPEAKER_03"], {"gender": "male"})  # in between: the guess stays
+            pipe._check_genders({"SPEAKER_05": ["a.wav"]})
+        self.assertEqual(pipe.speaker_info["SPEAKER_05"], {"name": "Alton Brown", "gender": "male"})
 
 
 class TestAuditionScore(unittest.TestCase):
@@ -562,17 +558,16 @@ class TestSubtitlesInThePipeline(unittest.TestCase):
         cues = parse_srt(self.srt([(1, 3, "Sync and corrections by atrn97g for www.addic7ed.com"), (5, 6, "Hello.")]))
         self.assertEqual([c[2] for c in cues], ["Hello."])
 
-    def test_grammar_gender_beats_the_pitch(self):
+    def test_grammar_gender_beats_the_analysis(self):
         self.pipe.speaker_info = {"SPEAKER_01": {"name": "Uhura", "gender": "female"}}
         script = [{"speaker": "SPEAKER_01", "subtitles": {"pl": t}} for t in ("Byłem tam.", "Zrobiłem to.", "Widziałem go.")]
         with (
             patch("core.pipeline.MOCK_MODE", False),
-            patch("core.pipeline.pitch_gender", return_value=("female", 240.0)) as pitch,
+            patch("core.pipeline.speaker_pitch", return_value=240.0),
         ):
             self.pipe._check_genders({"SPEAKER_01": ["a.wav"]}, script)
         info = self.pipe.speaker_info["SPEAKER_01"]
         self.assertEqual((info["gender"], info["gender_measured"], info["name"]), ("male", True, ""))
-        pitch.assert_not_called()
 
     def test_terms_of_the_series_and_the_episode(self):
         self.pipe.series = MagicMock()

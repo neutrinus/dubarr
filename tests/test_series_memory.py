@@ -99,16 +99,27 @@ class TestVoiceBank(unittest.TestCase):
         profile = {"name": "Jenny Taft", "gender": "female", "gender_measured": False}
         self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": profile, "clips": []}})
         self.assertEqual(self.mem.persons()["V001"]["gender"], "female")
-        profile = {"gender": "male", "gender_measured": True, "gender_hz": 141}
+        profile = {"gender": "male", "gender_measured": True}
         self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": profile, "clips": []}})
         person = self.mem.persons()["V001"]
-        self.assertEqual((person["gender"], person["gender_hz"]), ("male", 141))
+        self.assertEqual(person["gender"], "male")
         self.assertNotIn("name", person)  # "Host" was stored under a woman's gender: someone else's name
         # A measured gender is not replaced by a guess
         profile = {"name": "Chris Rose", "gender": "female", "gender_measured": False}
         self.mem.save_voices({"SPEAKER_03": {"person": "V001", "print": None, "profile": profile, "clips": []}})
         person = self.mem.persons()["V001"]
         self.assertEqual((person["gender"], person["name"]), ("male", "Chris Rose"))
+
+    def test_an_old_pitch_verdict_counts_as_a_guess(self):
+        # Banks before 2026-11-05 stored pitch verdicts (gender_hz): a shouting man as a woman
+        self.first_episode()
+        persons = self.mem.persons()
+        persons["V001"].update({"gender": "female", "gender_measured": True, "gender_hz": 293, "episodes": 3})
+        series_memory._write_json(self.mem.voices_path, {"persons": persons})
+        self.assertEqual(self.mem.settled_genders({"SPEAKER_00": "V001"}), {})
+        self.assertNotIn("female", self.mem.hints({"SPEAKER_00": "V001"}))
+        self.mem.save_voices({"SPEAKER_00": {"person": "V001", "print": None, "profile": {"gender": "male"}, "clips": []}})
+        self.assertEqual(self.mem.persons()["V001"]["gender"], "male")
 
     def test_a_cleaner_clip_wins_between_equal_scores(self):
         self.first_episode()

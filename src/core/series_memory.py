@@ -58,6 +58,12 @@ def _write_json(path: str, data: Dict):
         raise
 
 
+
+def _gender_measured(person: Dict) -> bool:
+    """A gender the subtitles' grammar told. Banks before 2026-11-05 also stored pitch verdicts (with gender_hz),
+    which made men women in 9 of 11 cases: those count as guesses."""
+    return bool(person.get("gender_measured")) and not person.get("gender_hz")
+
 class SeriesMemory:
     def __init__(self, key: str, root: str = SERIES_DIR):
         self.key = key
@@ -189,7 +195,7 @@ class SeriesMemory:
         for spk, pid in sorted(matches.items()):
             p = persons.get(pid) or {}
             # Only a measured gender: a guessed one may be the shouting man's "female" of an earlier episode
-            gender = p.get("gender") if p.get("gender_measured") else None
+            gender = p.get("gender") if _gender_measured(p) else None
             facts = ", ".join(x for x in (p.get("name"), gender, p.get("desc")) if x)
             lines.append(f"- {spk} is probably {facts or 'a known person'} (known from {p.get('episodes', 1)} episodes)")
         return "Known speakers of this series (from their voices):\n" + "\n".join(lines) if lines else ""
@@ -200,7 +206,7 @@ class SeriesMemory:
         out = {}
         for spk, pid in matches.items():
             p = persons.get(pid) or {}
-            if p.get("gender") in ("male", "female") and p.get("gender_measured") and int(p.get("episodes", 0)) >= 2:
+            if p.get("gender") in ("male", "female") and _gender_measured(p) and int(p.get("episodes", 0)) >= 2:
                 out[spk] = p["gender"]
         return out
 
@@ -255,9 +261,8 @@ class SeriesMemory:
                     person.pop("name", None)  # stored under someone else's name and gender
                 person["gender"] = measured
                 person["gender_measured"] = True
-                if profile.get("gender_hz"):
-                    person["gender_hz"] = profile["gender_hz"]
-            elif not person.get("gender_measured") and profile.get("gender") in ("male", "female"):
+                person.pop("gender_hz", None)
+            elif not _gender_measured(person) and profile.get("gender") in ("male", "female"):
                 person["gender"] = profile["gender"]  # still a guess: the latest one
             for key in ("name", "gender", "desc"):
                 value = profile.get(key)

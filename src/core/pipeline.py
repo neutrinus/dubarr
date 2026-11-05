@@ -43,7 +43,7 @@ from core.subtitles import (
 )
 from core import audio as audio_processor
 from core.synchronizer import SegmentSynchronizer
-from core.voice_audition import audition_voices, design_voices, pitch_gender
+from core.voice_audition import audition_voices, design_voices, speaker_pitch
 from core.gpu_services import LLMService, TTSService
 from core.media_context import cast_gender, lookup_media_info, format_media_context, format_short_context, episode_names
 from core.series_memory import CLIP_BEST_SECONDS, SeriesMemory, clip_quality, merge_matched_speakers
@@ -1318,7 +1318,7 @@ class DubbingPipeline:
                     out[spk] = gender
         return out
 
-    def _set_measured_gender(self, spk: str, gender: str, why: str, pitch: Optional[float] = None):
+    def _set_measured_gender(self, spk: str, gender: str, why: str):
         info = self.speaker_info.setdefault(spk, {})
         guessed = info.get("gender")
         if guessed != gender:
@@ -1330,15 +1330,13 @@ class DubbingPipeline:
                 info["name"] = ""
         info["gender"] = gender
         info["gender_measured"] = True
-        if pitch:
-            info["gender_hz"] = round(pitch)
 
     def _check_genders(self, refs: Dict[str, List[str]], script=None):
-        """The gender told by the subtitles' grammar, else by the measured pitch, overrules the LLM's guess from names
-        (Spec 001, 2.3; Spec 002, 2.3).
+        """The gender told by the subtitles' grammar, else by the cast list for the speaker's name, overrules the LLM's
+        guess (Spec 001, 2.3). The pitch is only logged.
 
-        The LLM names speakers from the cast list and can give the play-by-play man the name and gender of the
-        sideline reporter; the designed voice and the series memory would then carry a woman's voice for him.
+        The pitch decided before and was wrong in 9 of 11 verdicts, always making a man a woman: shouting
+        commentators, processed cartoon voices, and reference clips whose filter takes out a man's fundamental.
         """
         grammar = self._grammar_genders(script)
         # The corrector doubts the name of these speakers ("Chris Rose is referring to himself in the third person"),
@@ -1346,30 +1344,20 @@ class DubbingPipeline:
         doubted = {s.get("speaker") for s in (script or []) if s.get("speaker_doubt")}
         for spk, gender in grammar.items():
             self._set_measured_gender(spk, gender, "the subtitles' grammar says so")
+        media = getattr(self, "media_info", None) or {}
+        for spk, info in (self.speaker_info or {}).items():
+            if spk in grammar or spk in doubted or not info.get("name"):
+                continue
+            cast = cast_gender(media, info.get("name", ""))
+            if cast and cast != info.get("gender"):
+                logger.info(f"Speaker {spk}: the cast says '{info['name']}' is {cast} (the analysis said '{info.get('gender')}')")
+                info["gender"] = cast
         if MOCK_MODE:
             return
         for spk, paths in refs.items():
-            if spk in grammar:
-                continue
-            gender, pitch = pitch_gender(list(paths or [])[:REF_AUDITION_CANDIDATES])
-            info = self.speaker_info.setdefault(spk, {})
-            if not gender:
-                if pitch:
-                    logger.info(
-                        f"Speaker {spk}: pitch {pitch:.0f} Hz does not tell the gender, keeping '{info.get('gender')}'"
-                    )
-                continue
-            cast = cast_gender(getattr(self, "media_info", None) or {}, info.get("name", ""))
-            if gender == "female" and cast == "male" and spk not in doubted:
-                # Shouting men and voices of animated or processed characters reach the female band; a low pitch
-                # does not happen to women, so only the male verdict overrules the cast (Star Trek: Kirk at 244 Hz)
-                logger.info(
-                    f"Speaker {spk}: pitch {pitch:.0f} Hz, but the cast says '{info.get('name')}' is male: keeping male"
-                )
-                continue
-            if gender == "female" and cast == "male":
-                logger.info(f"Speaker {spk}: the corrector doubts the name '{info.get('name')}', so the pitch decides")
-            self._set_measured_gender(spk, gender, f"pitch {pitch:.0f} Hz", pitch)
+            pitch = speaker_pitch(list(paths or [])[:REF_AUDITION_CANDIDATES])
+            if pitch:
+                logger.info(f"Speaker {spk}: pitch {pitch:.0f} Hz, gender '{self.speaker_info.get(spk, {}).get('gender')}'")
 
     def _audition_voices(self, all_drafts_by_lang):
         """Ranks each speaker's reference candidates by how intelligibly they clone (Spec 002, 2.3)."""
