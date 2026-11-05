@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 from config import LANG_MAP, VIDEO_FOLDER, TEMP_DIR, SLACK_AFTER_MAX, SLACK_BEFORE_MAX, SLACK_GUARD
 from config import METADATA_LOOKUP, METADATA_TIMEOUT, TMDB_API_KEY, MOCK_MODE
-from config import GENDER_MIN_CONFIDENCE
+from config import GENDER_MIN_CONFIDENCE, GENDER_VOICE_CONFIDENCE
 from config import MERGE_MAX_GAP, MERGE_MAX_DURATION, MIN_SEGMENT_DURATION, SENTENCE_MAX_GAP, SENTENCE_MAX_DURATION
 from config import (
     TRANSLATION_REVIEW,
@@ -1341,12 +1341,15 @@ class DubbingPipeline:
         info["gender_measured"] = True
 
     def _check_genders(self, refs: Dict[str, List[str]], script=None, vocals: Optional[str] = None):
-        """The gender told by the subtitles' grammar, else by the cast list for the speaker's name, overrules the LLM's
-        guess (Spec 001, 2.3; Spec 002, 2.3). The voice classifier decides only when none of them tells and the
-        analysis did not name the speaker (or the corrector doubts the name). The pitch is only logged.
+        """Who tells a speaker's gender, in this order (Spec 002, 2.3): the subtitles' grammar; the voice classifier when
+        it is very sure (GENDER_VOICE_CONFIDENCE); the cast list for the speaker's name; the analysis when it names the
+        speaker; and the voice classifier again, less sure (GENDER_MIN_CONFIDENCE), for an unnamed or doubted speaker.
+        A name the measured gender contradicts is dropped. The pitch is only logged.
 
-        The pitch decided before and was wrong in 9 of 11 verdicts, always making a man a woman: shouting
-        commentators, processed cartoon voices, and reference clips whose filter takes out a man's fundamental.
+        The classifier goes before the cast list because that list is looked up by the name the analysis gave, and the
+        analysis swaps names: in MythBusters S2012E19 it named Kari "Jamie Hyneman" and Grant "Kari Byron"; the
+        classifier heard all 11 speakers right. The pitch decided before and was wrong in 9 of 11 verdicts, always
+        making a man a woman.
         """
         grammar = self._grammar_genders(script)
         # The corrector doubts the name of these speakers ("Chris Rose is referring to himself in the third person"),
@@ -1356,9 +1359,14 @@ class DubbingPipeline:
         decided = set(grammar) | set(series.settled_genders(getattr(self, "voice_matches", {}) or {}) if series else ())
         for spk, gender in grammar.items():
             self._set_measured_gender(spk, gender, "the subtitles' grammar says so")
+        heard = self._classify_voices(refs, script, vocals)
+        for spk, (verdict, confidence) in heard.items():
+            if spk not in decided and verdict and confidence >= GENDER_VOICE_CONFIDENCE:
+                decided.add(spk)
+                self._set_measured_gender(spk, verdict, f"the voice classifier is sure ({confidence:.2f})")
         media = getattr(self, "media_info", None) or {}
         for spk, info in (self.speaker_info or {}).items():
-            if spk in grammar or spk in doubted or not info.get("name"):
+            if spk in decided or spk in doubted or not info.get("name"):
                 continue
             cast = cast_gender(media, info.get("name", ""))
             if cast:
@@ -1368,10 +1376,24 @@ class DubbingPipeline:
                     f"Speaker {spk}: the cast says '{info['name']}' is {cast} (the analysis said '{info.get('gender')}')"
                 )
                 info["gender"] = cast
+        for spk, (verdict, confidence) in heard.items():
+            info = self.speaker_info.setdefault(spk, {})
+            name = (info.get("name") or "").strip()
+            named = name and name.lower() != "unknown" and spk not in doubted
+            if spk in decided or (named and info.get("gender") in ("male", "female")):
+                continue
+            if verdict and confidence >= GENDER_MIN_CONFIDENCE and verdict != info.get("gender"):
+                self._set_measured_gender(
+                    spk, verdict, f"nothing else tells the gender, the voice classifier hears it ({confidence:.2f})"
+                )
+
+    def _classify_voices(self, refs: Dict[str, List[str]], script=None, vocals: Optional[str] = None) -> Dict:
+        """{speaker: (verdict, confidence)} of the voice classifier; every verdict is logged with the speaker's pitch."""
         if MOCK_MODE:
-            return
+            return {}
         classifier = GenderClassifier()
         samples = script_check.load_samples(vocals, self.temp_dir) if classifier.enabled and vocals else None
+        heard = {}
         try:
             for spk in sorted(set(refs) | set(self.speaker_info or {})):
                 if spk == "unknown":
@@ -1379,20 +1401,15 @@ class DubbingPipeline:
                 info = self.speaker_info.setdefault(spk, {})
                 pitch = speaker_pitch(list(refs.get(spk) or [])[:REF_AUDITION_CANDIDATES])
                 verdict, confidence = classifier.classify(speaker_clips(script or [], samples, spk))
-                heard = f"{verdict or 'unclear'} ({confidence:.2f})" if confidence else "no verdict"
+                said = f"{verdict or 'unclear'} ({confidence:.2f})" if confidence else "no verdict"
                 logger.info(
-                    f"Speaker {spk}: voice classifier {heard}, pitch {f'{pitch:.0f} Hz' if pitch else '?'}, "
+                    f"Speaker {spk}: voice classifier {said}, pitch {f'{pitch:.0f} Hz' if pitch else '?'}, "
                     f"gender '{info.get('gender')}'"
                 )
-                name = (info.get("name") or "").strip()
-                named = name and name.lower() != "unknown" and spk not in doubted
-                if spk in decided or (named and info.get("gender") in ("male", "female")):
-                    continue
-                if verdict and confidence >= GENDER_MIN_CONFIDENCE and verdict != info.get("gender"):
-                    logger.info(f"Speaker {spk}: nothing else tells the gender, so the voice classifier's {verdict} goes")
-                    info["gender"] = verdict
+                heard[spk] = (verdict, confidence)
         finally:
             classifier.shutdown()
+        return heard
 
     def _audition_voices(self, all_drafts_by_lang):
         """Ranks each speaker's reference candidates by how intelligibly they clone (Spec 002, 2.3)."""

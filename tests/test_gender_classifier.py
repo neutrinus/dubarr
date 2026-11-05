@@ -73,18 +73,34 @@ class TestLastResort(unittest.TestCase):
         self.assertEqual(info["S6"]["gender"], "female")
 
     def test_a_named_speaker_keeps_the_analysis(self):
-        info = self.check({"S5": {"name": "Alton Brown", "gender": "male"}}, ("female", 0.95))
+        info = self.check({"S5": {"name": "Alton Brown", "gender": "male"}}, ("female", 0.92))
         self.assertEqual(info["S5"]["gender"], "male")
 
     def test_a_doubted_name_lets_the_voice_decide(self):
         script = [{"speaker": "S3", "start": 0.0, "end": 3.0, "speaker_doubt": "Chris Rose introduces Chris Rose"}]
-        info = self.check({"S3": {"name": "Chris Rose", "gender": "male"}}, ("female", 0.96), script)
+        info = self.check({"S3": {"name": "Chris Rose", "gender": "male"}}, ("female", 0.92), script)
         self.assertEqual(info["S3"]["gender"], "female")
+        self.assertEqual(info["S3"]["name"], "")  # "Chris Rose (female)" would mislead the translator
 
-    def test_the_cast_wins(self):
+    def test_the_cast_wins_over_a_less_sure_voice(self):
         media = {"cast": [{"character": "Kirk", "actor": "William Shatner", "gender": "male"}]}
-        info = self.check({"S7": {"name": "Unknown Kirk", "gender": "male"}}, ("female", 0.99), media=media)
+        info = self.check({"S7": {"name": "Unknown Kirk", "gender": "male"}}, ("female", 0.93), media=media)
         self.assertEqual(info["S7"]["gender"], "male")
+
+    def test_a_sure_voice_wins_over_a_swapped_name(self):
+        # MythBusters S2012E19: the analysis named Grant "Kari Byron"; the classifier heard a man (0.96)
+        media = {"cast": [{"character": "Kari Byron", "actor": "Kari Byron", "gender": "female"}]}
+        info = self.check({"S7": {"name": "Kari Byron", "gender": "female"}}, ("male", 0.96), media=media)
+        self.assertEqual(info["S7"]["gender"], "male")
+        self.assertEqual(info["S7"]["name"], "")
+        self.assertTrue(info["S7"]["gender_measured"])
+
+    def test_the_subtitles_grammar_wins_over_a_sure_voice(self):
+        script = [
+            {"speaker": "S2", "start": float(i), "end": i + 1.0, "subtitles": {"pl": f"Zrobiłem to {i}."}} for i in range(4)
+        ]
+        info = self.check({"S2": {"name": "", "gender": ""}}, ("female", 0.99), script)
+        self.assertEqual(info["S2"]["gender"], "male")
 
 
 if __name__ == "__main__":

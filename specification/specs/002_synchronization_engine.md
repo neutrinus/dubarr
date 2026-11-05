@@ -124,15 +124,21 @@ memory)"). In MythBusters S2012E20 the 2728 immediate failures of 137 lines caus
 **Designed voice** (`VOICE_DESIGN`, on by default). Before the audition, OmniVoice voice design synthesizes one clip
 per speaker that has lines, from the attributes it understands: gender, age and pitch, taken from the speaker
 profile (Stage 3; e.g. "male, middle-aged, low pitch"; age words match whole words only). With nothing known OmniVoice
-picks a generic voice. The gender comes from, in this order: the Polish subtitles' grammar (Spec 001, 2.3); the cast
-list of the metadata (Spec 001, 2.2b), when the speaker's name is a character (or actor) it lists, and the corrector
-raises no doubt about that speaker's name (Spec 001, 2.2c step 4: in BattleBots S01E01 the host Molly McGrath was
-named Chris Rose); else the analysis, when it names the speaker (a name carries a gender). Only when none of these
-tells (no grammar, no cast entry, and the analysis has no name for the speaker, or the corrector doubts it), a voice
-classifier decides: `GENDER_MODEL` (default audeering/wav2vec2-large-robust-24-ft-age-gender, CC-BY-NC-SA 4.0, on
-the CPU) reads up to 6 of the speaker's calm lines (1.5-10 s, longest first; shouting lines only when there is no
-calm one) from the unfiltered vocals, averages their female/male/child probabilities, and its verdict counts when it
-reaches `GENDER_MIN_CONFIDENCE` (0.9); a child's voice tells no gender. Its verdict and confidence are logged for
+picks a generic voice. The gender comes from, in this order: the Polish subtitles' grammar (Spec 001, 2.3); the
+voice classifier when it is very sure (`GENDER_VOICE_CONFIDENCE`, 0.95); the cast list of the metadata (Spec 001,
+2.2b), when the speaker's name is a character (or actor) it lists, and the corrector raises no doubt about that
+speaker's name (Spec 001, 2.2c step 4: in BattleBots S01E01 the host Molly McGrath was named Chris Rose); else the
+analysis, when it names the speaker (a name carries a gender); and last the voice classifier again at
+`GENDER_MIN_CONFIDENCE` (0.9), when the analysis has no name for the speaker or the corrector doubts it. The voice
+classifier, `GENDER_MODEL` (default audeering/wav2vec2-large-robust-24-ft-age-gender, CC-BY-NC-SA 4.0, on the CPU),
+reads up to 6 of the speaker's calm lines (1.5-10 s, longest first; shouting lines only when there is no calm one)
+from the unfiltered vocals and averages their female/male/child probabilities; a child's voice tells no gender. It
+goes before the cast list because the cast gender is looked up by the name the analysis gave, and the analysis
+swaps names: in MythBusters S2012E19 it named Kari "Jamie Hyneman" and Grant "Kari Byron", while the classifier heard
+all 11 speakers right (Kari 0.99 and Grant 0.96; a third cluster of Kari's lines at 0.76). When the subtitles'
+grammar or the classifier gives a speaker the other gender than the analysis, the speaker's name is dropped: the
+translator would otherwise write feminine forms for a man named "Kari Byron (male)". The classifier's verdict and
+confidence are logged for
 every speaker, so it can be checked against the speakers whose gender is known. The speaking pitch of the reference clips is logged but never decides: as the
 decider it was right in 2 of 11 verdicts, and the 9 wrong ones all made a man a woman (shouting commentators at
 290-320 Hz, Kirk and processed alien voices at 243-248 Hz, and MythBusters' Jamie, Alton and Tory at 220-237 Hz,

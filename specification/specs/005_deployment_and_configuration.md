@@ -58,7 +58,7 @@ Configuration is only through environment variables (read in `src/config.py`, th
 | `TTS_DEVICE` | `auto` | `auto`: OmniVoice on the GPU with the most free VRAM; `cpu`: keep the GPUs free (much slower). |
 | `TTS_CPU_THREADS` | all cores | Threads for CPU synthesis. |
 | `TTS_TIMEOUT` | `60` | Seconds per TTS request (raise it on CPU). |
-| `GENDER_MODEL` / `GENDER_MIN_CONFIDENCE` | `audeering/wav2vec2-large-robust-24-ft-age-gender` / `0.9` | Voice gender classifier, the last resort when subtitles' grammar, the cast list and a named profile do not tell (Spec 002, 2.3); `off` disables it. Runs on `JUDGE_DEVICE`. |
+| `GENDER_MODEL` / `GENDER_VOICE_CONFIDENCE` / `GENDER_MIN_CONFIDENCE` | `audeering/wav2vec2-large-robust-24-ft-age-gender` / `0.95` / `0.9` | Voice gender classifier (Spec 002, 2.3): at `GENDER_VOICE_CONFIDENCE` it overrules the cast list and the analysis (only the subtitles' grammar beats it); at `GENDER_MIN_CONFIDENCE` it decides for an unnamed or doubted speaker. `off` disables it. Runs on `JUDGE_DEVICE`. |
 | `TTS_OOM_WAIT` | `300` | Seconds a TTS request waits (5, 10, 20, then 30 s steps) while the server answers "CUDA out of memory", before the take counts as missing. Another process on the card (a shared llama-server) frees memory again; restarting the server would not. |
 | `TTS_MAX_CHUNK_SECONDS` | `10` | Longer lines are synthesized in chunks at sentence ends, then commas/semicolons (sync and VRAM peak). |
 | `TTS_REF_TEXT` | `off` | Send the reference clip's transcript to OmniVoice; `off` keeps English pronunciation out of the target language. |
