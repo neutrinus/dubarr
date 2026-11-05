@@ -49,8 +49,11 @@ pronounces "Razorback" in English ("Rejzorbek"). Without memory it was invented 
     spelling's letters of the consonants around it: ER as `e`/`y`/`i`/`o`/`u`, never `a` ("Kirk" was respelled
     "Kark" on Star Trek S01E01 and passed the consonant check). A failed spelling is respelled as in 4, the respelling prompt carrying the Polish rules (English w is
     `ł`, v is `w`, sh `sz`, ch `cz`, j `dż`, y `j`, th `t` or `f`) and what was lost. Stored spellings go through
-    this check too; one that changes or fails is replaced in the memory. Names without phonemes, and other target
-    languages, keep the LLM reading test of 4.
+    this check too; one that changes or fails is replaced in the memory. A name the analysis left in its English
+    spelling is checked the same way (MythBusters S2012E19: every name came back unchanged, and "Jamie", "Savage"
+    and "Belleci" are read wrong by Polish rules); one that passes ("Grant Imahara") stays as it is. Names without
+    phonemes, and other target languages, keep the LLM reading test of 4, which unchanged spellings skip (read back
+    as English they always sound right).
 6.  **Names, not ranks.** A leading rank or title (`Captain`, `Lt.`, `Dr.`, `Mr.`, ...) is cut from a term and the
     same number of words from its spelling ("Captain James Tiberius Kirk" -> "James Tiberius Kirk"): the translator
     translates ranks ("kapitanie", "porucznik"), and respelling them gave "Kapten" and "Letnant".

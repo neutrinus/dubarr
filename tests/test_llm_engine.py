@@ -151,6 +151,17 @@ class TestLLMManager(unittest.TestCase):
         self.assertIn("Z missing", json.loads(respell[1]["content"])["names"][0]["sounds_like"])
         self.assertIn("ł", respell[0]["content"])  # the Polish spelling rules
 
+    def test_an_unchanged_english_spelling_is_checked_by_polish_rules(self):
+        # MythBusters S2012E19: the analysis left every name in English; a Polish reader says "Jamie" as "Jamje"
+        self.chat.side_effect = [reply(json.dumps({"spellings": [{"id": 0, "spelling": "Dżejmi Hajneman"}]}))]
+        phonemes = {"Jamie Hyneman": "JH EY1 M IY0 HH AY1 N M AH0 N", "Grant Imahara": "G R AE1 N T IH2 M AH0 HH AA1 R AH0"}
+        res = self.manager.check_glossary(
+            {"Jamie Hyneman": "Jamie Hyneman", "Grant Imahara": "Grant Imahara"}, phonemes=phonemes
+        )
+        self.assertEqual(res, {"Jamie Hyneman": "Dżejmi Hajneman", "Grant Imahara": "Grant Imahara"})
+        respell = json.loads(self.chat.call_args_list[0].kwargs["messages"][1]["content"])
+        self.assertEqual([n["name"] for n in respell["names"]], ["Jamie Hyneman"])
+
     def test_glossary_reading_test_rejects_a_lost_consonant(self):
         # "Rej-or-bek" sounds like "Rayorbeck": the "z" of Razorback is gone, so it is respelled and read again
         self.chat.side_effect = [
@@ -198,7 +209,8 @@ class TestLLMManager(unittest.TestCase):
         # Mock correction response
         correction_resp = json.dumps({"L_0": "Hello, world!"})
 
-        self.chat.side_effect = [reply(analysis_resp), reply(correction_resp)]
+        # The English phonemes of the glossary's names (none known here), then the correction
+        self.chat.side_effect = [reply(analysis_resp), reply(json.dumps({"phonemes": []})), reply(correction_resp)]
 
         with patch("os.makedirs"):
             res = self.manager.analyze_script(script, "debug_dir")
