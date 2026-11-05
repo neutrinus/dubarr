@@ -12,8 +12,10 @@ from core.subtitles import (
     missing_speech,
     parse_srt,
     read_text,
+    shift_srt,
     speaker_labels,
     strip_sdh,
+    subtitle_offset,
     timing_matches,
 )
 
@@ -107,6 +109,32 @@ class TestMissingSpeech(unittest.TestCase):
         segments = [{"start": i * 6.0, "end": i * 6.0 + 2.0, "text": f"Line {i}."} for i in range(12)]
         cues = [(s + 3.0, s + 5.0, f"Line {i}.") for i, s in enumerate(range(0, 72, 6))]
         self.assertFalse(timing_matches(segments, cues))
+
+    def test_a_cue_whisper_heard_at_another_time_is_not_added_again(self):
+        # MythBusters: the subtitles ran 1-2 s early; "Alton, I bet you're kind of a badass" was dubbed twice
+        segments = [
+            {"start": 1715.3, "end": 1719.0, "text": "Alton, I'd bet you're kind of a bad guy when it comes to cooking."}
+        ]
+        cues = [(1713.0, 1715.0, "Alton, I bet you're kind of a badass"), (1725.0, 1727.0, "Yay! You did it!")]
+        self.assertEqual([m["text"] for m in missing_speech(segments, cues)], ["Yay! You did it!"])
+        # A short cue needs all its words nearby
+        self.assertEqual(len(missing_speech([{"start": 10.0, "end": 12.0, "text": "Wow, look."}], [(7.0, 9.0, "Wow!")])), 0)
+        self.assertEqual(len(missing_speech([{"start": 10.0, "end": 12.0, "text": "Look."}], [(7.0, 9.0, "Not yet.")])), 1)
+
+
+class TestSubtitleOffset(unittest.TestCase):
+    def test_offset_from_cues_that_start_like_a_segment(self):
+        segments = [{"start": i * 6.0 + 1.5, "end": i * 6.0 + 4.0, "text": f"This is line number {i}."} for i in range(12)]
+        cues = [(i * 6.0, i * 6.0 + 2.5, f"This is line number {i}.") for i in range(12)]
+        self.assertEqual(subtitle_offset(segments, cues), 1.5)
+        self.assertEqual(subtitle_offset(segments[:5], cues), 0.0)  # too few matches to tell
+        self.assertEqual(subtitle_offset(segments, [(s + 1.4, e + 1.4, t) for s, e, t in cues]), 0.0)  # in time
+
+    def test_shift_srt(self):
+        shifted = shift_srt(SRT, 1.5)
+        self.assertEqual(parse_srt(shifted)[0][:2], (2.5, 4.5))
+        self.assertEqual(parse_srt(shift_srt(SRT, -5.0))[0][:2], (0.0, 0.0))
+        self.assertEqual(shift_srt(SRT, 0.0), SRT)
 
 
 class TestSpeakerLabels(unittest.TestCase):

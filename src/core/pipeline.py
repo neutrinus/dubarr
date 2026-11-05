@@ -38,7 +38,9 @@ from core.subtitles import (
     missing_speech,
     parse_srt,
     read_text,
+    shift_srt,
     speaker_labels,
+    subtitle_offset,
     timing_matches,
 )
 from core import audio as audio_processor
@@ -966,6 +968,11 @@ class DubbingPipeline:
             fixed_glossary = {t: t for t in fixed_phonemes}
 
         source_subs = self._source_subtitles(vpath)
+        if source_subs:
+            offset = subtitle_offset(trans, parse_srt(source_subs))
+            if offset:
+                logger.info(f"Subtitles: shifted by {offset:+.2f}s to the audio (matched by their words)")
+                source_subs = shift_srt(source_subs, offset)
         trans = self._drop_unheard_gap_segments(trans, diar, parse_srt(source_subs) if source_subs else [])
         trans = self._add_missing_speech(trans, source_subs, diar)
         if ASR_VERIFY:
@@ -1350,7 +1357,9 @@ class DubbingPipeline:
                 continue
             cast = cast_gender(media, info.get("name", ""))
             if cast and cast != info.get("gender"):
-                logger.info(f"Speaker {spk}: the cast says '{info['name']}' is {cast} (the analysis said '{info.get('gender')}')")
+                logger.info(
+                    f"Speaker {spk}: the cast says '{info['name']}' is {cast} (the analysis said '{info.get('gender')}')"
+                )
                 info["gender"] = cast
         if MOCK_MODE:
             return

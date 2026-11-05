@@ -186,9 +186,67 @@ def timing_matches(segments: List[Dict], cues: List[Tuple[float, float, str]], m
     return hit >= min_share * len(spoken)
 
 
-def missing_speech(segments: List[Dict], cues: List[Tuple[float, float, str]], min_seconds: float = 1.0) -> List[Dict]:
+def _words(text: str) -> List[str]:
+    return re.findall(r"[a-z0-9']+", (text or "").lower())
+
+
+def subtitle_offset(segments: List[Dict], cues: List[Tuple[float, float, str]], max_shift: float = 5.0) -> float:
+    """How many seconds the subtitles run early (+) or late (-) against the transcription; 0.0 when it cannot tell.
+
+    Subtitles of another release are often off by a second or two (MythBusters: 1-2 s early). Every cue of 3+ words
+    that starts with the same (up to 5) words as a nearby transcribed segment gives one estimate; their median is the offset.
+    """
+    shifts = []
+    for start, _, text in cues:
+        words = _words(strip_sdh(text)[1])
+        if len(words) < 3:
+            continue
+        head = words[:5]
+        found = [
+            g["start"] - start
+            for g in segments
+            if abs(g["start"] - start) <= max_shift and _words(g.get("text", ""))[: len(head)] == head
+        ]
+        if found:
+            shifts.append(min(found, key=abs))
+    if len(shifts) < 8:
+        return 0.0
+    shifts.sort()
+    median = shifts[len(shifts) // 2]
+    return round(median, 2) if abs(median) >= 0.25 else 0.0
+
+
+def shift_srt(content: str, seconds: float) -> str:
+    """The SRT with every timestamp moved by ``seconds`` (never below zero)."""
+
+    def move(m):
+        t = max(0.0, _seconds(m) + seconds)
+        h, rest = divmod(t, 3600)
+        mins, sec = divmod(rest, 60)
+        return f"{int(h):02d}:{int(mins):02d}:{int(sec):02d},{int(round((sec - int(sec)) * 1000)) % 1000:03d}"
+
+    return _TIME.sub(move, content or "") if seconds else content
+
+
+def _already_heard(spoken: str, start: float, end: float, segments: List[Dict], window: float) -> bool:
+    """Whether the cue's words are in the transcription around it: Whisper heard them, timed a little differently."""
+    words = _words(spoken)
+    if not words:
+        return True
+    near = set()
+    for g in segments:
+        if g["end"] >= start - window and g["start"] <= end + window:
+            near.update(_words(g.get("text", "")))
+    found = sum(1 for w in words if w in near)
+    return found == len(words) if len(words) <= 2 else found >= 0.7 * len(words)
+
+
+def missing_speech(
+    segments: List[Dict], cues: List[Tuple[float, float, str]], min_seconds: float = 1.0, window: float = 3.0
+) -> List[Dict]:
     """Subtitle cues that Whisper did not hear: spoken cues of at least ``min_seconds`` that no transcribed segment
-    overlaps by MIN_CUE_OVERLAP of the cue, as transcription segments {start, end, text, from_subtitles}."""
+    overlaps by MIN_CUE_OVERLAP of the cue and whose words are not in the transcription within ``window`` seconds,
+    as transcription segments {start, end, text, from_subtitles}."""
     out = []
     for start, end, text in cues:
         _, spoken = strip_sdh(text)
@@ -196,8 +254,12 @@ def missing_speech(segments: List[Dict], cues: List[Tuple[float, float, str]], m
         if not spoken or length < min_seconds:
             continue
         heard = sum(_overlap(start, end, g["start"], g["end"]) for g in segments)
-        if heard < MIN_CUE_OVERLAP * length:
-            out.append({"start": start, "end": end, "text": spoken, "avg_logprob": -0.5, "from_subtitles": True})
+        if heard >= MIN_CUE_OVERLAP * length:
+            continue
+        if _already_heard(spoken, start, end, segments, window):
+            logger.info(f"Subtitles: cue at {start:.1f}s is already in the transcription: '{spoken[:60]}'")
+            continue
+        out.append({"start": start, "end": end, "text": spoken, "avg_logprob": -0.5, "from_subtitles": True})
     return out
 
 
