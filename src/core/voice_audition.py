@@ -7,7 +7,7 @@ A few syntheses per speaker before Stage 5 replace most of the retries the per-t
 import logging
 import os
 import re
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
 from infrastructure.ffmpeg import FFmpegWrapper
 from infrastructure.tts_client import TTSOutOfMemory, write_ref_text

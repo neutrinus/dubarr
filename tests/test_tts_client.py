@@ -80,7 +80,6 @@ class TestTTSClient(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.client.synthesize("text", "ref.wav", "out.wav", "pl")
 
-
     @patch("infrastructure.tts_client.time.sleep")
     @patch("requests.get")
     @patch("requests.post")

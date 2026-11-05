@@ -58,11 +58,11 @@ def _write_json(path: str, data: Dict):
         raise
 
 
-
 def _gender_measured(person: Dict) -> bool:
     """A gender the subtitles' grammar told. Banks before 2026-11-05 also stored pitch verdicts (with gender_hz),
     which made men women in 9 of 11 cases: those count as guesses."""
     return bool(person.get("gender_measured")) and not person.get("gender_hz")
+
 
 class SeriesMemory:
     def __init__(self, key: str, root: str = SERIES_DIR):
