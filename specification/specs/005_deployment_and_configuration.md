@@ -58,6 +58,7 @@ Configuration is only through environment variables (read in `src/config.py`, th
 | `TTS_DEVICE` | `auto` | `auto`: OmniVoice on the GPU with the most free VRAM; `cpu`: keep the GPUs free (much slower). |
 | `TTS_CPU_THREADS` | all cores | Threads for CPU synthesis. |
 | `TTS_TIMEOUT` | `60` | Seconds per TTS request (raise it on CPU). |
+| `TTS_OOM_WAIT` | `300` | Seconds a TTS request waits (5, 10, 20, then 30 s steps) while the server answers "CUDA out of memory", before the take counts as missing. Another process on the card (a shared llama-server) frees memory again; restarting the server would not. |
 | `TTS_MAX_CHUNK_SECONDS` | `10` | Longer lines are synthesized in chunks at sentence ends, then commas/semicolons (sync and VRAM peak). |
 | `TTS_REF_TEXT` | `off` | Send the reference clip's transcript to OmniVoice; `off` keeps English pronunciation out of the target language. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
@@ -103,7 +104,7 @@ Configuration is only through environment variables (read in `src/config.py`, th
 | `MAX_PLAUSIBLE_SYLLABLES_PER_SECOND` | `9` | A faster take was swallowed by the TTS (mostly silence). |
 | `REF_MIN_CLARITY_DB` | `3.0` | A voice reference less than this many dB above the rest of the mix is avoided. |
 | `REF_AUDITION_CANDIDATES` / `AUDITION_LINE_REF_MIN` | `3` / `0.8` | Reference clips kept per speaker for the voice audition; a speaker scoring below this does not clone from line clips. |
-| `VOICE_DESIGN` | `on` | One OmniVoice voice-design clip per speaker (gender/age/pitch from the profile, the gender measured from the clips' pitch when it is clear) joins the candidates; it is used only when none of the speaker's clips reaches `AUDITION_LINE_REF_MIN`, and a speaker then keeps that kind of voice (clone or designed) for all lines. |
+| `VOICE_DESIGN` | `on` | One OmniVoice voice-design clip per speaker (gender/age/pitch from the profile; the gender from the Polish subtitles' grammar, the cast list, else the analysis) joins the candidates; it is used only when none of the speaker's clips reaches `AUDITION_LINE_REF_MIN`, and a speaker then keeps that kind of voice (clone or designed) for all lines. |
 | `EMOTION_REFS` | `on` | Every line gets an energy class (calm / lively / shout, relative to its speaker's level, pitch and pace); reference clips are picked per class and a line starts from a clip of its own class. |
 | `TAKE_CHECK` | `judge` | `judge`: the take judge decides on the audition and every take; `whisper`: the same plus the Whisper similarity in the report, for calibration (and as the text check when the CTC model does not load); `off`: only the swallowed and signal checks, no audition. The old values `on` and `audition` read as `judge`. |
 | `TAKE_VERSIONS` | `4` | Takes per synthesis (the first two from different references); the best is kept. |
