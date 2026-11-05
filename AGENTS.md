@@ -207,6 +207,8 @@ it) in the same PR. The ones you need most often while developing:
 - The mux encodes only the dubbed tracks (`AUDIO_CODEC`, AAC by default) and copies every original stream (audio, subtitles, MKV attachments).
   Dubbed tracks are tagged with ISO 639-2 codes (`config.ISO_639_2`, `pl` -> `pol`): MP4 drops two-letter codes.
 - The OmniVoice server is restarted automatically on HTTP 500s and connection errors, then the request is retried once.
+  A "CUDA out of memory" answer is different: the request waits and asks again for up to `TTS_OOM_WAIT` seconds
+  (another process on the card has to free memory; a restart would not), then raises `TTSOutOfMemory`.
 - `omnivoice_server.py` sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before importing torch. It usually
   runs next to another GPU process (a shared `llama-server`), where the default allocator dies on 20 MB
   allocations even with memory free.
