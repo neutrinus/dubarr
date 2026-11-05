@@ -74,7 +74,8 @@ class SegmentSynchronizer:
         Higher scores are less broken: a missing take scores -2, a swallowed one -1, any other its judge score (0..1).
         """
         if not result.get("audio_path"):
-            return dict(result, score=0.0), 0.0, (-2.0, "MISSING take (no audio from the TTS)")
+            why = "the GPU stayed out of memory" if result.get("out_of_memory") else "no audio from the TTS"
+            return dict(result, score=0.0), 0.0, (-2.0, f"MISSING take ({why})")
         try:
             duration = FFmpegWrapper.get_duration(result["audio_path"])
         except Exception:

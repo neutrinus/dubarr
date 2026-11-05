@@ -7,10 +7,10 @@ A few syntheses per speaker before Stage 5 replace most of the retries the per-t
 import logging
 import os
 import re
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional
 
 from infrastructure.ffmpeg import FFmpegWrapper
-from infrastructure.tts_client import write_ref_text
+from infrastructure.tts_client import TTSOutOfMemory, write_ref_text
 from utils import count_syllables
 
 try:
@@ -91,11 +91,8 @@ def design_text(drafts: List[Dict], speaker: str, lang: str, avoid: Optional[str
     return " ".join(picked) if total >= MIN_AUDITION_SYLLABLES else None
 
 
-# Speaking pitch (median F0 of calm speech): men mostly 85-155 Hz, women 165-255 Hz; between the two, no verdict.
-# A man shouting over the arena reaches 290-320 Hz (S01E03), so above the calm female range there is no verdict either.
-PITCH_MALE_MAX = 160.0
-PITCH_FEMALE_MIN = 200.0
-PITCH_FEMALE_MAX = 265.0
+# Speaking pitch is only reported, never used for gender (Spec 001, 2.3): shouting men, processed voices and the
+# filtered reference clips put men at 220-320 Hz in 9 of 11 verdicts it made (BattleBots, Star Trek, MythBusters).
 PITCH_MIN_FRAMES = 20  # voiced 10 ms frames needed for a verdict
 
 
@@ -137,8 +134,8 @@ def median_pitch(samples, rate: int, fmin: float = 60.0, fmax: float = 400.0) ->
     return float(np.median(f0s)) if len(f0s) >= PITCH_MIN_FRAMES else None
 
 
-def pitch_gender(paths: List[str]) -> Tuple[Optional[str], Optional[float]]:
-    """("male" | "female" | None, median pitch) of a speaker's reference clips; None when the pitch does not tell."""
+def speaker_pitch(paths: List[str]) -> Optional[float]:
+    """Median pitch (Hz) of a speaker's reference clips, for the log; None when it cannot be measured."""
     from core.take_judge import read_wav_mono
 
     pitches = []
@@ -147,14 +144,7 @@ def pitch_gender(paths: List[str]) -> Tuple[Optional[str], Optional[float]]:
         pitch = median_pitch(*read) if read else None
         if pitch:
             pitches.append(pitch)
-    if not pitches:
-        return None, None
-    pitch = float(np.median(pitches))
-    if pitch <= PITCH_MALE_MAX:
-        return "male", pitch
-    if PITCH_FEMALE_MIN <= pitch <= PITCH_FEMALE_MAX:
-        return "female", pitch
-    return None, pitch
+    return float(np.median(pitches)) if pitches else None
 
 
 def design_voices(tts_manager, speaker_info: Dict[str, Dict], drafts: List[Dict], lang: str, work_dir: str) -> Dict[str, str]:
@@ -231,6 +221,10 @@ def audition_voices(
                     score = scorer(out, text, lang, ref)
                     if score is None:
                         continue
+            except TTSOutOfMemory as e:
+                # The card was full, which says nothing about the clip: leave it unscored, in its Stage 4 place
+                logger.warning(f"Voice audition: {spk} candidate {n + 1} not scored: {e}")
+                continue
             except Exception as e:
                 logger.warning(f"Voice audition: {spk} candidate {n + 1} failed: {e}")
                 score = 0.0

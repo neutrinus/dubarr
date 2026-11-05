@@ -69,6 +69,8 @@ SPEAKER_RECHECK_MIN = float(os.environ.get("SPEAKER_RECHECK_MIN", "0.5"))
 
 # Seconds per TTS request (raise it on CPU, synthesis is slow there)
 TTS_TIMEOUT = int(os.environ.get("TTS_TIMEOUT", "60"))
+# How long a TTS request waits for GPU memory when the card is full (another process on it), before it fails
+TTS_OOM_WAIT = int(os.environ.get("TTS_OOM_WAIT", "300"))
 
 # Speech synthesis is OmniVoice. Its server runs as a separate process, on the app's own interpreter by default.
 if os.environ.get("TTS_BACKEND", "omnivoice").lower() != "omnivoice":

@@ -51,24 +51,22 @@ class TestCastGender(unittest.TestCase):
         self.assertIsNone(cast_gender(MEDIA, "Narrator"))
         self.assertIsNone(cast_gender({}, "Kirk"))
 
-    def test_female_pitch_does_not_beat_a_male_cast(self):
+    def test_the_cast_decides_and_the_pitch_does_not(self):
         pipe = DubbingPipeline.__new__(DubbingPipeline)
         pipe.target_langs = ["pl"]
         pipe.media_info = MEDIA
         pipe.speaker_info = {
-            "S7": {"name": "Captain James Tiberius Kirk", "gender": "male"},
+            "S7": {"name": "Captain James Tiberius Kirk", "gender": "female"},
             "S0": {"name": "Lt. Nyota Uhura", "gender": "female"},
         }
-        verdicts = {"k.wav": ("female", 244.0), "u.wav": ("male", 130.0)}
         with (
             patch("core.pipeline.MOCK_MODE", False),
-            patch("core.pipeline.pitch_gender", side_effect=lambda paths: verdicts[paths[0]]),
+            patch("core.pipeline.speaker_pitch", return_value=244.0),
         ):
             pipe._check_genders({"S7": ["k.wav"], "S0": ["u.wav"]})
         self.assertEqual(pipe.speaker_info["S7"]["gender"], "male")
         self.assertEqual(pipe.speaker_info["S7"]["name"], "Captain James Tiberius Kirk")
-        # A male pitch still overrules: the analysis took the speaker for someone else
-        self.assertEqual((pipe.speaker_info["S0"]["gender"], pipe.speaker_info["S0"]["name"]), ("male", ""))
+        self.assertEqual((pipe.speaker_info["S0"]["gender"], pipe.speaker_info["S0"]["name"]), ("female", "Lt. Nyota Uhura"))
 
 
 class TestGlossaryNames(unittest.TestCase):

@@ -7,7 +7,7 @@ import threading
 import gc
 import subprocess
 from typing import List, Dict, Optional, Any, Tuple
-from infrastructure.tts_client import TTSWrapper, ref_text_path, write_ref_text
+from infrastructure.tts_client import TTSOutOfMemory, TTSWrapper, ref_text_path, write_ref_text
 from utils import measure_zcr, count_syllables, apply_phonemes
 from config import AUDITION_LINE_REF_MIN, MOCK_MODE, TTS_DEVICE, TTS_MAX_CHUNK_SECONDS, REF_MIN_CLARITY_DB, TAKE_MIN_SIMILARITY
 from config import EMOTION_REFS
@@ -165,6 +165,7 @@ class TTSManager:
                 "duration": result["duration"],
                 "voice_type": result["payload"]["voice_type"],
                 "ref": result["payload"].get("ref"),
+                "out_of_memory": bool(result["payload"].get("out_of_memory")),
             }
         return None
 
@@ -327,6 +328,11 @@ class TTSManager:
                 return {"payload": payload, "duration": dt}
             else:
                 logging.warning(f"TTS: [ID: {idx}] Produced invalid/empty file.")
+        except TTSOutOfMemory as e:
+            # Not the reference's fault: the card stayed full while the request waited (TTS_OOM_WAIT)
+            logging.error(f"TTS: [ID: {idx}] Gen failed: {e}")
+            payload = {"item": item, "raw_path": None, "voice_type": voice_type, "ref": chosen_ref, "out_of_memory": True}
+            return {"payload": payload, "duration": 0.0}
         except Exception as e:
             logging.error(f"TTS: [ID: {idx}] Gen failed: {e}")
         # No audio, but the caller learns which reference failed and can try another one

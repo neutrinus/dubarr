@@ -6,7 +6,15 @@ import logging
 import signal
 import threading
 
-from config import MOCK_MODE, OMNIVOICE_PYTHON, TTS_TIMEOUT, TTS_REF_TEXT
+from config import MOCK_MODE, OMNIVOICE_PYTHON, TTS_OOM_WAIT, TTS_REF_TEXT, TTS_TIMEOUT
+
+
+class TTSOutOfMemory(RuntimeError):
+    """The TTS server found no free GPU memory, even after waiting TTS_OOM_WAIT seconds."""
+
+
+def is_out_of_memory(text: str) -> bool:
+    return "out of memory" in (text or "").lower()
 
 
 class TTSServerClient:
@@ -166,6 +174,25 @@ class TTSServerClient:
             "language": language,
         }
 
+    def _post(self, path, payload):
+        """POST to the server; while it answers "CUDA out of memory", waits and asks again.
+
+        Memory runs out when another process (a shared llama-server) grows on the same card. Restarting the server does
+        not free that memory, and a failed take would count against the line's voice reference; so the request waits
+        (5 s, 10 s, 20 s, then 30 s steps) for up to TTS_OOM_WAIT seconds and then raises TTSOutOfMemory.
+        """
+        waited, pause = 0.0, 5.0
+        while True:
+            res = requests.post(f"{self.server_url}{path}", json=payload, timeout=TTS_TIMEOUT)
+            if res.status_code == 200 or not is_out_of_memory(res.text):
+                return res
+            if waited >= TTS_OOM_WAIT:
+                raise TTSOutOfMemory(f"{self.NAME}: GPU out of memory for {waited:.0f}s: {res.text[:200]}")
+            logging.warning(f"{self.NAME}: GPU out of memory, waiting {pause:.0f}s for another process to free it")
+            time.sleep(pause)
+            waited += pause
+            pause = min(pause * 2, 30.0)
+
     def synthesize(
         self, text, ref_audio, output_path, language="en", max_duration=None, retry_on_cuda=True, target_duration=None
     ):
@@ -178,7 +205,7 @@ class TTSServerClient:
 
         try:
             logging.info(f"{self.NAME}Client: Sending request for text: {text[:20]}...")
-            res = requests.post(f"{self.server_url}/synthesize", json=payload, timeout=TTS_TIMEOUT)
+            res = self._post("/synthesize", payload)
             logging.info(f"{self.NAME}Client: Received response {res.status_code}")
             if res.status_code != 200:
                 error_text = res.text
@@ -200,6 +227,8 @@ class TTSServerClient:
                     )
 
                 raise RuntimeError(f"{self.NAME} Server Error: {error_text}")
+        except TTSOutOfMemory:
+            raise
         except Exception as e:
             # Also catch connection errors which might occur if the server process crashed completely
             if retry_on_cuda and isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
@@ -222,7 +251,7 @@ class TTSServerClient:
         """Synthesizes the text in a voice described by attributes (OmniVoice voice design); True on success."""
         payload = {"text": self.sanitize_text(text), "instruct": instruct, "output_path": output_path, "language": language}
         try:
-            res = requests.post(f"{self.server_url}/design", json=payload, timeout=TTS_TIMEOUT)
+            res = self._post("/design", payload)
             if res.status_code == 200:
                 return True
             logging.warning(f"{self.NAME}: design returned {res.status_code}: {res.text[:200]}")
@@ -238,7 +267,7 @@ class TTSServerClient:
             "ref_text": read_ref_text(ref_audio) if TTS_REF_TEXT == "auto" else "",
         }
         try:
-            res = requests.post(f"{self.server_url}/estimate", json=payload, timeout=TTS_TIMEOUT)
+            res = self._post("/estimate", payload)
             if res.status_code == 200:
                 return res.json().get("durations")
             logging.warning(f"{self.NAME}: estimate returned {res.status_code}: {res.text[:200]}")

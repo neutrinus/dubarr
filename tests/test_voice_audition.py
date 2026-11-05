@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from core.synchronizer import SegmentSynchronizer
 from core.tts_manager import TTSManager
-from core.voice_audition import audition_voices, median_pitch, pick_test_line, pitch_gender
+from core.voice_audition import audition_voices, median_pitch, pick_test_line, speaker_pitch
 
 
 class TestPickTestLine(unittest.TestCase):
@@ -64,6 +64,15 @@ class TestAuditionVoices(unittest.TestCase):
         scores, _ = self.run_audition([1.0], [3.2])
 
         self.assertEqual(scores["ANN"], {"shout.wav": 0.0, "calm.wav": 1.0})
+
+    def test_full_gpu_leaves_the_candidate_unscored(self):
+        # MythBusters: the card stayed full and calm clips scored 0.00, so lively ones jumped ahead of them
+        from infrastructure.tts_client import TTSOutOfMemory
+
+        self.tts._run_synthesis.side_effect = [TTSOutOfMemory("CUDA out of memory"), None]
+        scores, _ = self.run_audition([1.0], [3.2])
+
+        self.assertEqual(scores["ANN"], {"calm.wav": 1.0})
 
     def test_speaker_is_left_out_when_the_judge_cannot_tell(self):
         scores, _ = self.run_audition([None, None], [3.0, 3.2])
@@ -178,10 +187,6 @@ class TestPitchGender(unittest.TestCase):
         self.addCleanup(os.remove, path)
         return path
 
-    def test_gender_from_the_reference_clips(self):
-        self.assertEqual(pitch_gender([self.wav(voiced(115.0)), self.wav(voiced(125.0))])[0], "male")
-        self.assertEqual(pitch_gender([self.wav(voiced(210.0))])[0], "female")
-        self.assertEqual(pitch_gender([self.wav(voiced(170.0))])[0], None)  # in between: the profile stays
-        # E03: the play-by-play man shouting over the arena, 319 Hz; excitement, not a woman
-        self.assertEqual(pitch_gender([self.wav(voiced(310.0))])[0], None)
-        self.assertEqual(pitch_gender(["missing.wav"]), (None, None))
+    def test_pitch_of_the_reference_clips_is_only_a_number(self):
+        self.assertAlmostEqual(speaker_pitch([self.wav(voiced(115.0)), self.wav(voiced(125.0))]), 120.0, delta=6)
+        self.assertIsNone(speaker_pitch(["missing.wav"]))

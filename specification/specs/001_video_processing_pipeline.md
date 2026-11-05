@@ -70,7 +70,8 @@ duplicates content, because the target language orders the sentence differently.
 *   **Action:**
     1.  Parses the path (Sonarr/Radarr naming such as `Show/Season 2/Show - S02E02 - Title WEBDL-1080p.mkv`, scene names,
         `{tvdb-…}`/`{imdb-…}`/`{tmdb-…}` ids, `Movie (2010)`) into title, year, season and episode, and the episode
-        title that follows `SxxEyy - ` up to the quality tag (`WEBDL-480p`).
+        title that follows `SxxEyy - ` up to the quality tag (`WEBDL-480p`). Long-running shows have year seasons
+        (`MythBusters - S2012E20 - Food Fables`): a 4-digit season of 19xx/20xx is a season, not a movie's year.
     2.  Reads Kodi-style `.nfo` files next to the video (`<video>.nfo`, `tvshow.nfo`, `movie.nfo`) when present.
     3.  Fills the gaps online (`METADATA_LOOKUP=on`): TVmaze for episodes (no account; show synopsis, episode title and
         synopsis, main and guest cast with gender), TMDB for movies (only with `TMDB_API_KEY`).
@@ -104,7 +105,7 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
     audible. It never moves a line to another speaker; the voiceprint check (3) decides that. It does report doubts
     about a speaker ("SPEAKER_03 is described as Jenny Taft, but line 57 addresses him as Chris"): only a signal,
     logged with a count per speaker and shown in the report's `speaker_doubt` column. The only thing it changes: the
-    cast list no longer overrules that speaker's measured pitch (Spec 002, 2.3).
+    cast list no longer sets that speaker's gender (Spec 002, 2.3), since the name may belong to someone else.
     The second hearing leaves out known hallucinations ("We'll be right back.") like the gap pass does. When a line
     the corrector changed ends with words that the same speaker's next line (within `SENTENCE_MAX_GAP`) starts with,
     they are dropped from the next line: the second hearing of "...learning their answers to the game" heard into
@@ -141,9 +142,15 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
     cue's duration), so a line gets the cues spoken during it. Used by the draft translation (2.5a) and the series
     terms (Spec 006, 5).
 *   **What else the subtitles tell:**
+    0.  *Offset.* Subtitles of another release run early or late (MythBusters S2012E20: 1-2 s early). Every cue of 3+
+        words that starts with the same words (up to 5) as a transcribed segment within 5 s gives one estimate; with
+        at least 8 estimates and a median of at least 0.25 s, all cues are shifted by that median before anything
+        below uses them.
     1.  *Missing speech.* A spoken cue of the reference subtitles (sound descriptions such as `[door opens]` and
-        `♪` removed) of at least 1 s that the transcription does not cover (less than a third of the cue) is speech
-        Whisper did not hear: it becomes a line of the script with the cue's text and times, and the speaker the
+        `♪` removed) of at least 1 s that the transcription does not cover (less than a third of the cue), and whose
+        words are not in the transcription within 3 s of it (70% of the words; all of them for a cue of 1-2 words),
+        is speech Whisper did not hear. Without the word check, half of MythBusters' "missing" cues were lines Whisper
+        had heard a second later, and they were dubbed twice: it becomes a line of the script with the cue's text and times, and the speaker the
         diarization finds there. Only when the subtitles are timed to this audio: at least 70% of the spoken cues
         overlap the transcription (subtitles of another release are often shifted by seconds), and only where the
         diarization hears somebody speak for at least 30% of the cue: a credit or an on-screen sign is not speech.
@@ -152,8 +159,8 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
         analysis as a hint for naming that speaker.
     3.  *Gender.* In Polish target subtitles, the first-person past tense and conditional ("zrobiłem"/"zrobiłam",
         "zrobiłbym"/"zrobiłabym"; nouns in "-łem" such as "admirałem" not counted; cues with two speakers skipped)
-        tell the speaker's gender: at least 3 forms, 80% of one gender. This overrules the analysis and the pitch
-        (Spec 002, 2.3), which cannot tell a shouting man; it counts as a measured gender in the series memory.
+        tell the speaker's gender: at least 3 forms, 80% of one gender. This overrules the analysis and the cast list
+        (Spec 002, 2.3); it counts as a measured gender in the series memory.
     4.  *Forms of address.* The terms step (Spec 006, 5) also reads how speakers address each other in the subtitles
         (formal "pan kapitan", or "ty"); the translator keeps those forms.
 *   **Output:**

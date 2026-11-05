@@ -63,7 +63,7 @@ class TestDoubtedName(unittest.TestCase):
     def _check(self, pipe, script):
         with (
             patch("core.pipeline.MOCK_MODE", False),
-            patch("core.pipeline.pitch_gender", return_value=("female", 255.0)),
+            patch("core.pipeline.speaker_pitch", return_value=255.0),
         ):
             pipe._check_genders({"S3": ["m.wav"]}, script)
 
@@ -72,8 +72,16 @@ class TestDoubtedName(unittest.TestCase):
         self._check(pipe, [_line(0, 1, "Hello.", speaker="S3")])
         self.assertEqual(pipe.speaker_info["S3"]["gender"], "male")
 
-    def test_a_doubted_name_does_not_beat_the_pitch(self):
+    def test_the_cast_fixes_the_analysis_gender_of_a_name(self):
         pipe = self._pipe()
+        pipe.speaker_info["S3"]["gender"] = "female"
+        self._check(pipe, [_line(0, 1, "Hello.", speaker="S3")])
+        self.assertEqual(pipe.speaker_info["S3"]["gender"], "male")
+        self.assertNotIn("gender_measured", pipe.speaker_info["S3"])
+
+    def test_a_doubted_name_leaves_the_gender_alone(self):
+        pipe = self._pipe()
+        pipe.speaker_info["S3"]["gender"] = "female"
         line = _line(0, 1, "Let's go to my partners, the broadcasting machine Chris Rose.", speaker="S3")
         line["speaker_doubt"] = "Chris Rose is referring to himself in the third person"
         self._check(pipe, [line])

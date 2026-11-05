@@ -111,24 +111,26 @@ Priorities, in order: (1) nothing of the content is lost, (2) the line is intell
 which lowers the score of every candidate alike). The judge scores each take as in 2.2 step 4 (its judge score). The candidates
 are ranked by that score, best first. A speaker whose best score is under `AUDITION_LINE_REF_MIN` (default 0.8) does
 not use line clips: a voice that clones badly from its cleanest clips (announcers shouting over the arena) clones
-worse from an arbitrary line. Without the audition the Stage 4 order is kept and line clips are used.
+worse from an arbitrary line. Without the audition the Stage 4 order is kept and line clips are used. A candidate
+whose synthesis found the GPU out of memory (after `TTS_OOM_WAIT`) stays unscored, in its Stage 4 place: a full card
+says nothing about the clip (MythBusters: calm clips scored 0.00 that way and lively ones went first).
+
+**GPU memory.** OmniVoice usually shares its card with another process (a shared llama-server), which can grow and
+leave no memory. While the server answers "CUDA out of memory", a request waits and asks again (5, 10, 20, then 30 s
+steps, up to `TTS_OOM_WAIT`, default 300 s) instead of restarting the server, which would not free that memory;
+other errors still restart it. Only then does the take count as missing ("MISSING take (the GPU stayed out of
+memory)"). In MythBusters S2012E20 the 2728 immediate failures of 137 lines caused all 24 dropped lines.
 
 **Designed voice** (`VOICE_DESIGN`, on by default). Before the audition, OmniVoice voice design synthesizes one clip
 per speaker that has lines, from the attributes it understands: gender, age and pitch, taken from the speaker
 profile (Stage 3; e.g. "male, middle-aged, low pitch"; age words match whole words only). With nothing known OmniVoice
-picks a generic voice. The gender is measured, not guessed, when the speaker's reference clips tell: a median pitch
-(autocorrelation over the voiced frames of up to `REF_AUDITION_CANDIDATES` clips) of at most 160 Hz is male, of
-200-265 Hz female; between 160 and 200 Hz, and above 265 Hz, the profile's gender stays. A man shouting over the arena
-speaks at 290-320 Hz (S01E03: the play-by-play man during the fights and the ring announcer, measured as women), so a
-high pitch tells excitement, not a woman. The measurement overrules the analysis and the series memory (Spec 006),
-which once stored the play-by-play man under the sideline reporter's name and gender, so his designed voice was a
-woman's. When it contradicts the analysis, the analysis took the speaker for someone else, so its name is dropped
-too: the translator saw "Jenny Taft (male)" and the review turned the man's lines into feminine forms. Only a
-male verdict overrules the cast list, though: when the speaker's name is a character (or actor) the metadata
-(Spec 001, 2.2b) lists as male, a female pitch is not believed (Star Trek S01E01: Kirk at 244 Hz and two aliens with
-processed voices at 243-248 Hz were measured as women). A low pitch does not happen to women. This holds only
-while the corrector raises no doubt about that speaker's name (Spec 001, 2.2c step 4): in BattleBots S01E01 the host
-Molly McGrath (255 Hz) was named Chris Rose, and the corrector noticed "Chris Rose" introducing Chris Rose. The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
+picks a generic voice. The gender comes from, in this order: the Polish subtitles' grammar (Spec 001, 2.3); the cast
+list of the metadata (Spec 001, 2.2b), when the speaker's name is a character (or actor) it lists, and the corrector
+raises no doubt about that speaker's name (Spec 001, 2.2c step 4: in BattleBots S01E01 the host Molly McGrath was
+named Chris Rose); else the analysis. The speaking pitch of the reference clips is logged but never decides: as the
+decider it was right in 2 of 11 verdicts, and the 9 wrong ones all made a man a woman (shouting commentators at
+290-320 Hz, Kirk and processed alien voices at 243-248 Hz, and MythBusters' Jamie, Alton and Tory at 220-237 Hz,
+measured on reference clips whose filter takes out a man's fundamental). The clip speaks the speaker's own lines (about 30 syllables, not the audition test line unless
 it is the speaker's only line) and joins the speaker's candidates as the last one; afterwards it is cloned like any
 other reference, so the voice stays the same across the video. It is the fallback for speakers whose clips do not
 clone: it is used only when none of the speaker's clips scores at least `AUDITION_LINE_REF_MIN` in the audition and
@@ -142,7 +144,7 @@ play man shouting at 319 Hz as SPEAKER_04, whose clips cloned at 0.42 at best, s
 calm as SPEAKER_13, cloning at 0.92-0.97). After the analysis (Stage 3), two speakers are merged into one (the calm one's
 label) when all of these hold: the analysis gave them the same name (not empty or "unknown"); the louder one's median
 voice level is at least 3 dB and its median pitch at least 3 semitones above the other's; no gender measured on both
-(pitch bands, Polish grammar) disagrees; and their centroid voiceprints are at least `SHOUT_MERGE_MIN` (0.3) alike.
+(Polish grammar) disagrees; and their centroid voiceprints are at least `SHOUT_MERGE_MIN` (0.3) alike.
 The name alone is not enough: in S01E03 the analysis named the play-by-play man "Jenny Taft". The merged speaker's
 energy classes (Spec 001, 2.4) are measured again over all its lines, so its shouting lines become its `shout` class.
 
