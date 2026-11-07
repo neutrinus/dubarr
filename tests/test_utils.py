@@ -201,3 +201,59 @@ def test_check_polish_spelling_never_passes_v_for_w():
     ok, _fixed, lost = check_polish_spelling("Vorehed Vorehed", "W AO1 R HH EH2 D W AO1 R HH EH2 D")
     assert not ok
     assert "W read as V" in lost
+
+
+def test_reference_keep_samples_cuts_a_long_clip_at_its_pause():
+    """A long reference is cut at the quietest point near the limit, not in the middle of a word (Spec 002, 2.3)."""
+    import numpy as np
+
+    from utils import reference_keep_samples
+
+    sr = 16000
+    samples = np.full(int(12 * sr), 0.5, dtype="float32")
+    samples[int(9.0 * sr) : int(9.2 * sr)] = 0.0  # the pause between two sentences
+
+    keep = reference_keep_samples(samples, sr, 10.0)
+
+    assert int(9.0 * sr) < keep <= int(10.0 * sr)
+    assert abs(float(samples[keep - 1])) < 0.1  # the cut lands in the silence, so no word is chopped
+
+
+def test_reference_keep_samples_keeps_a_clip_that_fits():
+    import numpy as np
+
+    from utils import reference_keep_samples
+
+    sr = 16000
+    samples = np.full(int(6 * sr), 0.5, dtype="float32")
+
+    assert reference_keep_samples(samples, sr, 10.0) == len(samples)
+    assert reference_keep_samples(samples, sr, 5.0) <= int(5.0 * sr)
+    assert reference_keep_samples(samples, sr, 0) == len(samples)  # 0 turns the limit off
+
+
+def test_reference_keep_samples_without_any_pause_stops_at_the_limit():
+    import numpy as np
+
+    from utils import reference_keep_samples
+
+    sr = 16000
+    samples = np.full(int(12 * sr), 0.5, dtype="float32")
+
+    assert reference_keep_samples(samples, sr, 10.0) == int(10.0 * sr)
+
+
+@pytest.mark.parametrize(
+    "text,ratio,expected",
+    [
+        ("one two three four", 0.5, "one two"),
+        ("one two three four", 1.0, "one two three four"),
+        ("one two three four", 0.1, "one"),  # at least one word stays
+        ("", 0.5, ""),
+        ("one two", 0.0, "one"),
+    ],
+)
+def test_trim_reference_text_matches_the_shortened_clip(text, ratio, expected):
+    from utils import trim_reference_text
+
+    assert trim_reference_text(text, ratio) == expected

@@ -1,5 +1,6 @@
 import os
 import logging
+import tempfile
 from collections import OrderedDict
 
 # Must be set before torch initialises CUDA: TTS often runs next to another process (e.g. a shared
@@ -11,7 +12,9 @@ import torch  # noqa: E402
 from flask import Flask, request, jsonify  # noqa: E402
 from omnivoice import OmniVoice  # noqa: E402
 
+from config import TTS_REF_MAX_SECONDS  # noqa: E402
 from duration_policy import choose_duration  # noqa: E402
+from utils import reference_keep_samples, trim_reference_text  # noqa: E402
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +23,7 @@ model = None
 # Negative means CPU (TTS_DEVICE=cpu in dubarr); the GPUs then stay free for other processes.
 gpu_id = int(os.environ.get("GPU_TTS", 0))
 CPU_THREADS = int(os.environ.get("TTS_CPU_THREADS", "0")) or (os.cpu_count() or 1)
+REF_MAX_SECONDS = TTS_REF_MAX_SECONDS
 
 # OmniVoice pads every clip with this much silence per side (OmniVoiceGenerationConfig.pad_duration)
 PAD_DURATION = 0.1
@@ -44,6 +48,7 @@ def get_voice_prompt(ref_audio, ref_text):
     key = (ref_audio, os.path.getmtime(ref_audio), ref_text)
     prompt = _prompt_cache.get(key)
     if prompt is None:
+        ref_audio, ref_text = capped_reference(ref_audio, ref_text)
         if ref_text is None:
             logging.warning(f"OmniVoice: No transcript for {ref_audio}, the model will transcribe it with Whisper.")
         prompt = model.create_voice_clone_prompt(ref_audio=ref_audio, ref_text=ref_text)
@@ -53,6 +58,40 @@ def get_voice_prompt(ref_audio, ref_text):
     else:
         _prompt_cache.move_to_end(key)
     return prompt
+
+
+def capped_reference(ref_audio, ref_text):
+    """Cuts a reference clip longer than REF_MAX_SECONDS at a pause before it is encoded (Spec 002, 2.3).
+
+    OmniVoice's tokenizer needs ~300 MB of VRAM per second of reference audio: an 18 s clip and a shared
+    llama-server left an 8 GB card without the 20 MB a synthesis needed. The model clones best from 4-10 s, so the
+    clip is shortened (and its transcript with it) instead of being encoded whole. The cut file is cached next to
+    nothing special: it lives in the temp dir of the server, one per source clip and limit.
+    """
+    if not REF_MAX_SECONDS or not ref_audio:
+        return ref_audio, ref_text
+    try:
+        info = sf.info(ref_audio)
+        if info.duration <= REF_MAX_SECONDS:
+            return ref_audio, ref_text
+        samples, sample_rate = sf.read(ref_audio, dtype="float32", always_2d=True)
+    except Exception as e:
+        logging.warning(f"OmniVoice: Could not inspect {ref_audio} ({e}), using it whole.")
+        return ref_audio, ref_text
+
+    mono = samples.mean(axis=1)
+    keep = reference_keep_samples(mono, sample_rate, REF_MAX_SECONDS)
+    if keep >= len(mono):
+        return ref_audio, ref_text
+    trimmed_path = os.path.join(tempfile.gettempdir(), f"refcap_{os.path.basename(ref_audio)}")
+    sf.write(trimmed_path, samples[:keep], sample_rate)
+    ratio = keep / len(mono)
+    trimmed_text = trim_reference_text(ref_text, ratio)
+    logging.info(
+        f"OmniVoice: reference {os.path.basename(ref_audio)} {info.duration:.1f}s cut to {keep / sample_rate:.1f}s "
+        f"before encoding (~300 MB VRAM per second of reference)"
+    )
+    return trimmed_path, trimmed_text
 
 
 def pick_duration(text, prompt, target_duration, max_duration):

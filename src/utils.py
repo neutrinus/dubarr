@@ -58,6 +58,54 @@ def measure_zcr(path: str) -> float:
         return 0.0
 
 
+def reference_keep_samples(samples, sample_rate: int, max_seconds: float) -> int:
+    """How many leading samples of a reference clip to keep when it is longer than ``max_seconds`` (Spec 002, 2.3).
+
+    Encoding a reference into a voice prompt costs OmniVoice ~300 MB of VRAM per second of audio, and the model
+    clones best from a short clip anyway, so a long clip is cut at a pause instead of being encoded whole. The cut
+    goes to the quietest 50 ms window in the last 40% of the limit, so no word is chopped in the middle.
+    Returns ``len(samples)`` when the clip already fits (or the limit is off).
+    """
+    if not max_seconds or max_seconds <= 0:
+        return len(samples)
+    limit = int(max_seconds * sample_rate)
+    if len(samples) <= limit:
+        return len(samples)
+
+    window = max(1, int(0.05 * sample_rate))
+    start = int(limit * 0.6)
+    energies = []
+    for end in range(start + window, limit + 1, window):
+        chunk = samples[end - window : end]
+        if len(chunk) < window:
+            break
+        energies.append((end, float((chunk.astype("float64") ** 2).mean())))
+    if not energies:
+        return limit
+
+    quiet = min(energies, key=lambda x: x[1])
+    loud = sorted(e for _, e in energies)[len(energies) // 2]
+    if loud <= 0 or quiet[1] > 0.5 * loud:
+        # No pause in the last part of the limit: cutting anywhere would chop a word, so the clip goes whole
+        return limit
+    return quiet[0]
+
+
+def trim_reference_text(text: str, keep_ratio: float) -> str:
+    """Keeps the first ``keep_ratio`` of the words of a reference transcript, to match a reference clip cut short.
+
+    The prompt pairs the clip with its transcript, so a shortened clip needs a shortened text; at least one word
+    stays and the original text is returned unchanged when the whole clip was kept.
+    """
+    if not text:
+        return text
+    words = text.split()
+    if not words or keep_ratio >= 1.0:
+        return text
+    keep = max(1, int(round(len(words) * max(0.0, keep_ratio))))
+    return " ".join(words[:keep])
+
+
 def count_syllables(text: str, lang: str = "pl") -> int:
     if not text:
         return 0

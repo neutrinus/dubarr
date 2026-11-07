@@ -116,7 +116,14 @@ whose synthesis found the GPU out of memory (after `TTS_OOM_WAIT`) stays unscore
 says nothing about the clip (MythBusters: calm clips scored 0.00 that way and lively ones went first).
 
 **GPU memory.** OmniVoice usually shares its card with another process (a shared llama-server), which can grow and
-leave no memory. While the server answers "CUDA out of memory", a request waits and asks again (5, 10, 20, then 30 s
+leave no memory. The biggest single allocation is not the model (1.9 GB in fp16) but **encoding a reference clip**
+into a voice prompt: it costs ~300 MB of VRAM per second of reference audio (measured 2026-11-07: a 3 s clip peaked at
+2.8 GB, 6 s at 3.7 GB, 8.9 s at 4.6 GB, and an 18 s clip left an 8 GB card 20 MB short). Stage 4 therefore prefers
+4-8 s clips, and the server cuts anything longer to `TTS_REF_MAX_SECONDS` (10 s) at a pause before encoding, with
+the transcript shortened to match: without it a single long reference, not the synthesis, decided whether an episode
+could be dubbed at all.
+
+While the server answers "CUDA out of memory", a request waits and asks again (5, 10, 20, then 30 s
 steps, up to `TTS_OOM_WAIT`, default 300 s) instead of restarting the server, which would not free that memory;
 other errors still restart it. Only then does the take count as missing ("MISSING take (the GPU stayed out of
 memory)"). In MythBusters S2012E20 the 2728 immediate failures of 137 lines caused all 24 dropped lines.
@@ -211,4 +218,6 @@ never stretched in the mix; slowing down is done by OmniVoice, which sounds natu
 -   `VOICE_DESIGN` (on): one voice-design clip per speaker as an extra reference candidate.
 -   `REF_AUDITION_CANDIDATES` (3), `AUDITION_LINE_REF_MIN` (0.8): reference candidates per speaker, and the audition
     score a speaker needs to use line clips.
+-   `TTS_REF_MAX_SECONDS` (10): longest reference clip encoded into a voice prompt; longer clips are cut at a pause
+    (transcript shortened with them) because encoding costs OmniVoice ~300 MB of VRAM per second of reference audio.
 -   `zcr_threshold` (0.25): Zero Crossing Rate limit for line-clip references.

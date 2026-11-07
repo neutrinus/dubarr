@@ -62,6 +62,7 @@ Configuration is only through environment variables (read in `src/config.py`, th
 | `TTS_OOM_WAIT` | `300` | Seconds a TTS request waits (5, 10, 20, then 30 s steps) while the server answers "CUDA out of memory", before the take counts as missing. Another process on the card (a shared llama-server) frees memory again; restarting the server would not. |
 | `TTS_MAX_CHUNK_SECONDS` | `10` | Longer lines are synthesized in chunks at sentence ends, then commas/semicolons (sync and VRAM peak). |
 | `TTS_REF_TEXT` | `off` | Send the reference clip's transcript to OmniVoice; `off` keeps English pronunciation out of the target language. |
+| `TTS_REF_MAX_SECONDS` | `10` | Longest reference clip encoded into a voice prompt; a longer clip is cut at a pause (and its transcript shortened to match) before encoding. OmniVoice's tokenizer takes ~300 MB of VRAM per second of reference audio, so an 18 s clip exhausted an 8 GB card shared with a llama-server. `0` disables the limit. |
 | `OMNIVOICE_PYTHON` | the app's interpreter | Interpreter for the OmniVoice server subprocess. |
 | `AUDIO_CODEC` / `AUDIO_BITRATE` | `aac` / `192k` | Codec of the dubbed tracks: `aac` (plays in browsers, on Android and TVs), `ac3`, `eac3` or `opus`, and its bitrate. Original tracks are copied. |
 

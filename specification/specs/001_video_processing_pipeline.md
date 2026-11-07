@@ -171,7 +171,8 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
 *   **Input:** `vocals.mp3`, the script (Stage 2a, corrected in Stage 3). The step is named "Stage 4: Transcription
     Correction" in the database for historical reasons; it does not change the text.
 *   **Action:**
-    1.  Scores every 2-20 s line of each speaker: ASR confidence, speaking rate, length (6-14 s best), position, and
+    1.  Scores every 2-20 s line of each speaker: ASR confidence, speaking rate, length (4-8 s best, then 8-10 s,
+        3-4 s and 10-14 s), position, and
         **clarity**: the level of the Demucs vocals over the level of the rest (`no_vocals`) in the same span, in dB.
         A line under `REF_MIN_CLARITY_DB` (3 dB, crowd or engines as loud as the voice) loses most of its score; above
         12 dB it gains. OmniVoice clones the clip's character, so noise and screaming in a reference come back in the dub.
@@ -181,7 +182,7 @@ stage gives every line a confidence and hears the unsure ones again (`ASR_VERIFY
         compared with itself, so a loud voice is not penalised for being loud.
     2.  **Short clips grow:** a candidate under 6 s is joined with the same speaker's lines right before or after it
         (pauses of at most 0.6 s), as long as each joined line is clean enough (clarity at least `REF_MIN_CLARITY_DB`)
-        and the clip stays within 10 s; OmniVoice clones best from 6-10 s. The transcripts are joined too.
+        and the clip stays within 10 s; OmniVoice clones best from 4-10 s. The transcripts are joined too.
     3.  **Energy classes** (`EMOTION_REFS`, on). OmniVoice has no emotion control, but carries the energy of the clip
         it clones, so a speaker gets clips for each energy of its lines. Every line is measured on the vocals against
         the speaker's own medians: voice level (dB), pitch (semitones) and pace (syllables per second). Level and pitch

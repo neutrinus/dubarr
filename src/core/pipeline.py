@@ -683,8 +683,10 @@ class DubbingPipeline:
     def _extend_short_clip(seg, script, vocals_path):
         """A candidate under 6 s grows with the same speaker's adjacent lines, up to 10 s (Spec 001, 2.4).
 
-        OmniVoice clones best from 6-10 s. Only lines right next to it (a pause of at most CLIP_JOIN_GAP) of the same
-        speaker that are clean enough as references join, so the clip stays one calm stretch of one voice.
+        OmniVoice clones best from 4-10 s, and encoding a reference costs it ~300 MB of VRAM per second of audio
+        (Spec 002, 2.3), so a very short clip is grown to 6 s and nothing goes past 10. Only lines right next to it
+        (a pause of at most CLIP_JOIN_GAP) of the same speaker that are clean enough as references join, so the clip
+        stays one calm stretch of one voice.
         """
         lo, hi = CLIP_BEST_SECONDS
         if seg["end"] - seg["start"] >= lo or seg not in script:
@@ -765,15 +767,19 @@ class DubbingPipeline:
                 if clarity_score < 0:
                     clarity_score = 0
 
+                # OmniVoice's tokenizer needs ~300 MB of VRAM per second of reference audio, and the model clones best
+                # from 4-10 s (Spec 002, 2.3): short clips come first, anything over REF_MAX_SECONDS is cut anyway
                 dur_score = 0
-                if 6.0 <= dur <= 14.0:
+                if 4.0 <= dur <= 8.0:
                     dur_score = 40
-                elif 4.0 <= dur < 6.0:
-                    dur_score = 25
-                elif 14.0 < dur <= 18.0:
+                elif 8.0 < dur <= 10.0:
+                    dur_score = 30
+                elif 3.0 <= dur < 4.0:
                     dur_score = 20
+                elif 10.0 < dur <= 14.0:
+                    dur_score = 10
                 else:
-                    dur_score = 5
+                    dur_score = 0
 
                 pos_score = 0
                 if total_dur > 0:

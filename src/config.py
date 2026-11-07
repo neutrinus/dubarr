@@ -100,6 +100,10 @@ TTS_CPU_THREADS = int(os.environ.get("TTS_CPU_THREADS", "0")) or (os.cpu_count()
 TTS_MAX_CHUNK_SECONDS = float(os.environ.get("TTS_MAX_CHUNK_SECONDS", "10.0"))
 # Reference-clip transcript sent to OmniVoice: "off" (default) keeps it out of cross-lingual cloning, where an
 TTS_REF_TEXT = os.environ.get("TTS_REF_TEXT", "off").lower()
+# Longest reference clip the TTS server encodes for a voice prompt. OmniVoice's tokenizer needs ~300 MB of VRAM per
+# second of reference audio (a 18 s clip took the whole 8 GB card next to a shared llama-server), and the model
+# clones best from 4-10 s anyway; longer clips are cut at a pause before encoding. "0" disables the limit.
+TTS_REF_MAX_SECONDS = float(os.environ.get("TTS_REF_MAX_SECONDS", "10"))
 
 
 # Dubbed speech may run into the silence after a segment and, when still too long, start early in the one before it.
