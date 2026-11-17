@@ -66,7 +66,7 @@ src/
     take_judge.py          Judges takes without Whisper: signal artifacts, voiceprint match, CTC text match (Spec 002).
     gender_classifier.py   Voice gender classifier (audeering wav2vec2): the last resort for a speaker's gender (Spec 002).
     series_memory.py       Between episodes of a series: settled name spellings, terms and the voice bank (Spec 006).
-    subtitles.py           Sidecar/embedded subtitles: cues, alignment to lines, missing speech, SDH names, gender from grammar.
+    subtitles.py           Sidecar/embedded subtitles: cues, alignment to lines, missing speech, SDH names, credits, gender from grammar.
     script_check.py        Stage 2c: unsure lines heard again, voiceprint speaker check; energy classes, shout/calm merge.
     report.py              Per-line production report: summary in the log, report_<lang>.tsv in the debug folder.
   infrastructure/
@@ -78,9 +78,13 @@ src/
     monitor.py             Periodic CPU/RAM/GPU/queue logging thread.
   templates/index.html     Dashboard.
 tests/                     pytest unit tests (everything heavy is mocked).
-scripts/                   smoke_test.py (CI, MOCK_MODE container), e2e_test.py (CPU E2E), demo/LLM helpers.
+scripts/                   smoke_test.py (CI, MOCK_MODE container), e2e_test.py (CPU E2E), demo_video.py and
+                           promo_video.py (the demo/promo MP4 builders), test_llm.py.
+docs/promo_video.md        How the YouTube promo is built (source choice, speakers, ffmpeg pitfalls).
 specification/             ARCHITECTURE.md + numbered feature specs (the intended behaviour).
 ```
+
+`local_env.md` (git-excluded) holds the maintainer's machine-specific notes; don't commit it and don't rely on it.
 
 ## Pipeline at a glance
 
@@ -91,16 +95,18 @@ specification/             ARCHITECTURE.md + numbered feature specs (the intende
    into dialogue units (whole sentences, each with a time budget).
 2b. **Media metadata**: `core/media_context.py` identifies the show/episode or movie from the path (Sonarr/Radarr naming)
    and fetches synopsis and cast (character, actor, gender) from `.nfo` files, TVmaze or TMDB. Failures only log.
+2c. **Script verification**: `core/script_check.py` hears unsure lines again, checks each line's speaker by voiceprint,
+   and merges shout/calm variants of the same line.
 3. **Global analysis**: the LLM writes a summary, a phonetic glossary (reading-tested, fixed across a series) and
    speaker profiles, then corrects ASR errors in chunks (reference subtitles from `<video>.srt` or the first embedded
    subtitle stream are used as ground truth).
 4. **Voice references**: up to `REF_AUDITION_CANDIDATES` scored, ZCR-checked clips per speaker, plus voice-bank clips
    from earlier episodes. Despite the step name "Transcription Correction", this stage does not correct text.
-5. **Production**: draft translations per language (windows of 20 lines with surrounding context and per-line syllable
-   budgets and short/long variants, then a completeness review pass), a designed voice per speaker and the voice
-   audition (the take judge ranks each speaker's references), then a flat pool of (segment, language) jobs runs
-   through `SegmentSynchronizer` on 4 orchestrator threads; every synthesis makes `TAKE_VERSIONS` takes and the judge
-   keeps the best. LLM and TTS calls go through `LLMService`/`TTSService`.
+5. **Production**: draft translations per language (windows of `TRANSLATION_WINDOW` = 20 lines with surrounding context
+   and per-line syllable budgets and short/long variants, then a completeness review pass), a designed voice per speaker
+   and the voice audition (the take judge ranks each speaker's references), then a flat pool of (segment, language) jobs
+   runs through `SegmentSynchronizer` on 4 orchestrator threads; every synthesis makes `TAKE_VERSIONS` takes and the
+   judge keeps the best. LLM and TTS calls go through `LLMService`/`TTSService`.
    Progress is checkpointed to `stage5_checkpoint_<task_id>.json` in the task's workspace.
 6. **Mix**: per-language mastering (pan, echo, atempo), then sidechain ducking against the original track.
 7. **Mux**: the new tracks (AAC by default, `AUDIO_CODEC`) are added in front of the original audio, which is copied;
@@ -121,12 +127,18 @@ uv sync --group dev --python 3.10
 # Point DATA_DIR somewhere writable; the default is /app/data.
 MOCK_MODE=1 DATA_DIR=/tmp/dubarr-data PYTHONPATH=.:src uv run pytest tests/
 
+# One test while iterating (same env):
+MOCK_MODE=1 DATA_DIR=/tmp/dubarr-data PYTHONPATH=.:src uv run pytest tests/test_pipeline.py -k refs
+
 # Lint: CI runs ruff check and flake8 (both must pass) and pylint (informational).
 # Keep ruff format clean too; CI does not check it.
 uv run ruff check .
 uv run ruff format --check .
 uv run flake8 .
 ```
+
+CI also runs pytest with `--cov=src --cov-fail-under=60`, so deleting tested code can fail the build even when the
+remaining tests pass. `scripts/` is excluded from pytest collection (`norecursedirs`), tests for it live in `tests/`.
 
 CI (`.github/workflows/pipeline.yml`) runs the same lint + tests on Python 3.10, then builds the Docker image and runs
 `scripts/smoke_test.py` against a container started with `MOCK_MODE=1`; the same image is then pushed to `ghcr.io`
@@ -136,10 +148,11 @@ rebuilt when the Dockerfile changes.
 `.github/workflows/e2e-cpu.yml` runs `scripts/e2e_test.py`: it cuts a 60 s public-domain clip (NASA), dubs it with the
 real pipeline on a CPU runner using small models (Whisper `small`, Qwen2.5 3B GGUF, OmniVoice on CPU), and checks the
 muxed tracks (count, tags, duration, not silent). It also builds `demo.mp4` (one line in English, then dubbed;
-`scripts/demo_video.py`), and on `main` publishes it to the `demo` release that the README links to. It runs nightly, on push to `main`, on manual dispatch, and on PRs that
-touch `src/`, dependencies, the workflow or the script. Without the `HF_TOKEN` secret, diarization is replaced by a single speaker. It tests
-plumbing, not translation quality: it runs with `TAKE_CHECK=off`, one take per line and no voice design, because a take
-costs ~4 min on the CPU runner and the full judge ran past the 150-minute job timeout.
+`scripts/demo_video.py`), and on `main` publishes it to the `demo` release that the README links to. It runs nightly, on
+push to `main`, on manual dispatch, and on PRs that touch `src/`, dependencies, the workflow or the script. Without the
+`HF_TOKEN` secret, diarization is replaced by a single speaker. It tests plumbing, not translation quality: it runs with
+`TAKE_CHECK=off`, `TAKE_VERSIONS=1`, `VOICE_DESIGN=off`, because a take costs ~4 min on the CPU runner and the full
+judge ran past the 150-minute job timeout.
 
 Running the real pipeline needs an NVIDIA GPU (roughly 10 GB for the in-process LLM, about 5 GB for Whisper, up to
 6 GB for OmniVoice on long lines), `HF_TOKEN` with access to the pyannote models, and the Docker image. The image has a
@@ -161,8 +174,10 @@ it) in the same PR. The ones you need most often while developing:
 | `HF_TOKEN` | none | Required unless `MOCK_MODE=1` (pyannote). |
 | `DEBUG` / `VERBOSE` | `0` / `0` | Keep intermediate artifacts in `videos/debug_<name>/` (incl. `report_<lang>.tsv`); DEBUG log level. |
 | `LLM_API_URL` / `LLM_API_MODEL` | none | Use an OpenAI-compatible server instead of the in-process GGUF. |
+| `WHISPER_MODEL` / `TAKE_CHECK_MODEL` | `large-v3` / `large-v3-turbo` | ASR model; the `whisper` take check runs the small fast model, on `TAKE_CHECK_DEVICE` (CPU by default). |
 | `TAKE_CHECK` | `judge` | `judge` / `whisper` (judge plus Whisper similarity, for calibration) / `off`. |
 | `SERIES_MEMORY` | `on` | Cross-episode glossary and voice bank in `DATA_DIR/series/<show>/` (Spec 006). |
+| `TTS_MAX_CHUNK_SECONDS` / `TTS_REF_MAX_SECONDS` / `TTS_OOM_WAIT` | `10` / `10` / `300` | VRAM knobs: longest synthesized chunk, longest reference encoded into a voice prompt, seconds to wait for free VRAM before giving up. |
 
 ## Development utilities
 
@@ -170,6 +185,8 @@ it) in the same PR. The ones you need most often while developing:
   handy for debugging one file.
 - `src/verify_output.py` re-transcribes generated segments with faster-whisper, a quick check of the audio without listening.
 - `scripts/e2e_test.py` dubs a short clip end to end and verifies the muxed tracks (used by `.github/workflows/e2e-cpu.yml`).
+- `scripts/promo_video.py` builds the YouTube promo from a multi-language file; the workflow (picking public-domain
+  material, one speaker per fragment, ffmpeg pitfalls) is in `docs/promo_video.md`.
 
 ## Conventions
 
@@ -189,8 +206,8 @@ it) in the same PR. The ones you need most often while developing:
 - Tests live in `tests/test_<module>.py`, use `unittest.mock` heavily, and must not need a GPU, network or model files.
   Add or update tests together with logic changes.
 - **Commits:** small, logically cohesive changes with `feat:` / `fix:` / `refactor:` / `docs:` / `test:` / `ux:`
-  prefixes. Do not mix unrelated features, fixes and docs in one commit. Push to the working branch and confirm CI
-  (lint, unit tests, smoke test, nightly E2E) went green.
+  prefixes. Do not mix unrelated features, fixes and docs in one commit. Keep media files, logs and dumps out of
+  commits. Push to the working branch and confirm CI (lint, unit tests, smoke test, nightly E2E) went green.
 
 ## Gotchas
 
@@ -201,12 +218,19 @@ it) in the same PR. The ones you need most often while developing:
   `DEBUG=1` or after a failure, so a retry reuses cached steps). Write temp files to `self.temp_dir` / `work_dir`,
   never to `TEMP_DIR` directly. Per-segment files carry the language (`raw_<lang>_<idx>.wav`,
   `attempt_<lang>_<idx>_<n>.wav`); keep it that way, because target languages run concurrently and share segment indices.
+- `DEBUG=1` also writes `debug_<stem>/` next to the video: `report_<lang>.tsv` (one row per line: status, fill, voice,
+  judge scores, what the judge heard), `drafts_<lang>.json`, `script_initial.json`/`script_fixed.json`, `speakers.json`,
+  `context.json`, `media_info.json` and `refs/`. That folder is the first place to look when a run "sounds wrong".
 - Cached step results are JSON in SQLite. `_run_step` only re-runs a step when a cached path no longer exists; the
   per-task workspace keeps those paths from pointing at another task's files.
 - Prompts in `prompts.py` are system prompts sent as chat messages with `response_format=json_object`; the model's chat
   template (applied by llama-cpp-python or the server) adds the special tokens. Don't put ChatML tokens in them.
 - The mux encodes only the dubbed tracks (`AUDIO_CODEC`, AAC by default) and copies every original stream (audio, subtitles, MKV attachments).
-  Dubbed tracks are tagged with ISO 639-2 codes (`config.ISO_639_2`, `pl` -> `pol`): MP4 drops two-letter codes.
+  Dubbed tracks are tagged with ISO 639-2 codes (`config.ISO_639_2`, `pl` -> `pol`): MP4 drops two-letter codes, and
+  drops the `title` tag as well, so a script that finds tracks by title only works on MKV.
+- Subtitles: the source-language `.srt` (or the first embedded stream) is ground truth for the ASR corrector and fills
+  speech Whisper missed; target-language sidecars are matched to lines for the translator. `Stage 5a: Subtitle Terms`
+  runs **only** when target-language subtitles are present, so a series with `.en.srt` alone gets no episode terms.
 - The OmniVoice server is restarted automatically on HTTP 500s and connection errors, then the request is retried once.
   A "CUDA out of memory" answer is different: the request waits and asks again for up to `TTS_OOM_WAIT` seconds
   (another process on the card has to free memory; a restart would not), then raises `TTSOutOfMemory`.
@@ -215,7 +239,8 @@ it) in the same PR. The ones you need most often while developing:
   allocations even with memory free.
 - Long lines are synthesized in ~`TTS_MAX_CHUNK_SECONDS` chunks split at sentence ends (then commas/semicolons, words
   only as a last resort). OmniVoice's VRAM peak grows with the length of the generated clip, and one long block also
-  drifts out of sync with the original pauses.
+  drifts out of sync with the original pauses. Encoding a *reference* is the other big allocation (~300 MB per second of
+  reference audio), hence `TTS_REF_MAX_SECONDS`.
 
 ## External compute node (glowonog)
 
